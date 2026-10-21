@@ -1,0 +1,373 @@
+#!/usr/bin/env node
+// Stdio MCP server injected into every agent process. It exposes the tools an agent
+// uses to talk to the workplace: assign tickets, delegate work to sub-agents and report progress.
+// Each call is forwarded to the workplace server over HTTP, tagged with this agent's id.
+'use strict';
+const http = require('http');
+const readline = require('readline');
+const fs = require('fs');
+const path = require('path');
+
+const AGENT_ID = process.env.WORKPLACE_AGENT_ID;
+const PORT = Number(process.env.WORKPLACE_PORT || 4747);
+const TOKEN = (() => { try { return fs.readFileSync(path.join(__dirname, 'data', 'app-token'), 'utf8').trim(); } catch { return ''; } })();
+const ROLES = (process.env.WORKPLACE_CHILD_ROLES || '').split(',').filter(Boolean);
+const ROLES_HELP = process.env.WORKPLACE_CHILD_ROLES_HELP || '';
+const ASSIGN_TO = (process.env.WORKPLACE_ASSIGN_TO || '').split(',').filter(Boolean);
+const ASSIGN_HELP = process.env.WORKPLACE_ASSIGN_HELP || '';
+const ALL_MODELS = ['haiku', 'sonnet', 'opus'];
+const MODELS = ALL_MODELS.slice(0, ALL_MODELS.indexOf(process.env.WORKPLACE_MAX_MODEL || 'opus') + 1);
+
+function post(path, body) {
+  return new Promise((resolve, reject) => {
+    const data = Buffer.from(JSON.stringify(body));
+    const req = http.request(
+      { host: '127.0.0.1', port: PORT, path, method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': data.length, 'x-agentos-token': TOKEN } },
+      (res) => {
+        let buf = '';
+        res.on('data', (c) => (buf += c));
+        res.on('end', () => {
+          try { resolve(JSON.parse(buf)); } catch (e) { reject(new Error('Bad reply: ' + buf.slice(0, 200))); }
+        });
+      });
+    req.setTimeout(0);
+    req.on('error', reject);
+    req.end(data);
+  });
+}
+
+function get(path) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: PORT, path, headers: { 'x-agentos-token': TOKEN } }, (res) => {
+      let buf = '';
+      res.on('data', (c) => (buf += c));
+      res.on('end', () => { try { resolve(JSON.parse(buf)); } catch (e) { reject(e); } });
+    }).on('error', reject);
+  });
+}
+
+const tools = [];
+if (ASSIGN_TO.length) {
+  tools.push({
+    name: 'assign',
+    description:
+      'Hand the current ticket (or part of it) to a permanent team lead. Returns immediately; the lead works ' +
+      'on it and answers the user directly. Write a complete, self-contained brief. Leads:\n' + ASSIGN_HELP,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', enum: ASSIGN_TO, description: 'Which lead owns this.' },
+        brief: { type: 'string', description: 'The full brief: user words, context, paths, project, what done means.' },
+        effort: { type: 'string', enum: ['medium', 'high', 'xhigh', 'max'],
+          description: "How hard the lead should think. Omit for the default (high). Use xhigh for real bugs, multi-step implementation or anything ambiguous; max only for the hardest problems; medium for quick questions." },
+      },
+      required: ['to', 'brief'],
+    },
+  });
+}
+if (ROLES.length) {
+  tools.push({
+    name: 'delegate',
+    description:
+      'Start one or more sub-agents. All assignments run in parallel; the call returns when every one has ' +
+      'finished, with each final report. Work goes to your permanent staff: a free teammate of that role is reused ' +
+      '(check `staff` to see who is on your team and how experienced they are); if nobody suitable is free, a new ' +
+      'teammate joins and stays. It returns when everyone has finished — or earlier, if a colleague asks you a question meanwhile: then answer it with ' +
+      '`send_message` and call `wait_for_team` with the batch_id to keep waiting (your sub-agents keep working). Write each task as a complete, self-contained brief: a sub-agent ' +
+      'cannot see your conversation. You decide whether a task needs sub-agents at all.\nRoster roles:\n' + ROLES_HELP +
+      (ROLES.includes('custom') ? '\n- custom: a specialist you design yourself. Give it `name` (job title), ' +
+        '`instructions` (who it is, how it should work) and `access` ("readonly" or "edit"). It works in your directory.' : ''),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assignments: {
+          type: 'array', minItems: 1, maxItems: 6,
+          items: {
+            type: 'object',
+            properties: {
+              role: { type: 'string', enum: ROLES, description: 'Roster role, or "custom".' },
+              who: { type: 'string', description: 'Optional: a specific teammate (see `staff`) to give this to, if they are free.' },
+              title: { type: 'string', description: 'Short name for this sub-task (3-8 words), shown on the dashboard.' },
+              task: { type: 'string', description: 'The full brief: goal, context, relevant paths, what to return.' },
+              name: { type: 'string', description: 'custom only: job title, e.g. "Shader Expert".' },
+              instructions: { type: 'string', description: 'custom only: the specialist\'s standing instructions.' },
+              access: { type: 'string', enum: ['readonly', 'edit'], description: 'custom only: file access. Default readonly.' },
+              pin_model: { type: 'boolean', description: 'Leave out: the office picks model and effort with its expected-value model. Set true only with evidence the choice is wrong for this task.' },
+              model: { type: 'string', enum: MODELS, description: 'Only with pin_model: haiku < sonnet < opus.' },
+              effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh'], description: 'Only with pin_model.' },
+              pin_reason: { type: 'string', description: 'Only with pin_model: one line of evidence for overriding the expected-value choice.' },
+            },
+            required: ['role', 'title', 'task'],
+          },
+        },
+      },
+      required: ['assignments'],
+    },
+  });
+}
+if (ROLES.length) {
+  tools.push({
+    name: 'wait_for_team',
+    description: 'Keep waiting for the sub-agents of an earlier `delegate` call that returned early because of a question. ' +
+      'Returns their reports when all are done (or returns early again on the next question).',
+    inputSchema: { type: 'object', properties: { batch_id: { type: 'string' } }, required: ['batch_id'] },
+  });
+}
+if (ROLES.length) {
+  tools.push({
+    name: 'staff',
+    description: 'List your permanent team: each teammate\'s role, whether they are free, their track record and their last task.',
+    inputSchema: { type: 'object', properties: {} },
+  });
+}
+tools.push({
+  name: 'update_memory',
+  description: 'Replace your personal memory with a revised version. It is shown to you at the start of every future task, ' +
+    'so it is how you improve over time. Send the FULL text (not a diff), under ~500 words: what works, what to avoid, ' +
+    'checks to always do, how your lead wants reports. Code facts for the whole team go in the team library instead.',
+  inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'Your complete revised memory, in Markdown.' } }, required: ['content'] },
+});
+tools.push({
+  name: 'give_feedback',
+  description: 'Give a teammate feedback on work they did for you, so they improve. They receive it at the start of their next ' +
+    'task. Be specific: what was good or weak, and what to do differently.',
+  inputSchema: {
+    type: 'object',
+    properties: { to: { type: 'string', description: 'Teammate name.' }, feedback: { type: 'string' } },
+    required: ['to', 'feedback'],
+  },
+});
+const SCRIPTS = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'scripts', 'manifest.json'), 'utf8')); } catch { return []; } })();
+if (SCRIPTS.length) {
+  tools.push({
+    name: 'script',
+    description: 'Run an office script: exact, instant and free. Use it for all mechanical work instead of doing it by hand or delegating it. ' +
+      'Relative paths are resolved from your working folder.\n' + SCRIPTS.map((x) => `- ${x.name}: ${x.does}. Usage: ${x.usage}`).join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', enum: SCRIPTS.map((x) => x.name) },
+        args: { type: 'array', items: { type: 'string' }, description: 'Arguments, one per item, e.g. ["SetupSummaryInDetail", "games/common_libs/core/game_core", "--lang", "cpp"].' },
+      },
+      required: ['name'],
+    },
+  });
+}
+tools.push({
+  name: 'search_tickets',
+  description: 'Search earlier tickets (requests, answers, files changed, the user\'s rating) by key terms. Use it before ' +
+    'non-trivial work: a past ticket may already hold the root cause or the fix.',
+  inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Key terms: component, class, error text, file name.' } }, required: ['query'] },
+});
+if (process.env.WORKPLACE_CAN_ASK_USER) {
+  tools.push({
+    name: 'ask_user',
+    description: 'Ask the user a question about your current ticket and wait for the reply. Use it only when the answer changes ' +
+      'what you will do, or you need something only they have (a log, a screenshot, a decision). Ask everything in one go.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'A clear, self-contained question with the context they need.' },
+        options: { type: 'array', items: { type: 'string' }, description: 'Optional short choices the user can click.' },
+      },
+      required: ['question'],
+    },
+  });
+}
+if (process.env.WORKPLACE_CAN_ASK_USER) {
+  tools.push({
+    name: 'propose_plan',
+    description: 'Ask the user to approve your plan before big work (two or more teammates, an opus teammate, or more than a couple of dollars). ' +
+      'Waits for their decision: approved, approved with changes (follow them), or rejected.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plan: { type: 'string', description: 'Short Markdown plan: steps, who does what on which model/effort, what the user gets at the end.' },
+        estimate_usd: { type: 'number', description: 'Honest total cost estimate for the ticket in USD.' },
+      },
+      required: ['plan', 'estimate_usd'],
+    },
+  });
+}
+tools.push({
+  name: 'colleagues',
+  description: 'List everyone currently in the office: name, role, status, ticket and what they are working on.',
+  inputSchema: { type: 'object', properties: {} },
+});
+tools.push({
+  name: 'send_message',
+  description: 'Send a short note to a colleague by name (see `colleagues`). Non-blocking. Use reply_to to answer a question you received.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string', description: 'Colleague name, e.g. "Viktor".' },
+      text: { type: 'string', description: 'The message.' },
+      reply_to: { type: 'string', description: 'Id of the question you are answering, if any.' },
+    },
+    required: ['to', 'text'],
+  },
+});
+tools.push({
+  name: 'ask',
+  description: 'Ask a colleague a question and wait for their answer (default up to 5 minutes). Use it when you need a fact ' +
+    'they own before you can continue. Someone who is waiting on their own sub-agents only reads mail when those finish.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string', description: 'Colleague name.' },
+      question: { type: 'string', description: 'A specific, self-contained question.' },
+      timeout_minutes: { type: 'number', description: 'How long to wait, 1-15. Default 5.' },
+    },
+    required: ['to', 'question'],
+  },
+});
+if (process.env.WORKPLACE_HAS_TEAM) {
+  tools.push({
+    name: 'add_to_team_docs',
+    description: 'Record durable knowledge in your team library so future teammates make better decisions: a verified fact ' +
+      'with evidence, a pitfall, where something lives, a decision and its reason. Appends to a page (default "notes").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'string', description: 'Page name, e.g. "notes", "pitfalls", "status-line". Created if missing.' },
+        text: { type: 'string', description: 'Markdown. Be concrete; include file:line evidence where relevant.' },
+      },
+      required: ['text'],
+    },
+  });
+}
+if (process.env.WORKPLACE_HANDOFFS) {
+  tools.push({
+    name: 'save_project_handoff',
+    description: 'Save where a personal project stands so the next chat about it continues from here. Call it when you finish work ' +
+      'on a project or the user wraps up, once per project. Rewrites the current state and adds this session to the log.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'The project\'s folder name in ~/Personal/Projects, e.g. "DianisCommunication".' },
+        state: { type: 'string', description: 'Markdown, the full current state: what it is and how to run it, what works, decisions and why, open problems, next steps in order, key files.' },
+        session: { type: 'string', description: 'Markdown summary of this chat: what the user asked, what you did, files changed, what the user decided or corrected.' },
+      },
+      required: ['project', 'state', 'session'],
+    },
+  });
+}
+tools.push({
+  name: 'report_progress',
+  description:
+    'Post a short status update to the office dashboard so the user can follow along ' +
+    '(what you are doing now, what you found, what is next). Use it at each meaningful step.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', description: 'One or two sentences.' },
+      percent: { type: 'number', description: 'Optional rough completion estimate, 0-100.' },
+    },
+    required: ['status'],
+  },
+});
+
+function send(msg) { process.stdout.write(JSON.stringify(msg) + '\n'); }
+function textResult(id, text, isError) {
+  send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: !!isError } });
+}
+
+async function callTool(id, name, args) {
+  try {
+    if (name === 'assign') {
+      const r = await post('/api/assign', { agentId: AGENT_ID, to: args.to, brief: args.brief, effort: args.effort });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'delegate' || name === 'wait_for_team') {
+      const r = name === 'delegate'
+        ? await post('/api/delegate', { parentId: AGENT_ID, assignments: args.assignments || [] })
+        : await post('/api/wait', { agentId: AGENT_ID, batchId: args.batch_id });
+      if (r.error) return textResult(id, r.error, true);
+      if (r.batchId) {
+        return textResult(id, `Your team is still working (${r.waitingOn.join(', ') || 'finishing up'}). Meanwhile you have mail:\n\n` +
+          `${r.question}\n\nAnswer with send_message (use the reply_to id), then call wait_for_team with batch_id "${r.batchId}" to collect their reports.`);
+      }
+      const text = r.results.map((c) =>
+        `### [${c.role}] ${c.title} — ${c.persona}${c.model ? ` (${c.model})` : ''}, ${c.status}${c.why ? `\n_${c.why}_` : ''}\n${c.result || '(no report)'}`).join('\n\n');
+      return textResult(id, text);
+    }
+    if (name === 'staff') {
+      const r = await get('/api/staff?agentId=' + encodeURIComponent(AGENT_ID));
+      return textResult(id, r.text);
+    }
+    if (name === 'update_memory') {
+      const r = await post('/api/memory', { agentId: AGENT_ID, content: args.content });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'give_feedback') {
+      const r = await post('/api/feedback', { agentId: AGENT_ID, to: args.to, text: args.feedback });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'script') {
+      const r = await post('/api/script', { agentId: AGENT_ID, name: args.name, args: args.args || [] });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'search_tickets') {
+      const r = await get('/api/search?agentId=' + encodeURIComponent(AGENT_ID) + '&q=' + encodeURIComponent(args.query || ''));
+      return textResult(id, r.text || 'No earlier tickets match.');
+    }
+    if (name === 'propose_plan') {
+      const r = await post('/api/propose-plan', { agentId: AGENT_ID, plan: args.plan, estimateUsd: args.estimate_usd });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'ask_user') {
+      const r = await post('/api/ask-user', { agentId: AGENT_ID, question: args.question, options: args.options });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'colleagues') {
+      const r = await get('/api/colleagues?agentId=' + encodeURIComponent(AGENT_ID));
+      return textResult(id, r.text);
+    }
+    if (name === 'send_message') {
+      const r = await post('/api/mail/send', { agentId: AGENT_ID, to: args.to, text: args.text, replyTo: args.reply_to });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'ask') {
+      const r = await post('/api/mail/ask', { agentId: AGENT_ID, to: args.to, question: args.question, timeoutSec: (args.timeout_minutes || 5) * 60 });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'add_to_team_docs') {
+      const r = await post('/api/docs/add', { agentId: AGENT_ID, page: args.page, text: args.text });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'save_project_handoff') {
+      const r = await post('/api/handoff/save', { agentId: AGENT_ID, project: args.project, state: args.state, session: args.session });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'report_progress') {
+      await post('/api/progress', { agentId: AGENT_ID, status: args.status, percent: args.percent });
+      return textResult(id, 'Posted.');
+    }
+    textResult(id, 'Unknown tool: ' + name, true);
+  } catch (e) {
+    textResult(id, 'Workplace server error: ' + e.message, true);
+  }
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  const { id, method, params } = msg;
+  if (method === 'initialize') {
+    send({ jsonrpc: '2.0', id, result: {
+      protocolVersion: (params && params.protocolVersion) || '2024-11-05',
+      capabilities: { tools: {} },
+      serverInfo: { name: 'workplace', version: '2.0.0' } } });
+  } else if (method === 'tools/list') {
+    send({ jsonrpc: '2.0', id, result: { tools } });
+  } else if (method === 'tools/call') {
+    callTool(id, params.name, params.arguments || {});
+  } else if (method === 'ping') {
+    send({ jsonrpc: '2.0', id, result: {} });
+  } else if (id !== undefined) {
+    send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
+  }
+});

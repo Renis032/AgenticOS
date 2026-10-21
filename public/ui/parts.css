@@ -1,0 +1,41 @@
+/* Agentic OS UI parts: shared tokens and components for micro apps. */
+:root {
+  --bg: #0e1319; --panel: #141b23; --panel2: #1a232d; --panel3: #212c38; --line: #26313e; --line2: #313e4d;
+  --text: #e4eaf1; --muted: #8b97a6; --faint: #5d6977; --accent: #e8a33d; --accent-ink: #1a1206;
+  --run: #4fa3e0; --deleg: #a585ec; --done: #55c08a; --fail: #ec6a64; --stop: #dcaa4a; --code: #0f151c; --sel: #1f3348;
+  --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #eef1f5; --panel: #ffffff; --panel2: #f5f7fa; --panel3: #ebeff4; --line: #dfe4ea; --line2: #cfd6df;
+    --text: #18212c; --muted: #5d6978; --faint: #8a95a3; --accent: #b86e1c; --accent-ink: #fff;
+    --run: #2f7dc6; --deleg: #7a55d4; --done: #2c9a62; --fail: #d24545; --stop: #ad7c1c; --code: #f3f5f8; --sel: #dbe9f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13.5px/1.45 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+select { background-color: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+select { -webkit-appearance: none; appearance: none; color: var(--text); padding-right: 26px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+option { background: var(--panel); color: var(--text); }
+.p-btn { border: 1px solid var(--line2); background: var(--panel2); border-radius: 8px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+.p-btn:hover { background: var(--panel3); }
+.p-btn.pri { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.p-btn.danger { color: var(--fail); }
+.p-btn:disabled { opacity: .45; cursor: default; }
+.p-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 1px 8px; border-radius: 99px; font-weight: 650; background: color-mix(in srgb, var(--c, var(--muted)) 16%, transparent); color: var(--c, var(--muted)); }
+.p-pill.ok { --c: var(--done); } .p-pill.warn { --c: var(--stop); } .p-pill.bad { --c: var(--fail); } .p-pill.info { --c: var(--run); }
+.p-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 12px 0; overflow: hidden; }
+.p-card-h { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel2); }
+.p-card-h .t { font-weight: 650; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-card-h .m { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.p-card-b { padding: 10px 14px; max-height: 460px; overflow: auto; }
+.p-comment { border-top: 1px solid var(--line); padding: 8px 14px 10px; background: var(--panel); }
+.p-comment textarea { width: 100%; min-height: 38px; resize: vertical; background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; outline: none; }
+.p-comment textarea:focus { border-color: var(--accent); }
+.p-comment .hint { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+.p-md p { margin: 4px 0; } .p-md ul { margin: 4px 0; padding-left: 20px; } .p-md h4 { margin: 10px 0 4px; }
+.p-md code, code { background: var(--code); padding: 0 4px; border-radius: 4px; font-size: 12px; font-family: var(--mono); }
+pre.p-diff { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre; overflow: auto; }
+pre.p-diff .a { color: var(--done); background: color-mix(in srgb, var(--done) 12%, transparent); display: block; }
+pre.p-diff .d { color: var(--fail); background: color-mix(in srgb, var(--fail) 12%, transparent); display: block; }
+pre.p-diff .h { color: var(--deleg); display: block; }
+.p-toast { position: fixed; right: 16px; bottom: 16px; background: var(--panel); border: 1px solid var(--line2); border-radius: 10px; padding: 9px 12px; box-shadow: 0 10px 30px rgba(0,0,0,.35); z-index: 50; }

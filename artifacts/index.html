@@ -1,0 +1,7 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Artifacts</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;margin:32px auto;max-width:860px;padding:0 16px;color:#1b2430;background:#f6f7f9}@media(prefers-color-scheme:dark){body{background:#0e1319;color:#e4eaf1}.a{background:#141b23!important;border-color:#26313e!important}}
+input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #ccd;font:inherit;margin:12px 0 18px}.a{display:block;padding:12px 14px;border:1px solid #dfe4ea;border-radius:12px;margin:8px 0;background:#fff;text-decoration:none;color:inherit}
+.a small{color:#8a95a3}.a b{display:block}</style></head><body><h1>Artifacts</h1><p>0 items, newest first.</p>
+<input id="q" placeholder="Search titles and descriptions…" autofocus>
+
+<script>document.getElementById('q').oninput=(e)=>{const q=e.target.value.toLowerCase();for(const a of document.querySelectorAll('.a'))a.style.display=a.dataset.s.includes(q)?'':'none';};</script></body></html>

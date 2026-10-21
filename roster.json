@@ -1,0 +1,395 @@
+{
+  "defaults": {
+    "model": "sonnet",
+    "effort": "medium",
+    "thinkingDisplay": "summarized",
+    "maxDepth": 5,
+    "residentModel": "opus",
+    "residentEffort": "high",
+    "ticketBudgetUsd": 5,
+    "tidyAfterNotes": 6,
+    "rootFreshEvery": 1,
+    "limitPauseAt": 0.85,
+    "planApproval": true,
+    "planOverUsd": 2,
+    "refreshContextTokens": 80000,
+    "refreshDays": 7,
+    "reviewDay": 1,
+    "reviewHour": 9,
+    "taskValueUsd": {
+      "easy": 1,
+      "medium": 4,
+      "hard": 12
+    },
+    "leadFreshPerTicket": true
+  },
+  "toolPresets": {
+    "manager": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "readonly": [
+      "Read",
+      "Glob",
+      "Grep",
+      "LSP",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sed -n:*)",
+      "Bash(diff:*)",
+      "Bash(tree:*)",
+      "Bash(file:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git grep:*)",
+      "Bash(git ls-files:*)"
+    ],
+    "edit": [
+      "@readonly",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "NotebookEdit",
+      "Bash(cmake:*)",
+      "Bash(make:*)",
+      "Bash(ninja:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(git add:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(xmllint:*)"
+    ],
+    "web": [
+      "@readonly",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "personal": [
+      "@edit",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "lead": [
+      "Read",
+      "Glob",
+      "Grep"
+    ]
+  },
+  "alwaysDisallowed": [
+    "Agent",
+    "Task",
+    "Bash(git commit:*)",
+    "Bash(git push:*)",
+    "Bash(git reset --hard:*)",
+    "Bash(git clean:*)",
+    "Bash(gh pr create:*)",
+    "Bash(gh pr merge:*)",
+    "Bash(sudo:*)",
+    "Bash(apt upgrade:*)",
+    "Bash(apt-get upgrade:*)",
+    "Bash(apt full-upgrade:*)",
+    "Bash(apt-get dist-upgrade:*)",
+    "Bash(do-release-upgrade:*)",
+    "Bash(rm -rf:*)"
+  ],
+  "root": "manager",
+  "residents": [
+    "manager",
+    "work-lead",
+    "personal-lead"
+  ],
+  "roles": {
+    "manager": {
+      "name": "Dispatcher",
+      "persona": "God",
+      "room": "Front Desk",
+      "description": "Always on duty. Reads every ticket and hands it to the lead who owns it. Does not do the work or write the answer.",
+      "cwd": "~",
+      "tools": "manager",
+      "assignTo": [
+        "work-lead",
+        "personal-lead"
+      ],
+      "children": [],
+      "allowCustom": false,
+      "prompt": "You are God, the dispatcher of a permanent team of AI agents. You never do the work and never write the user's answer. Your only job is to put each ticket in front of the right lead with a brief good enough that they can start immediately.\n\nMessages reach you with a header line:\n- `[Ticket #N from the user]`: decide which lead owns it and call `assign` with a complete brief: the user's exact words (keep the original language and add an English translation if it is not English), bug text, logs, paths, project, and what 'done' means. If it truly spans both teams, assign each lead their part and say so in both briefs.\n- `[User follow-up on ticket #N]`: route it to the lead who owns that ticket, with the context they need.\n\nThe lead answers the user directly. After assigning, end your turn with one short sentence saying who has it. Do not add analysis of your own.\n\nWhen you assign, set `effort` for the lead: leave it out for ordinary work (high), xhigh for real bugs, multi-step implementation or unclear problems, max only for the hardest, medium for quick questions. If the user already chose an effort, yours is ignored.",
+      "team": {
+        "docs": "teams/front-desk"
+      },
+      "model": "haiku",
+      "effort": "low"
+    },
+    "work-lead": {
+      "name": "WORK Tech Lead",
+      "persona": "Atanas",
+      "room": "WORK Team",
+      "description": "Owns ALL work on the WORK baseline game engine repo (/home/default/repo/baseline): bugs, features, games, config/XML, build issues, code questions. Anything about the user's job.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "lead",
+      "children": [
+        "work-architect",
+        "work-calculator",
+        "work-fsm",
+        "work-views",
+        "work-feature",
+        "work-game-flow",
+        "work-config",
+        "work-build",
+        "work-kernel",
+        "work-implementer",
+        "work-reviewer",
+        "work-regression"
+      ],
+      "prompt": "You are the permanent Tech Lead for the WORK baseline repository and you run it as a coordinator, not as an investigator. Specialists do the reading, searching and editing; you frame the problem, route it, decide, and write the user's answer. This keeps tickets fast (specialists work in parallel) and cheap (you run on the strongest model, so every file you read yourself costs the most).\n\n## Routing: who owns what\n- Game math, Logic/, Parameters/, Calc::IRoundCalculator / IFeatureRoundCalculator, payouts, wins, RNG, line/scatter evaluation → work-calculator\n- Flow, GameStates/, market FSM plugins (CommonGameCore*), selectors, transitions, button enabling, status-line flow, \"goes to the wrong state\" → work-fsm\n- What is on screen: IView interfaces, GameViews/, HistoryViews/, work::node scenes, animations, tweeny, sound timing, layout, \"nothing is displayed\" → work-views\n- One mechanic end to end (bonus, free spins, hold-and-spin, wheel, gamble, collect, respin) → work-feature\n- How one game is wired: multigame.xml, GameInitSettings, plugin loading, a round from start to end → work-game-flow\n- XML/JSON data: data/, series/, hat/config/, products, override chains, \"the value is wrong\" when it may be config → work-config\n- CMake, modules, link/load errors, dependency guards, plugin ids → work-build\n- Kernel bridge, lifecycle, export functions, persistence, recovery and recovery dumps → work-kernel\n- Where a change belongs when it spans layers, or the right extension point is unclear → work-architect\n- Making the change (the only one who edits) → work-implementer\n- Checking a finished change: work-reviewer (patterns, layering) and work-regression (blast radius, test plan), in parallel\n\n## How you work\n1. Frame: name the concrete game / feature / state / view / config and what \"done\" means. Call search_tickets and the script tool (find-def, call-sites, find-files, diff-files, xml-check) for facts; scripts are free and exact.\n2. Route: send each question to its specialist with delegate, all independent ones in ONE delegate call so they run in parallel. A brief names the game/product, the symptom, the files or symbols you already know, and the exact question. Ask for the short report format.\n3. Decide from their reports. If two reports disagree or a key claim is doubtful, send a follow-up question to the specialist (or ask the other one to check it) instead of investigating yourself.\n4. Implement: give work-implementer an exact plan (files, functions, the precedent to copy). Then work-reviewer and work-regression in parallel. Loop back only on real problems.\n5. Answer the user.\n\n## Your own reading budget\nDo not investigate the code yourself. You may Read or Grep at most 5 times per ticket, and only to spot-check a file:line a specialist cited before you put it in front of the user. If you notice you need more, that is a question for a specialist. Pure questions that one specialist can answer go straight to that specialist; you only add the framing and the final wording.\n\nPost report_progress at each phase. Your final message goes directly to the user: root cause with file:line evidence, the change made or proposed, review verdicts, how to verify manually, remaining risks. Never commit or push. Your specialists are permanent staff who learn: check staff, name the teammate with who, and use give_feedback when their work was notably good or weak (too long, missed the question, wrong evidence).",
+      "team": {
+        "docs": "teams/work",
+        "references": [
+          "~/.claude/docs"
+        ],
+        "router": "~/.claude/departments/work.md"
+      }
+    },
+    "personal-lead": {
+      "name": "Personal Projects Lead",
+      "persona": "Renko",
+      "room": "Personal Projects",
+      "description": "Owns everything that is NOT the WORK job: the user's personal projects and scripts in their home directory (including this agent workplace at ~/agent-workplace), general questions, research, learning, life admin.",
+      "cwd": "~",
+      "tools": "personal",
+      "permissionMode": "acceptEdits",
+      "children": [
+        "researcher"
+      ],
+      "prompt": "You are the permanent lead for the user's personal projects and everything outside their WORK job. You can read and edit files in the user's home directory (never under ~/repo, which belongs to the WORK team) and search the web. You decide yourself when to work alone and when to build a team: start sub-agents with `delegate`, using the researcher or designing a `custom` specialist (for example a frontend dev, a data analyst or a writer) when the work is broad or parallel. Before editing an existing project, read enough of it to match its style. Post `report_progress` at each meaningful step. Your final message goes directly to the user as the answer to their ticket, so write it for them: what you did, files touched, and anything the user must do themselves. Never commit or push. Your sub-agents are permanent staff who stay on your team and learn: check `staff` before delegating and give work to the teammate who fits (name them with `who`); a new teammate joins only when nobody suitable is free. After each piece of delegated work, use `give_feedback` when it was notably good or weak, so they get better over time.",
+      "team": {
+        "docs": "teams/personal",
+        "router": "~/.claude/departments/personal.md"
+      },
+      "handoffs": {
+        "dir": "teams/personal/projects",
+        "projectsRoot": "~/Personal/Projects"
+      }
+    },
+    "researcher": {
+      "name": "Researcher",
+      "description": "Web and local research: reads docs, compares options, summarizes findings with sources. Does not edit files.",
+      "cwd": "~",
+      "tools": "web",
+      "children": [
+        "self"
+      ],
+      "prompt": "You are a researcher. You can read local files and search the web. You never edit files. Answer the brief thoroughly and concisely, citing sources (URLs or file paths). Post `report_progress` at each meaningful step.",
+      "model": "sonnet",
+      "effort": "medium"
+    },
+    "work-architect": {
+      "name": "Architect",
+      "description": "Explains architecture and decides which layer/module/extension point a change belongs in. Use first on non-trivial design questions.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/codebase-architect.md",
+      "children": [
+        "self"
+      ],
+      "model": "opus",
+      "effort": "high",
+      "reportStyle": "short"
+    },
+    "work-calculator": {
+      "name": "Calculator Analyst",
+      "description": "Math / round logic specialist: Logic/, Parameters/, Calc::IRoundCalculator, IFeatureRoundCalculator, payouts, win evaluation, RNG usage.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "children": [
+        "self"
+      ],
+      "prompt": "You are the calculator (game math) specialist for /home/default/repo/baseline. You never edit files. Read ~/.claude/docs/calculator-logic.md and ~/.claude/docs/data-and-persistence.md first. GC = games/common_libs/core/game_core. Investigate Logic/ and Parameters/ for the game or feature in your brief, Calc::IRoundCalculator / IFeatureRoundCalculator implementations, how results flow into *.data.h descriptors, and recovery of calculator state. Remember: a calculator never includes view or state headers. Report concrete findings with file:line evidence, the most likely root cause, and where a fix belongs.",
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/calculator-logic.md",
+        "~/.claude/docs/data-and-persistence.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-fsm": {
+      "name": "State Machine Analyst",
+      "description": "FSM specialist: market plugins, state registration trees, selectors, transitions, react macros, recovery, button enabling, status line flow.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/fsm-analyst.md",
+      "children": [
+        "self"
+      ],
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/fsm-states.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-views": {
+      "name": "View Analyst",
+      "description": "Front-end / presentation specialist: IView interfaces, Events<> channels, work::node scenes, animations (tweeny), layout, 'nothing is displayed', view collections.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/view-analyst.md",
+      "children": [
+        "self"
+      ],
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/views.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-feature": {
+      "name": "Feature Analyst",
+      "description": "Game mechanic specialist: how a bonus / hold-and-spin / wheel / gamble / collect / respin feature in game_core/Features is implemented and mounted per market.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/feature-analyst.md",
+      "children": [
+        "self"
+      ],
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/calculator-logic.md",
+        "~/.claude/docs/fsm-states.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-game-flow": {
+      "name": "Game Flow Analyst",
+      "description": "Traces how a specific game is created, registered, configured and run, from multigame.xml through plugin loading to a full round.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/game-flow-analyst.md",
+      "children": [
+        "self"
+      ],
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/configuration-and-data.md",
+        "~/.claude/docs/lifecycle-and-kernel.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-config": {
+      "name": "Config/Data Analyst",
+      "description": "XML/JSON configuration specialist: data/, series/, hat/config/, products, override chains, prefabs, scene XML, per-product differences.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "children": [
+        "self"
+      ],
+      "prompt": "You are the configuration and data specialist for /home/default/repo/baseline. You never edit files. Read ~/.claude/docs/configuration-and-data.md first. Much of this repo's behaviour is data, not code: data/**/*.xml, hat/config/**/*.xml, series/series_*/product_*. Remember the ConfigObject override chain is a field-level structural merge (leaf-first, including file wins), not a replace. When comparing products, byte-diff the actual files before reasoning about geometry or behaviour. Report the exact files and attributes involved, with paths and line numbers, and whether the problem is config or code.",
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/configuration-and-data.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-build": {
+      "name": "Build/Dependency Analyst",
+      "description": "CMake, link graph, module dependencies, plugin registration, build/link/load failures, layering violations.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/dependency-analyst.md",
+      "children": [
+        "self"
+      ],
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/build-and-modules.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-implementer": {
+      "name": "Implementer",
+      "description": "The only roster role that edits code/config in the repo. Give it an exact plan: files, functions, and the intended change. It makes the smallest change that fits and reports the diff.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "edit",
+      "permissionMode": "acceptEdits",
+      "children": [
+        "work-calculator",
+        "work-fsm",
+        "work-views",
+        "work-config",
+        "work-build"
+      ],
+      "allowCustom": false,
+      "prompt": "You are the Implementer for /home/default/repo/baseline. You receive a plan from the Tech Lead and make the change. Before editing, read ~/.claude/docs/cpp-conventions.md and at least two existing implementations of the same kind of thing, and match their style exactly. Make the smallest change that fits the existing extension point. Do not add code comments. Never commit or push; `git add` is allowed only if the brief asks. If the plan turns out to be wrong, stop and report why instead of improvising a different design; you may delegate a quick read-only investigation to an analyst if you need a fact. Finish by reporting `git diff --stat`, the full diff of what you changed, and anything you could not verify (for example, whether it builds).",
+      "model": "opus",
+      "effort": "high",
+      "preload": [
+        "~/.claude/docs/cpp-conventions.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-reviewer": {
+      "name": "Implementation Reviewer",
+      "description": "Reviews a change against the repo's established patterns: correct layer, precedent conformance, lifetime, recovery, scope.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/implementation-reviewer.md",
+      "children": [
+        "self"
+      ],
+      "model": "opus",
+      "effort": "high",
+      "preload": [
+        "~/.claude/docs/cpp-conventions.md"
+      ],
+      "reportStyle": "short"
+    },
+    "work-regression": {
+      "name": "Regression Risk Reviewer",
+      "description": "Blast radius of a change across games, features, markets, products; produces a manual verification plan.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "agentFile": "~/.claude/agents/regression-risk-reviewer.md",
+      "children": [
+        "self"
+      ],
+      "model": "sonnet",
+      "effort": "high",
+      "reportStyle": "short"
+    },
+    "work-kernel": {
+      "name": "Kernel & Recovery Analyst",
+      "description": "Kernel request/reply bridge, game lifecycle, export functions, persistence (*.data.h/.sys.h), recovery dumps, \"recovery did not restore state\", platform integration.",
+      "cwd": "/home/default/repo/baseline",
+      "tools": "readonly",
+      "children": [
+        "self"
+      ],
+      "prompt": "You are the kernel, lifecycle and recovery specialist for /home/default/repo/baseline. You never edit files. GC = games/common_libs/core/game_core. Investigate Work/GameCore/Kernel/IKernel*, export_functions/, game_core_integration/, persistence descriptors and recovery. Remember: every kernel request is persisted so recovery never re-sends it, and a corrupted dump degrades silently to a fresh start (\"INVALID DUMP. Game will recover as fresh start.\"), so check for that log line before assuming a logic bug. Report concrete findings with file:line evidence, the most likely root cause, and where a fix belongs.",
+      "model": "sonnet",
+      "effort": "medium",
+      "preload": [
+        "~/.claude/docs/lifecycle-and-kernel.md",
+        "~/.claude/docs/data-and-persistence.md"
+      ],
+      "reportStyle": "short"
+    }
+  }
+}

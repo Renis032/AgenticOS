@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review · Agentic OS</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/parts.css">
+<style>
+.wrap { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+aside { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; }
+aside h1 { font-size: 15px; margin: 0; padding: 14px 14px 4px; }
+aside .sub { color: var(--muted); font-size: 12px; padding: 0 14px 10px; border-bottom: 1px solid var(--line); }
+.q { padding: 9px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.q:hover { background: var(--panel2); } .q.on { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+.q .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.q .m { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; }
+main { overflow: auto; padding: 18px 26px 60px; }
+.head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.head h2 { margin: 0; font-size: 18px; flex: 1; min-width: 200px; }
+.bar { position: sticky; bottom: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line); margin-top: 18px; }
+.bar textarea { flex: 1; min-width: 220px; min-height: 40px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+.empty { color: var(--muted); padding: 60px 20px; text-align: center; }
+.tabs { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+.tabs button.on { background: var(--sel); color: var(--text); font-weight: 600; }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } aside { max-height: 35vh; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside><h1>Review</h1><div class="sub">Finished jobs waiting for your OK. Comment on the answer and each changed file, then send or approve.</div>
+    <div class="tabs"><button data-f="todo" class="on">To review</button><button data-f="done">Reviewed</button></div><div id="queue"></div></aside>
+  <main id="main"><div class="empty">Pick a job on the left.</div></main>
+</div>
+<script src="/ui/parts.js"></script>
+<script>
+'use strict';
+const { esc, md, api, el, toast, diff, reviewCard, copy } = Parts;
+let tickets = [], reviews = {}, current = null, rev = null, filter = 'todo';
+const money = (x) => `$${(x || 0).toFixed(2)}`;
+const ago = (t) => { const s = (Date.now() - t) / 1000; return s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : new Date(t).toLocaleDateString(); };
+
+async function load() {
+  const st = await api('GET', '/api/state');
+  reviews = await api('GET', '/api/arms/reviews');
+  tickets = st.tickets.filter((t) => t.status === 'done' && t.answer && !t.review && !t.silent && !/self-test/i.test(t.title)).sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0));
+  renderQueue();
+  const want = location.hash.slice(1);
+  if (want && tickets.some((t) => t.id === want)) open(want);
+}
+function reviewed(t) { const r = reviews[t.id]; return (r && r.status !== 'open') || !!t.rating; }
+function renderQueue() {
+  const list = tickets.filter((t) => (filter === 'todo' ? !reviewed(t) : reviewed(t)));
+  document.getElementById('queue').innerHTML = list.map((t) => `<div class="q ${current && current.id === t.id ? 'on' : ''}" data-id="${t.id}"><div class="t">#${t.n} ${esc(t.title)}</div>
+    <div class="m">${(t.changes || []).length ? `<span class="p-pill info">${t.changes.length} file${t.changes.length === 1 ? '' : 's'}</span>` : ''}${reviews[t.id] && reviews[t.id].status === 'open' ? '<span class="p-pill warn">draft</span>' : ''}${reviews[t.id] && reviews[t.id].status === 'sent' ? '<span class="p-pill warn">comments sent</span>' : ''}${t.rating ? `<span class="p-pill ${t.rating.score > 0 ? 'ok' : 'bad'}">${t.rating.score > 0 ? 'approved' : 'rejected'}</span>` : ''}<span>${money(t.costUsd)} · ${ago(t.closedAt || t.createdAt)}</span></div></div>`).join('') || `<div class="empty">${filter === 'todo' ? 'Nothing waiting for review.' : 'Nothing reviewed yet.'}</div>`;
+}
+let saveTimer = null;
+function persist() { clearTimeout(saveTimer); saveTimer = setTimeout(() => api('POST', `/api/arms/reviews/${current.id}`, rev).then((r) => { reviews[current.id] = { status: r.status, updatedAt: r.updatedAt }; renderQueue(); }), 300); }
+async function open(jobId) {
+  current = tickets.find((t) => t.id === jobId);
+  history.replaceState(null, '', '#' + jobId);
+  rev = await api('GET', `/api/arms/reviews/${jobId}`);
+  rev.comments = rev.comments || { answer: '', files: {} };
+  const changes = (current.changes || []).length ? await api('GET', `/api/tickets/${jobId}/changes`).catch(() => []) : [];
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="head"><h2>#${current.n} ${esc(current.title)}</h2><span class="p-pill ok">done</span><span style="color:var(--muted)">${money(current.costUsd)} · ${ago(current.closedAt || current.createdAt)}</span><a href="/#jobs&job=${current.id}" target="_blank" style="color:var(--run)">open in Agentic OS</a></div>`;
+  main.appendChild(reviewCard({ title: 'Answer', pill: ['answer', 'info'], body: `<div class="p-md">${md(current.answer)}</div>`, comment: rev.comments.answer, placeholder: 'What is wrong or missing in the answer?', onComment: (v) => { rev.comments.answer = v; persist(); } }));
+  for (const c of changes.filter((x) => x.state !== 'unchanged')) {
+    main.appendChild(reviewCard({ title: c.path, meta: `+${c.added} −${c.removed}`, pill: [c.state, c.state === 'deleted' ? 'bad' : 'ok'], body: diff(c.diff), comment: rev.comments.files[c.path] || '', placeholder: 'Comment on this change…', onComment: (v) => { rev.comments.files[c.path] = v; persist(); } }));
+  }
+  const bar = el(`<div class="bar"><textarea placeholder="Overall verdict (optional)"></textarea><button class="p-btn" data-a="copy">Copy comments</button><button class="p-btn" data-a="send">Send to the lead</button><button class="p-btn pri" data-a="approve">Approve</button></div>`);
+  const ta = bar.querySelector('textarea');
+  ta.value = rev.overall || '';
+  ta.oninput = () => { rev.overall = ta.value; persist(); };
+  main.appendChild(bar);
+  renderQueue();
+}
+function commentsText() {
+  const lines = [];
+  if (rev.overall.trim()) lines.push(rev.overall.trim(), '');
+  if (rev.comments.answer.trim()) lines.push(`On the answer: ${rev.comments.answer.trim()}`);
+  for (const [f, v] of Object.entries(rev.comments.files)) if (v.trim()) lines.push(`On ${f}: ${v.trim()}`);
+  return lines.join('\n');
+}
+document.addEventListener('click', async (e) => {
+  const q = e.target.closest('.q');
+  if (q) return open(q.dataset.id);
+  const f = e.target.closest('[data-f]');
+  if (f) { filter = f.dataset.f; document.querySelectorAll('[data-f]').forEach((b) => b.classList.toggle('on', b === f)); return renderQueue(); }
+  const a = e.target.closest('[data-a]');
+  if (!a || !current) return;
+  const text = commentsText();
+  try {
+    if (a.dataset.a === 'copy') { if (!text) return toast('No comments yet.'); return copy(`Review of job #${current.n} (${current.title}):\n${text}`); }
+    if (a.dataset.a === 'send') {
+      if (!text) return toast('Write a comment first.');
+      await api('POST', `/api/tickets/${current.id}/message`, { text: `Review comments:\n${text}` });
+      rev.status = 'sent'; persist(); toast('Sent to the lead; the job is open again.');
+    }
+    if (a.dataset.a === 'approve') {
+      await api('POST', `/api/tickets/${current.id}/rate`, { score: 1, note: text.slice(0, 500) });
+      rev.status = 'approved'; persist(); current.rating = { score: 1 }; toast('Approved.'); renderQueue();
+    }
+  } catch (err) { toast(err.message); }
+});
+load().catch((e) => { document.getElementById('main').innerHTML = `<div class="empty">Agentic OS is not reachable: ${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>
