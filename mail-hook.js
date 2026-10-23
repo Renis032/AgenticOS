@@ -78,6 +78,10 @@ function scriptFor(command) {
   const files = (from) => w.slice(from).filter((x) => !x.startsWith('-')).map(at);
   if (w[0] === 'wc' && files(1).length) return { name: 'count', args: files(1) };
   if (w[0] === 'xmllint' && w.includes('--noout') && files(1).length) return { name: 'xml-check', args: files(1) };
+  if (w[0] === 'sed' && w[1] === '-n' && files(3).length === 1) {
+    const r = (w[2] || '').match(/^(\d+)(?:,(\d+))?p$/);
+    if (r) return { name: 'show', args: [`${files(3)[0]}:${r[1]}-${r[2] || r[1]}`] };
+  }
   if ((w[0] === 'diff' || w[0] === 'cmp') && files(1).length === 2) return { name: 'diff-files', args: files(1) };
   if (w[0] === 'find' && !w.some((x) => ['-exec', '-execdir', '-delete', '-newer', '-mtime', '-mmin', '-size', '-perm', '-user', '-ok', '-printf', '-fprint'].includes(x))) {
     const i = w.findIndex((x) => x === '-name' || x === '-iname');
@@ -116,7 +120,13 @@ process.stdin.on('end', async () => {
             'Use Edit (or MultiEdit) for the parts that change. If you really are rewriting most of the file, send the same Write again and it will go through.' } }));
         process.exit(0);
       }
-      if (EDIT_TOOLS.includes(ev.tool_name) && file) await call('POST', '/api/files/before', { agentId: id, file });
+      if (EDIT_TOOLS.includes(ev.tool_name) && file) {
+        const r = await call('POST', '/api/files/before', { agentId: id, file });
+        if (r && r.deny) {
+          process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: r.deny } }));
+          process.exit(0);
+        }
+      }
       const use = ev.tool_name === 'Bash' && scriptFor(String((ev.tool_input || {}).command || ''));
       if (use) {
         call('POST', '/api/script-nudge', { agentId: id, script: use.name });

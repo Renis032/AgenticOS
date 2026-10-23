@@ -2,106 +2,199 @@
   {
     "name": "count",
     "usage": "count <file|glob>...",
-    "does": "exact line (wc -l), non-empty line, word and byte counts"
+    "does": "exact line (wc -l), non-empty line, word and byte counts",
+    "for": "all"
   },
   {
     "name": "find-files",
     "usage": "find-files <name-pattern> [dir] [--max N]",
-    "does": "find files by name, case-insensitive glob, skipping build/.git folders"
+    "does": "find files by name, case-insensitive glob, skipping build/.git folders",
+    "for": "all"
   },
   {
     "name": "find-def",
     "usage": "find-def <symbol> [dir] [--lang cpp|js|py|java|xml] [--max N]",
-    "does": "where a class/struct/enum/function/macro/alias is defined or declared"
+    "does": "where a class/struct/enum/function/macro/alias is defined or declared",
+    "for": "all"
   },
   {
     "name": "call-sites",
     "usage": "call-sites <symbol> [dir] [--lang ...] [--max N] [--with-defs]",
-    "does": "every use of a symbol, grouped by file, without its definitions and comments"
+    "does": "every use of a symbol, grouped by file, without its definitions and comments",
+    "for": "all"
   },
   {
     "name": "diff-files",
     "usage": "diff-files <a> <b> [--max-lines N]",
-    "does": "byte-for-byte compare (sha1), whitespace-only check, unified diff; also directories"
+    "does": "byte-for-byte compare (sha1), whitespace-only check, unified diff; also directories",
+    "for": "all"
   },
   {
     "name": "xml-check",
     "usage": "xml-check <file|glob>...",
-    "does": "XML well-formedness with xmllint"
+    "does": "XML well-formedness with xmllint",
+    "for": "all"
   },
   {
     "name": "changed-files",
     "usage": "changed-files [repo-dir]",
-    "does": "uncommitted changes in a git repo (read-only: status + diff --stat)"
+    "does": "uncommitted changes in a git repo (read-only: status + diff --stat)",
+    "for": "all"
   },
   {
     "name": "route",
     "usage": "route \"<ticket text>\"",
-    "does": "which lead the routing rules would pick for a ticket"
+    "does": "which lead the routing rules would pick for a ticket",
+    "for": "lead"
   },
   {
     "name": "library-check",
     "usage": "library-check <team-docs-dir> [--roots dir1,dir2]",
-    "does": "duplicate notes and file:line references that no longer match the code"
+    "does": "duplicate notes and file:line references that no longer match the code",
+    "for": "office"
   },
   {
     "name": "weekly-report",
     "usage": "weekly-report <lead-id> [--days 7]",
-    "does": "a team's week in numbers: tickets, costs, ratings, staff, problems"
+    "does": "a team's week in numbers: tickets, costs, ratings, staff, problems",
+    "for": "lead"
   },
   {
     "name": "choose-model",
     "usage": "choose-model <role> \"<task brief>\" [--cap opus] [--name <custom name>]",
-    "does": "the expected-value model's pick of model and effort for a task, with the full table"
+    "does": "the expected-value model's pick of model and effort for a task, with the full table",
+    "for": "lead"
   },
   {
     "name": "jev",
     "usage": "jev \"<task>\" [--role <role>] [--cap opus]",
-    "does": "ask Jev (TypeSafe router via OpenRouter) which model and effort fit a task"
+    "does": "ask Jev (TypeSafe router via OpenRouter) which model and effort fit a task",
+    "for": "lead"
   },
   {
     "name": "skills-scan",
     "usage": "skills-scan [--json]",
-    "does": "every Claude Code and office skill: type, size in tokens, uses, pinned model"
+    "does": "every Claude Code and office skill: type, size in tokens, uses, pinned model",
+    "for": "office"
   },
   {
     "name": "suggest-routines",
     "usage": "suggest-routines [--days 7] [--min 3]",
-    "does": "jobs done by hand 3+ times and repeated corrections, as routine/memory suggestions"
+    "does": "jobs done by hand 3+ times and repeated corrections, as routine/memory suggestions",
+    "for": "office"
   },
   {
     "name": "cache-report",
     "usage": "cache-report [--days 30]",
-    "does": "cold prompt-cache reloads in your chats and whether keep-warm pings would pay"
+    "does": "cold prompt-cache reloads in your chats and whether keep-warm pings would pay",
+    "for": "office"
   },
   {
     "name": "workspace-map",
     "usage": "workspace-map [--images]",
-    "does": "draft the CLAUDE.md map and department routers (writes only a proposal), or list images without descriptions"
+    "does": "draft the CLAUDE.md map and department routers (writes only a proposal), or list images without descriptions",
+    "for": "office"
   },
   {
     "name": "artifacts-index",
     "usage": "artifacts-index",
-    "does": "rebuild the artifacts inbox page, newest first, searchable"
+    "does": "rebuild the artifacts inbox page, newest first, searchable",
+    "for": "office"
   },
   {
     "name": "token-usage",
     "usage": "token-usage [--days N] [--session <id prefix>] [--json]",
-    "does": "where Claude Code tokens went: by kind, source, project, model, day; what fills the context (tool results carried per call); biggest results; costliest sessions"
+    "does": "where Claude Code tokens went: by kind, source, project, model, day; what fills the context (tool results carried per call); biggest results; costliest sessions",
+    "for": "office"
   },
   {
     "name": "usage-index",
     "usage": "usage-index [--days N] [--csv] [--session <id>]",
-    "does": "every model call on this machine with exact token counts, attributed to you, agent, team, job, project, model; context breakdown per call"
+    "does": "every model call on this machine with exact token counts, attributed to you, agent, team, job, project, model; context breakdown per call",
+    "for": "office"
   },
   {
     "name": "routing-report",
     "usage": "routing-report [--days 7] [--lead <id>] [--json]",
-    "does": "how model picks turned out: Jev vs EV vs overrides vs pins — done rate, cost, time, ratings, sent back, retried"
+    "does": "how model picks turned out: Jev vs EV vs overrides vs pins — done rate, cost, time, ratings, sent back, retried",
+    "for": "lead"
   },
   {
     "name": "arms-selftest",
     "usage": "arms-selftest [--verbose]",
-    "does": "tests ARMS approvals (memory map, skills, status line, keep-warm), keep-warm pings and Recos setup in a throwaway HOME; proves real ~/.claude is untouched"
+    "does": "tests ARMS approvals (memory map, skills, status line, keep-warm), keep-warm pings and Recos setup in a throwaway HOME; proves real ~/.claude is untouched",
+    "for": "office"
+  },
+  {
+    "name": "show",
+    "usage": "show <file[:line | :from-to]>... [--context N]",
+    "does": "line ranges from one or more files with line numbers (instead of several sed -n or whole-file reads)",
+    "for": "all"
+  },
+  {
+    "name": "outline",
+    "usage": "outline <file|glob>... [--max N]",
+    "does": "classes, functions, methods and headings with line numbers, to find what to read (py, js/ts, c/c++, java/kotlin, go, rust, md, sh)",
+    "for": "all"
+  },
+  {
+    "name": "search",
+    "usage": "search <regex> [dir] [--lang cpp|js|py|java|xml|web|data|md] [--glob \"*.ext\"] [--ignore-case] [--files] [--context N] [--max N]",
+    "does": "code search grouped by file, skipping .git/node_modules/build folders, with optional file type and context lines",
+    "for": "all"
+  },
+  {
+    "name": "project-info",
+    "usage": "project-info [dir]",
+    "does": "what a project is and how to install, build, test and run it (detected from its files), plus commands that worked in earlier jobs and its handoff",
+    "for": "all"
+  },
+  {
+    "name": "sqlite",
+    "usage": "sqlite <db> [\"SELECT ...\"] [--max N]",
+    "does": "read-only SQLite: tables with row counts and columns, or a query's rows as a table",
+    "for": "all"
+  },
+  {
+    "name": "web-shot",
+    "usage": "web-shot <url|file.html> <out.png> [--size 1280x900] [--dark] [--wait ms] [--full]",
+    "does": "screenshot of a web page or local HTML with headless Chrome (then Read the PNG to look at it)",
+    "for": "all"
+  },
+  {
+    "name": "job-cost",
+    "usage": "job-cost <#job> [--top N]",
+    "does": "where a job's usage went: per agent and model, cache reads/writes/output, context size, what filled it, and where to save",
+    "for": "lead"
+  },
+  {
+    "name": "handoff-facts",
+    "usage": "handoff-facts <#job | ProjectFolder>",
+    "does": "facts for save_project_handoff: jobs, files changed, commands and results, questions and answers, costs, commands that worked",
+    "for": "lead"
+  },
+  {
+    "name": "ui-check",
+    "usage": "ui-check [--quick] [--out <dir>] [--size 1600x1000]",
+    "does": "after any change to the Agentic OS window: clicks through every app, menu, Preferences and job state in a throwaway copy (fake agents, nothing spent) and lists JS errors, dead buttons, off-screen buttons and overflowing layouts, with screenshots (about 45 s)",
+    "for": "office"
+  },
+  {
+    "name": "api-check",
+    "usage": "api-check",
+    "does": "after any change to the Agentic OS server: exercises its API in a throwaway copy (fake agents, nothing spent) — jobs, follow-ups, recall, commands and the block list, plans, handoffs, skills, settings, restart, a fresh clone — and lists what broke (about 5 s)",
+    "for": "office"
+  },
+  {
+    "name": "prompt-size",
+    "usage": "prompt-size [--detail]",
+    "does": "how many tokens each role's fixed instructions and office tools take (what every call re-sends), by section",
+    "for": "office"
+  },
+  {
+    "name": "agent-eval",
+    "usage": "agent-eval [--model haiku|sonnet]",
+    "does": "after changing agent instructions: real agents on a cheap model in a throwaway office, checking they read in parts, use scripts, refuse to commit, propose plans and save handoffs (a few cents)",
+    "for": "office"
   }
 ]

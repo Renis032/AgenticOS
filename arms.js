@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 const jev = require('./scripts/jev');
+const { workArea } = require('./lib/work-area');
 const skillsScan = require('./scripts/skills-scan');
 const recosScript = require('./scripts/suggest-routines');
 const cacheReport = require('./scripts/cache-report');
@@ -168,7 +169,8 @@ function install(ctx) {
     const pick = b.model ? { model: b.model, effort: b.effort || 'medium', choice: 'chosen next to the button' }
       : await decideModel({ roster, role: `skill:${name}`, task: `${s.description}\n${b.args || btn.args || ''}`, pin: s.model ? { model: s.model, effort: s.effort || 'low', reason: `model: ${s.model} in SKILL.md` } : null, kind: 'skill' });
     const text = fs.readFileSync(s.file, 'utf8');
-    const cwd = /\/home\/default\/repo\/baseline|~\/repo\/baseline/.test(text) ? path.join(HOME, 'repo', 'baseline') : HOME;
+    const W = workArea(ROOT);
+    const cwd = W.repo && (text.includes(W.repo) || text.includes(W.tilde(W.repo))) ? W.repo : HOME;
     const edit = !!(b.edit ?? btn.edit);
     const r = { id: id(), skill: name, args: b.args || btn.args || '', model: pick.model, effort: pick.effort, choice: pick.choice, edit, cwd, startedAt: now(), status: 'running' };
     fs.writeFileSync(path.join(RUNS, `${r.id}.json`), JSON.stringify(r));
@@ -444,8 +446,8 @@ body{font-family:var(--font);margin:40px;color:var(--c1);background:${colors[2] 
     const list = [
       { id: 'openrouter-key', level: 'S2', title: 'OpenRouter key for Jev', status: jev.keyStatus().present ? 'applied' : 'pending', manual: true,
         what: jev.keyStatus().present ? `Found (${jev.keyStatus().where}). Jev picks models; the EV script is the fallback.` : `Create an OpenRouter account, then put the API key alone in ${jev.keyStatus().where} (mkdir -p ~/.config/agentos; chmod 600 the file). Never paste it in chat. Until then the EV script decides.` },
-      { id: 'memory-map', level: 'M1', title: 'Turn CLAUDE.md into a map', status: status(fs.existsSync(path.join(HOME, '.claude', 'departments', 'work.md'))),
-        what: 'Keep the global rules, move the WORK notes word for word into ~/.claude/departments/work.md, add routers for personal projects and Agentic OS, and add what to keep when a chat compacts. The old file is backed up first. Loaded at every chat start: 9 KB → 2 KB.', diff: true },
+      { id: 'memory-map', level: 'M1', title: 'Turn CLAUDE.md into a map', status: status(fs.existsSync(workArea(ROOT).router)),
+        what: `Keep the global rules, move the ${workArea(ROOT).name} notes word for word into ${workArea(ROOT).tilde(workArea(ROOT).router)}, add routers for personal projects and Agentic OS, and add what to keep when a chat compacts. The old file is backed up first. Loaded at every chat start: 9 KB → 2 KB.`, diff: true },
       ...SKILL_PROPOSALS.map((n) => ({ id: `skill-${n}`, level: n === 'search-connectors' ? 'A1' : 'M3', title: `Install the /${n} skill`, status: status(fs.existsSync(path.join(SKILLS_DIR, n, 'SKILL.md'))),
         what: fs.readFileSync(path.join(ROOT, 'arms', 'skills', n, 'SKILL.md'), 'utf8').split('\n').find((l) => l.startsWith('description:')).slice(13) })),
       { id: 'statusline', level: 'A2', title: 'Usage mod for Claude Code (status line)', status: status(s.statusLine && String(s.statusLine.command || '').includes('agentos-statusline')),

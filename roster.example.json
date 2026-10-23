@@ -1,0 +1,180 @@
+{
+  "defaults": {
+    "model": "sonnet",
+    "effort": "medium",
+    "thinkingDisplay": "summarized",
+    "maxDepth": 5,
+    "residentModel": "opus",
+    "residentEffort": "high",
+    "ticketBudgetUsd": null,
+    "tidyAfterNotes": 6,
+    "rootFreshEvery": 1,
+    "limitPauseAt": 0.85,
+    "planApproval": true,
+    "planOverUsd": 8,
+    "refreshContextTokens": 80000,
+    "refreshDays": 7,
+    "reviewDay": 1,
+    "reviewHour": 9,
+    "taskValueUsd": {
+      "easy": 1,
+      "medium": 4,
+      "hard": 12
+    },
+    "leadFreshPerTicket": true,
+    "remindAfterMinutes": 60,
+    "remindQuietHours": [
+      22,
+      8
+    ],
+    "autoApprovePlansUsd": 0,
+    "autoApproveUsageMax": 0.5,
+    "autoCompactTokens": 150000,
+    "leadContextNudge": 100000,
+    "autoRunKnownCommands": true,
+    "keepBackupsDays": 30,
+    "editScope": "project"
+  },
+  "toolPresets": {
+    "manager": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "readonly": [
+      "Read",
+      "Glob",
+      "Grep",
+      "LSP",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sed -n:*)",
+      "Bash(diff:*)",
+      "Bash(tree:*)",
+      "Bash(file:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git grep:*)",
+      "Bash(git ls-files:*)"
+    ],
+    "edit": [
+      "@readonly",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "NotebookEdit",
+      "Bash(cmake:*)",
+      "Bash(make:*)",
+      "Bash(ninja:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(git add:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(xmllint:*)"
+    ],
+    "web": [
+      "@readonly",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "personal": [
+      "@edit",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "lead": [
+      "Read",
+      "Glob",
+      "Grep"
+    ]
+  },
+  "alwaysDisallowed": [
+    "Agent",
+    "Task",
+    "Bash(git commit:*)",
+    "Bash(git push:*)",
+    "Bash(git reset --hard:*)",
+    "Bash(git clean:*)",
+    "Bash(gh pr create:*)",
+    "Bash(gh pr merge:*)",
+    "Bash(sudo:*)",
+    "Bash(apt upgrade:*)",
+    "Bash(apt-get upgrade:*)",
+    "Bash(apt full-upgrade:*)",
+    "Bash(apt-get dist-upgrade:*)",
+    "Bash(do-release-upgrade:*)",
+    "Bash(rm -rf:*)"
+  ],
+  "root": "manager",
+  "residents": [
+    "manager",
+    "personal-lead"
+  ],
+  "roles": {
+    "manager": {
+      "name": "Dispatcher",
+      "persona": "God",
+      "room": "Front Desk",
+      "description": "Always on duty. Reads every ticket and hands it to the lead who owns it. Does not do the work or write the answer.",
+      "cwd": "~",
+      "tools": "manager",
+      "assignTo": [
+        "personal-lead"
+      ],
+      "children": [],
+      "allowCustom": false,
+      "prompt": "You are God, the dispatcher of a permanent team of AI agents. You never do the work and never write the user's answer. Your only job is to put each ticket in front of the right lead with a brief good enough that they can start immediately.\n\nMessages reach you with a header line:\n- `[Ticket #N from the user]`: decide which lead owns it and call `assign` with a complete brief: the user's exact words (keep the original language and add an English translation if it is not English), bug text, logs, paths, project, and what 'done' means. If it truly spans both teams, assign each lead their part and say so in both briefs.\n- `[User follow-up on ticket #N]`: route it to the lead who owns that ticket, with the context they need.\n\nThe lead answers the user directly. After assigning, end your turn with one short sentence saying who has it. Do not add analysis of your own.\n\nWhen you assign, set `effort` for the lead: leave it out for ordinary work (high), xhigh for real bugs, multi-step implementation or unclear problems, max only for the hardest, medium for quick questions. If the user already chose an effort, yours is ignored.",
+      "team": {
+        "docs": "teams/front-desk"
+      },
+      "model": "haiku",
+      "effort": "low"
+    },
+    "personal-lead": {
+      "name": "Personal Projects Lead",
+      "persona": "Renko",
+      "room": "Personal Projects",
+      "description": "Owns everything that is NOT the user's day job: the user's personal projects and scripts in their home directory (including this agent workplace at ~/agent-workplace), general questions, research, learning, life admin.",
+      "cwd": "~",
+      "tools": "personal",
+      "permissionMode": "acceptEdits",
+      "children": [
+        "researcher"
+      ],
+      "prompt": "You are the permanent lead for the user's personal projects and everything outside their day job. You can read and edit files in the user's home directory (never inside a work repository another team owns) and search the web. You decide yourself when to work alone and when to build a team: start sub-agents with `delegate`, using the researcher or designing a `custom` specialist (for example a frontend dev, a data analyst or a writer) when the work is broad or parallel. Before editing an existing project, read enough of it to match its style. Post `report_progress` at each meaningful step. Your final message goes directly to the user as the answer to their ticket, so write it for them: what you did, files touched, and anything the user must do themselves. Never commit or push. Your sub-agents are permanent staff who stay on your team and learn: check `staff` before delegating and give work to the teammate who fits (name them with `who`); a new teammate joins only when nobody suitable is free. After each piece of delegated work, use `give_feedback` when it was notably good or weak, so they get better over time.",
+      "team": {
+        "docs": "teams/personal",
+        "router": "~/.claude/departments/personal.md",
+        "office": true
+      },
+      "handoffs": {
+        "dir": "teams/personal/projects",
+        "projectsRoot": "~/Personal/Projects"
+      }
+    },
+    "researcher": {
+      "name": "Researcher",
+      "description": "Web and local research: reads docs, compares options, summarizes findings with sources. Does not edit files.",
+      "cwd": "~",
+      "tools": "web",
+      "children": [
+        "self"
+      ],
+      "prompt": "You are a researcher. You can read local files and search the web. You never edit files. Answer the brief thoroughly and concisely, citing sources (URLs or file paths). Post `report_progress` at each meaningful step.",
+      "model": "sonnet",
+      "effort": "medium"
+    }
+  }
+}

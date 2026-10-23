@@ -7,7 +7,21 @@ up() { [ -s data/app-token ] && api /api/limits | grep -q '{'; }
 
 case "$1" in
   stop) shift; exec ./stop.sh "$@" ;;
-  restart) ./stop.sh -f; sleep 1; shift; exec "$0" "$@" ;;
+  restart)
+    if [ "$2" = "--when-idle" ] || [ "$2" = "-i" ]; then
+      if up; then
+        curl -s -m 3 -X POST -H "x-agentos-token: $(cat data/app-token)" -H 'content-type: application/json' -d "{\"when\":\"idle\",\"check\":$([ "$3" = "--no-check" ] && echo false || echo true)}" "http://127.0.0.1:$PORT/api/restart" | node -e '
+          let r = {}; try { r = JSON.parse(require("fs").readFileSync(0)); } catch {}
+          if (!Array.isArray(r.busy)) { console.log("The running server is older than this command. Restart it once with ./agentos restart when nothing is working; after that, --when-idle works."); process.exit(1); }
+          console.log(r.busy.length ? `Restarts as soon as nothing is running (working now: ${r.busy.join(", ")}). New work waits until then; the window reloads by itself.` : "Restarting now; the window reloads by itself.");'
+        exit 0
+      fi
+      shift 2; exec "$0" "$@"
+    fi
+    if [ "$2" = "--cancel" ]; then
+      curl -s -m 3 -X POST -H "x-agentos-token: $(cat data/app-token)" -H 'content-type: application/json' -d '{"when":"cancel"}' "http://127.0.0.1:$PORT/api/restart" >/dev/null && echo "Restart cancelled."; exit 0
+    fi
+    ./stop.sh -f; sleep 1; shift; exec "$0" "$@" ;;
   status)
     if up; then
       api /api/state | node -e '
@@ -33,8 +47,15 @@ EOF
     echo "Installed: Agentic OS is in your applications menu."
     exit 0 ;;
   uninstall) rm -f "$HOME/.local/share/applications/agentos.desktop"; echo "Removed from the applications menu."; exit 0 ;;
+  autostart)
+    f="$HOME/.config/autostart/agentos.desktop"
+    if [ "$2" = "off" ]; then rm -f "$f"; echo "Agentic OS no longer starts at login."; exit 0; fi
+    mkdir -p "$(dirname "$f")"
+    printf '[Desktop Entry]\nType=Application\nName=Agentic OS\nComment=Your permanent team of Claude agents\nExec=%s --background\nIcon=%s\nTerminal=false\nX-GNOME-Autostart-enabled=true\n' "$HERE/agentos" "$HERE/app/icon.png" > "$f"
+    echo "Agentic OS starts at login, in the tray (./agentos autostart off to undo)."; exit 0 ;;
   -h|--help|help)
-    echo "usage: ./agentos [status|stop [-f]|restart|install|uninstall]"
+    echo "usage: ./agentos [--background|status|stop [-f]|restart [--when-idle|--cancel]|install|uninstall|autostart on|off]"
+    echo "  restart --when-idle [--no-check]   finish running work, hold new work, check the new version, then restart; the window reloads"
     echo "  (no argument) start the backend if needed and open the Agentic OS window"
     exit 0 ;;
 esac
@@ -46,5 +67,5 @@ if ! up; then
 fi
 
 python3 -c "import gi; gi.require_version('WebKit2', '4.0')" 2>/dev/null || { echo "Needs python3-gi and gir1.2-webkit2-4.0 (sudo apt install python3-gi gir1.2-webkit2-4.0)."; exit 1; }
-WORKPLACE_PORT="$PORT" nohup python3 app/agentos-window.py >/dev/null 2>&1 &
-echo "Agentic OS is open."
+WORKPLACE_PORT="$PORT" nohup python3 app/agentos-window.py $([ "$1" = "--background" ] && echo --background) >/dev/null 2>&1 &
+[ "$1" = "--background" ] && echo "Agentic OS is running in the tray." || echo "Agentic OS is open."

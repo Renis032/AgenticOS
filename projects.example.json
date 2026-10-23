@@ -1,0 +1,33 @@
+[
+  {
+    "name": "Agent workplace",
+    "path": "/home/default/agent-workplace",
+    "department": "personal-lead",
+    "description": "This multi-agent office itself (Node server + canvas UI).",
+    "keywords": [
+      "agent-workplace",
+      "agent workplace",
+      "the office",
+      "office ui",
+      "renko",
+      "god",
+      "dispatcher",
+      "floor",
+      "meeting room",
+      "self-test",
+      "selftest"
+    ]
+  },
+  {
+    "name": "Personal projects",
+    "path": "~/Personal/Projects",
+    "department": "personal-lead",
+    "description": "Everything in ~/Personal/Projects (each subfolder is a project).",
+    "keywordsFromSubfolders": true,
+    "keywords": [
+      "personal project",
+      "side project",
+      "~/personal"
+    ]
+  }
+]

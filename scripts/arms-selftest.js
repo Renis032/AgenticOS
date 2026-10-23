@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { workArea } = require('../lib/work-area');
 // Runs the ARMS flows that change ~/.claude (approvals), keep-warm pings and Recos setup against a throwaway copy:
 // a temporary HOME and a temporary copy of Agentic OS, with a fake `claude` that only records its arguments.
 // Your real ~/.claude and data/ are checked before and after and must be byte-identical.
@@ -35,14 +36,16 @@ async function call(method, p, b) {
   const st = await call('GET', '/api/arms');
   check('ARMS status loads', st.code === 200 && st.obj.approvals.length >= 6, st.code);
   const mm = await call('POST', '/api/arms/approve/memory-map', {});
-  const work = fs.existsSync(path.join(C, 'departments', 'work.md')) ? fs.readFileSync(path.join(C, 'departments', 'work.md'), 'utf8') : '';
+  const W = require(path.join(root, 'lib', 'work-area')).workArea(root);
+  const routerFile = path.join(C, 'departments', path.basename(W.router));
+  const work = fs.existsSync(routerFile) ? fs.readFileSync(routerFile, 'utf8') : '';
   const after = fs.readFileSync(path.join(C, 'CLAUDE.md'), 'utf8');
   const backups = fs.existsSync(path.join(C, 'backups')) ? fs.readdirSync(path.join(C, 'backups')) : [];
   check('Memory map: applied', mm.obj && mm.obj.ok, mm.obj && (mm.obj.message || mm.obj.error));
   check('Memory map: CLAUDE.md became the short map', after.length < before.length * 0.5, before.length + ' → ' + after.length + ' chars');
   check('Memory map: the old CLAUDE.md is backed up byte for byte', backups.some((b) => fs.readFileSync(path.join(C, 'backups', b), 'utf8') === before), backups.join(', '));
-  const workStart = before.indexOf('# WORK baseline');
-  check('Memory map: WORK notes moved word for word', workStart >= 0 && work.includes(before.slice(workStart).trim().split('\n').slice(0, 40).join('\n')), work.length + ' chars');
+  const workStart = W.heading ? before.indexOf(W.heading) : -1;
+  check('Memory map: ' + W.name + ' notes moved word for word', workStart >= 0 && work.includes(before.slice(workStart).trim().split('\n').slice(0, 40).join('\n')), work.length + ' chars');
   check('Memory map: routers for personal projects and Agentic OS', ['personal.md', 'agentic-os.md'].every((f) => fs.existsSync(path.join(C, 'departments', f))));
   check('Memory map: global rules kept in CLAUDE.md', after.includes('Never run \x60git commit\x60') && after.includes('sudo apt upgrade'));
   for (const n of ['note', 'calibrate', 'search-connectors']) {
@@ -86,11 +89,12 @@ async function call(method, p, b) {
 function fullClaudeMd() {
   const now = path.join(REAL_HOME, '.claude', 'CLAUDE.md');
   const text = fs.readFileSync(now, 'utf8');
-  if (text.includes('# WORK baseline')) return text;
+  const heading = workArea(ROOT).heading;
+  if (heading && text.includes(heading)) return text;
   const dir = path.join(REAL_HOME, '.claude', 'backups');
   const old = (() => { try { return fs.readdirSync(dir).filter((f) => /^CLAUDE\.md\.\d/.test(f)).sort().reverse(); } catch { return []; } })()
-    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).find((t) => t.includes('# WORK baseline'));
-  if (!old) throw new Error('No pre-map CLAUDE.md to test with (the current one is already a map and no backup has the WORK notes).');
+    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).find((t) => heading && t.includes(heading));
+  if (!old) throw new Error('No pre-map CLAUDE.md to test with (the current one is already a map and no backup has the work notes; set defaults.workArea.heading in roster.json).');
   return old;
 }
 
@@ -99,7 +103,7 @@ function setup(tmp) {
   fs.cpSync(ROOT, root, { recursive: true, filter: (src) => !/\/(data|artifacts|inbox|node_modules|\.git)(\/|$)/.test(path.relative(ROOT, src) ? '/' + path.relative(ROOT, src) : '') });
   fs.mkdirSync(path.join(root, 'data', 'arms'), { recursive: true });
   const day = 86400000, now = Date.now();
-  fs.writeFileSync(path.join(root, 'data', 'agents.json'), JSON.stringify([{ id: 'staff1', persona: 'Tess', role: 'work-fsm', staff: true, feedback: [
+  fs.writeFileSync(path.join(root, 'data', 'agents.json'), JSON.stringify([{ id: 'staff1', persona: 'Tess', role: 'researcher', staff: true, feedback: [
     { text: 'Your report pasted whole files again; quote only the relevant lines with file:line', t: now - day },
     { text: 'Report pasted whole files, quote only relevant lines with file:line please', t: now - 2 * day }] }]));
   fs.writeFileSync(path.join(root, 'data', 'tickets.json'), JSON.stringify({ seq: 0, tickets: [] }));

@@ -6,13 +6,27 @@ const os = require('os');
 const crypto = require('crypto');
 const readline = require('readline');
 const { parseArgs, fs, path } = require('./_util');
+const { workArea } = require('../lib/work-area');
 
 const ROOT = path.join(__dirname, '..');
 const DATA = path.join(ROOT, 'data');
 const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const CACHE = path.join(DATA, 'usage', 'cache');
-const VERSION = 5;
+const VERSION = 7;
 const BASE = { opus: 5, sonnet: 3, haiku: 1 };
+// API list prices per million tokens by model (input, output, cache read); cache writes cost 1.25× input (5 min) or 2× (1 hour).
+// From the Claude API model table, 2026-10. Older models fall back to their tier's earlier prices.
+const PRICES = [
+  [/fable/, { in: 10, out: 50, read: 0.25 }],
+  [/mythos/, { in: 10, out: 50, read: 0.25 }],
+  [/opus-5-5/, { in: 4, out: 20, read: 0.2 }],
+  [/opus/, { in: 5, out: 25, read: 0.5 }],
+  [/sonnet-5/, { in: 2, out: 10, read: 0.2 }],
+  [/sonnet/, { in: 3, out: 15, read: 0.3 }],
+  [/haiku-5-5/, { in: 0.1, out: 0.5, read: 0.01 }],
+  [/haiku/, { in: 1, out: 5, read: 0.1 }],
+];
+const priceOf = (model) => { const m = String(model || ''); const hit = PRICES.find(([re]) => re.test(m)); return hit ? hit[1] : { in: 4, out: 20, read: 0.2 }; };
 const WEB_SEARCH_USD = 0.01;
 const NOT_SENT = new Set(['prompt_snapshot', 'thinking_drop', 'credential_org', 'auto_mode', 'command_permissions', 'deferred_tools_record', 'remote_session_change', 'compact_file_reference', 'queued_command']);
 const ATTACH = { instructions: 'claude.md', skill_listing: 'listings', agent_listing_delta: 'listings', deferred_tools_delta: 'listings', mcp_instructions_delta: 'listings', invoked_skills: 'listings', file: 'files', edited_text_file: 'files' };
@@ -44,8 +58,8 @@ function describe(input) {
 const toolName = (n) => (n && n.startsWith('mcp__') ? n.replace(/^mcp__(.+?)__/, 'mcp:$1/') : n || '?');
 
 function cost(c) {
-  const b = BASE[tier(c.model)];
-  const parts = { input: (c.in * b) / 1e6, write: (c.w5 * 1.25 * b + c.w1 * 2 * b) / 1e6, read: (c.r * 0.1 * b) / 1e6, output: (c.out * 5 * b) / 1e6, web: (c.ws || 0) * WEB_SEARCH_USD };
+  const p = priceOf(c.model);
+  const parts = { input: (c.in * p.in) / 1e6, write: (c.w5 * 1.25 * p.in + c.w1 * 2 * p.in) / 1e6, read: (c.r * p.read) / 1e6, output: (c.out * p.out) / 1e6, web: (c.ws || 0) * WEB_SEARCH_USD };
   return { ...parts, total: parts.input + parts.write + parts.read + parts.output + parts.web };
 }
 
@@ -204,7 +218,9 @@ function classify(f, office, parent) {
   if (/^tmp|claude\/dashboard/.test(project)) return { source: 'Tests & experiments', agent: 'test runs', role: 'test', team: 'Tests' };
   const kind = /^Use the \/\S+ skill/.test(p) ? 'skill runs' : /^You improve a Claude Code skill/.test(p) ? 'teach' : /^Reply with: ok/.test(p) ? 'limit probes'
     : /self-test|selftest|smoke test|stop test|^say /i.test(p) ? 'self-tests' : /^\[Ticket|^\[User follow-up/.test(p) ? 'agents (older runs)' : 'scripts';
-  if (kind === 'scripts' && project.startsWith('repo/baseline')) return { source: 'Agentic OS', agent: '(earlier WORK staff)', role: 'staff before per-agent tracking', team: 'WORK team (before per-agent tracking)', ticket: null };
+  const W = workArea(ROOT);
+  const workRel = W.repo ? path.relative(os.homedir(), W.repo) : null;
+  if (kind === 'scripts' && workRel && project.startsWith(workRel)) return { source: 'Agentic OS', agent: `(earlier ${W.name} staff)`, role: 'staff before per-agent tracking', team: `${W.name} team (before per-agent tracking)`, ticket: null };
   return { source: 'Agentic OS', agent: `(${kind === 'scripts' ? 'earlier office runs' : kind})`, role: kind, team: 'Agentic OS system', ticket: null };
 }
 
@@ -226,7 +242,9 @@ async function index(opts = {}) {
     const oh = f.overhead || (parent && parent.overhead) || fallbackOverhead;
     f.fixed = oh ? oh.system + oh.tools : 0;
     f.calls = f.calls.filter((c) => (seen.has(c.id) ? false : (seen.add(c.id), true)));
-    for (const c of f.calls) { c.usd = cost(c); if (c.tk == null && f.ticket) c.tk = f.ticket; }
+    // A job number counts only in sessions this office started (its sessions.jsonl); test copies and other offices reuse numbers.
+    const ours = office.byPrefix.has(((parent || f).sid || '').slice(0, 8));
+    for (const c of f.calls) { c.usd = cost(c); if (!ours) c.tk = null; else if (c.tk == null && f.ticket) c.tk = f.ticket; }
   }
   MEMO = { at: Date.now(), files, jev: readJsonl(path.join(DATA, 'arms', 'routing.jsonl')).filter((l) => l.source === 'jev' && !l.error) };
   return files;
@@ -301,7 +319,7 @@ async function overview(q = {}) {
       sources: [...new Set(files.map((f) => f.source)), 'Jev (OpenRouter)'], projects: [...new Set(files.map((f) => f.project))].sort(), agents: [...new Set(files.map((f) => f.agent))].sort(),
       teams: [...new Set(files.map((f) => f.team))].sort(), models: [...new Set(files.flatMap((f) => f.calls.map((c) => c.model)))].filter(Boolean).sort(),
     },
-    prices: 'API list prices: input per M tokens opus $5, sonnet $3, haiku $1; cache write 1.25× (5 min) or 2× (1 h); cache read 0.1×; output 5×; web search $10 per 1,000.',
+    prices: 'API list prices per M tokens: Opus 5.5 $4 in / $20 out / $0.20 cache read; Sonnet 5.5 $2 / $10 / $0.20; Haiku 5.5 $0.10 / $0.50; older models at their own prices; cache writes 1.25× input (5 min) or 2× (1 h); web search $10 per 1,000.',
   };
 }
 
@@ -374,7 +392,7 @@ async function cacheRead(q = {}) {
       const j = i + 1;
       const sameSeg = seg[j] === seg[i];
       suffixN[i] = sameSeg ? suffixN[j] + 1 : 0;
-      suffixP[i] = sameSeg ? suffixP[j] + (0.1 * BASE[tier(calls[j].model)]) / 1e6 : 0;
+      suffixP[i] = sameSeg ? suffixP[j] + priceOf(calls[j].model).read / 1e6 : 0;
     }
     for (let i = 0; i < calls.length; i++) {
       const c = calls[i];
@@ -394,7 +412,7 @@ async function cacheRead(q = {}) {
       const bb = buckets[b] || (buckets[b] = { calls: 0, r: 0, usd: 0 });
       bb.calls++; bb.r += c.r; bb.usd += c.usd.read;
       const m = c.model.replace(/^claude-/, '') || '?';
-      const mm = models[m] || (models[m] = { calls: 0, r: 0, usd: 0, perM: 0.1 * BASE[tier(c.model)] });
+      const mm = models[m] || (models[m] = { calls: 0, r: 0, usd: 0, perM: priceOf(c.model).read });
       mm.calls++; mm.r += c.r; mm.usd += c.usd.read;
       for (const cap of SAVE_CAPS) if (ctx > cap) savings[cap] += (c.usd.read * (ctx - cap)) / ctx;
       if (prev) {
@@ -402,7 +420,7 @@ async function cacheRead(q = {}) {
         const oneHour = c.w1 > 0 || prev.w1 > 0;
         const w = c.w5 + c.w1;
         if (gap > (oneHour ? 3600000 : 300000) && w > 10000) {
-          const extra = (w * ((oneHour ? 2 : 1.25) - 0.1) * BASE[tier(c.model)]) / 1e6;
+          const extra = (w * ((oneHour ? 2 : 1.25) * priceOf(c.model).in - priceOf(c.model).read)) / 1e6;
           cold.n++; cold.tokens += w; cold.usd += extra;
           cold.list.push({ t: c.t, sid: f.sid, session: f.label, agent: f.agent, gapMin: Math.round(gap / 60000), tokens: w, usd: extra, ttl: oneHour ? '1 h' : '5 min' });
         }
@@ -444,7 +462,7 @@ async function liveChats(minTokens) {
   return out.sort((a, b) => b.tokens - a.tokens);
 }
 
-module.exports = { index, overview, calls, session, csv, liveChats, cacheRead, cost };
+module.exports = { index, overview, calls, session, csv, liveChats, cacheRead, cost, priceOf };
 if (require.main === module) {
   const { opt } = parseArgs(process.argv.slice(2));
   const M = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n));

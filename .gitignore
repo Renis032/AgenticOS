@@ -1,0 +1,10 @@
+# Runtime state, not code: agents, jobs, conversations, logs, uploads, backups and the app token.
+data/
+# Python bytecode
+__pycache__/
+*.pyc
+# Local office knowledge and config: team libraries, handoffs, skills, and the roster/projects (they may name the user's employer).
+# A fresh clone starts from roster.example.json and projects.example.json.
+teams/
+roster.json
+projects.json

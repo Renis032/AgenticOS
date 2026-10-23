@@ -5,7 +5,9 @@ const { spawnSync } = require('child_process');
 const { parseArgs, cli, fs, path } = require('./_util');
 
 const ROOT = path.join(__dirname, '..');
-const DIRS = [{ dir: path.join(os.homedir(), '.claude', 'skills'), scope: 'claude-code' }, { dir: path.join(ROOT, 'skills'), scope: 'office' }];
+// Claude Code's skills, the office's own, and each team's skills that agents proposed and the user approved.
+const teamDirs = () => { try { return fs.readdirSync(path.join(ROOT, 'teams')).map((t) => ({ dir: path.join(ROOT, 'teams', t, 'skills'), scope: `team:${t}` })); } catch { return []; } };
+const DIRS = [{ dir: path.join(os.homedir(), '.claude', 'skills'), scope: 'claude-code' }, { dir: path.join(ROOT, 'skills'), scope: 'office' }, ...teamDirs()];
 
 function frontmatter(text) {
   const m = text.match(/^---\n([\s\S]*?)\n---/);
@@ -68,7 +70,7 @@ function run(argv) {
   const { opt } = parseArgs(argv);
   const list = scan();
   if (opt.json) return JSON.stringify(list, null, 1);
-  return [`${list.length} skills (most used first):`, 'uses  tokens  type        model    name', ...list.map((s) => `${String(s.uses).padStart(4)}  ${String(s.tokens).padStart(6)}  ${s.type.padEnd(10)}  ${(s.model || '-').padEnd(7)}  ${s.name}${s.scope === 'office' ? ' (office)' : ''}`)].join('\n');
+  return [`${list.length} skills (most used first):`, 'uses  tokens  type        model    name', ...list.map((s) => `${String(s.uses).padStart(4)}  ${String(s.tokens).padStart(6)}  ${s.type.padEnd(10)}  ${(s.model || '-').padEnd(7)}  ${s.name}${s.scope === 'office' ? ' (office)' : s.scope.startsWith('team:') ? ` (${s.scope.slice(5)} team)` : ''}`)].join('\n');
 }
 
 module.exports = { scan, frontmatter };

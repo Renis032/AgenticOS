@@ -41,6 +41,9 @@ function records(agents, tickets, key) {
       const t = tk.get(h.ticketId);
       let ok = h.outcome === 'done' ? 1 : 0;
       if (ok && t && t.rating && t.rating.score < 0) ok = 0.5;
+      // Signals the user gives without rating: a follow-up soon after "done" means rework; undone changes mean the work was wrong.
+      if (ok && t && t.undone) ok = Math.min(ok, 0.4);
+      if (ok && t && t.rework) ok = Math.min(ok, 0.7);
       out.push({ role: roleKey(a), model, effort, ok, cost: h.costUsd || 0 });
     }
   }

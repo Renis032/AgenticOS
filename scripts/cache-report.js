@@ -56,15 +56,15 @@ async function report(opts) {
       const ttl = oneHour ? 3600000 : 300000;
       const write = c.u.cache_creation_input_tokens || 0;
       if (gap <= ttl || write < 10000) continue;
-      const base = BASE[tier(c.model)];
+      const p = require('./usage-index').priceOf(c.model);
       const wMul = oneHour ? 2 : 1.25;
-      const usd = (write * (wMul - 0.1) * base) / 1e6;
+      const usd = (write * (wMul * p.in - p.read)) / 1e6;
       const isOffice = office.has(c.session);
       r.cold++; r.coldTokens += write; r.coldUsd += usd;
       if (isOffice) { r.office.cold++; r.office.coldUsd += usd; }
       if (gap <= WARM_FOR) {
         const pings = Math.max(1, Math.ceil((gap - (oneHour ? 0 : 0)) / PING_EVERY) - 1);
-        const pingUsd = (pings * write * 0.1 * base) / 1e6 + pings * 0.0005;
+        const pingUsd = (pings * write * p.read) / 1e6 + pings * 0.0005;
         r.savable++; r.savableUsd += usd; r.pingUsd += pingUsd;
         if (isOffice) { r.office.savableUsd += usd; r.office.pingUsd += pingUsd; }
       } else r.longGaps++;

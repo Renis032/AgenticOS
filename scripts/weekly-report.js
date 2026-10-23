@@ -48,6 +48,9 @@ function build(leadId, since, { tickets, agents, usage }) {
   if (down.length) reasons.push(`${down.length} answer${down.length > 1 ? 's' : ''} rated not good`);
   if (bad.length) reasons.push(`${bad.length} ticket${bad.length > 1 ? 's' : ''} not finished`);
   if (staffFails.length) reasons.push(`${staffFails.length} teammate task${staffFails.length > 1 ? 's' : ''} not completed`);
+  const rework = week.filter((t) => t.rework), undone = week.filter((t) => t.undone);
+  if (rework.length) reasons.push(`${rework.length} answer${rework.length > 1 ? 's' : ''} followed up within 2 hours (rework)`);
+  if (undone.length) reasons.push(`${undone.length} job${undone.length > 1 ? 's' : ''} with changes undone`);
   if (spikes.length) reasons.push(`${spikes.length} ticket${spikes.length > 1 ? 's' : ''} cost over 3× the usual ${money(typical)}`);
 
   const L = [];
@@ -79,6 +82,8 @@ function build(leadId, since, { tickets, agents, usage }) {
     for (const t of bad) L.push(`- #${t.n} ${t.status}`);
     for (const { a, x } of staffFails) L.push(`- ${a.persona}: #${x.n || '?'} ${x.title} — ${x.outcome}`);
     for (const t of spikes) L.push(`- #${t.n} cost ${money(t.costUsd)}`);
+    for (const t of rework) L.push(`- #${t.n} needed ${t.rework} follow-up${t.rework > 1 ? 's' : ''} soon after the answer`);
+    for (const t of undone) L.push(`- #${t.n} had changes undone`);
   } else {
     L.push('', 'Nothing went wrong this week: no bad ratings, nothing unfinished, no cost spikes.');
   }

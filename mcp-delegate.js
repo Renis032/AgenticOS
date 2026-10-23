@@ -138,17 +138,19 @@ tools.push({
     required: ['to', 'feedback'],
   },
 });
-const SCRIPTS = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'scripts', 'manifest.json'), 'utf8')); } catch { return []; } })();
+// Only the scripts meant for this agent (manifest "for": all, lead, office), so the tool description stays short.
+const SCRIPT_FOR = (process.env.WORKPLACE_SCRIPTS || 'all').split(',');
+const SCRIPTS = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'scripts', 'manifest.json'), 'utf8')).filter((x) => SCRIPT_FOR.includes(x.for || 'all')); } catch { return []; } })();
 if (SCRIPTS.length) {
   tools.push({
     name: 'script',
     description: 'Run an office script: exact, instant and free. Use it for all mechanical work instead of doing it by hand or delegating it. ' +
-      'Relative paths are resolved from your working folder.\n' + SCRIPTS.map((x) => `- ${x.name}: ${x.does}. Usage: ${x.usage}`).join('\n'),
+      'Relative paths are resolved from your working folder.\n' + SCRIPTS.map((x) => `- ${x.usage}: ${x.does.split(/[;(]/)[0].trim()}`).join('\n'),
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', enum: SCRIPTS.map((x) => x.name) },
-        args: { type: 'array', items: { type: 'string' }, description: 'Arguments, one per item, e.g. ["SetupSummaryInDetail", "games/common_libs/core/game_core", "--lang", "cpp"].' },
+        args: { type: 'array', items: { type: 'string' }, description: 'Arguments, one per item, e.g. ["parseArgs", "src", "--lang", "js"].' },
       },
       required: ['name'],
     },
@@ -237,6 +239,58 @@ if (process.env.WORKPLACE_HAS_TEAM) {
     },
   });
 }
+if (process.env.WORKPLACE_CAN_RUN) {
+  tools.push({
+    name: 'run_command',
+    description: 'Run a shell command (bash -lc) in a folder inside the home directory and get its exit code and output. ' +
+      'The user sees the command and its live output' + (process.env.WORKPLACE_CAN_RUN === 'ask' ? ' and approves it before it runs' : '') + '. ' +
+      'Use it for builds, tests, installs and running programs that your Bash tool does not allow. Commit, push, sudo, upgrades and rm -rf are blocked.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The command line. Join related steps with &&. Must not wait for input.' },
+        cwd: { type: 'string', description: 'Working folder, absolute or ~/…. Default: your working folder.' },
+        reason: { type: 'string', description: 'One line for the user: why this command is needed.' },
+        timeout_sec: { type: 'number', description: 'Stop it after this many seconds (default 300, max 1800).' },
+      },
+      required: ['command', 'reason'],
+    },
+  });
+}
+if (process.env.WORKPLACE_CAN_EDIT) {
+  tools.push({
+    name: 'request_edit_access',
+    description: 'Ask the user to let you edit files in a folder outside this job\'s edit area (its project folder, team library and scratch folders). ' +
+      'Waits for their decision. Use it only when the job really needs changes there.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder: { type: 'string', description: 'The folder, absolute or ~/…; grants it and everything inside.' },
+        reason: { type: 'string', description: 'One line for the user: what you need to change there and why.' },
+      },
+      required: ['folder', 'reason'],
+    },
+  });
+}
+if (process.env.WORKPLACE_HAS_TEAM) {
+  tools.push({
+    name: 'propose_skill',
+    description: 'Propose a skill (saved instructions) that would make you or your team better or cheaper on future jobs: a procedure you keep ' +
+      're-deriving, a checklist that would have prevented a mistake, how to work in a project or area. The user approves or rejects it; you do not wait. ' +
+      'To improve an existing skill, propose it under the same name with the full new text.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short kebab-case name, e.g. "python-project-testing".' },
+        description: { type: 'string', description: 'One line: when to use it (this is how agents decide to read it).' },
+        why: { type: 'string', description: 'The evidence: which jobs, what was repeated or went wrong, what it will save.' },
+        scope: { type: 'string', enum: ['me', 'team'], description: 'Only for you, or for your whole team.' },
+        content: { type: 'string', description: 'The skill itself in Markdown: concrete steps, checks and pitfalls. Keep it focused and short.' },
+      },
+      required: ['name', 'description', 'why', 'content'],
+    },
+  });
+}
 if (process.env.WORKPLACE_HANDOFFS) {
   tools.push({
     name: 'save_project_handoff',
@@ -263,6 +317,7 @@ tools.push({
     properties: {
       status: { type: 'string', description: 'One or two sentences.' },
       percent: { type: 'number', description: 'Optional rough completion estimate, 0-100.' },
+      step: { type: 'number', description: 'While working through an approved plan: the number of the plan step you are on now (1 = first).' },
     },
     required: ['status'],
   },
@@ -336,12 +391,24 @@ async function callTool(id, name, args) {
       const r = await post('/api/docs/add', { agentId: AGENT_ID, page: args.page, text: args.text });
       return textResult(id, r.error || r.message, !!r.error);
     }
+    if (name === 'run_command') {
+      const r = await post('/api/command/run', { agentId: AGENT_ID, command: args.command, cwd: args.cwd, reason: args.reason, timeout_sec: args.timeout_sec });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'request_edit_access') {
+      const r = await post('/api/edit-access/request', { agentId: AGENT_ID, folder: args.folder, reason: args.reason });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'propose_skill') {
+      const r = await post('/api/skill-proposals/propose', { agentId: AGENT_ID, name: args.name, description: args.description, why: args.why, scope: args.scope, content: args.content });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
     if (name === 'save_project_handoff') {
       const r = await post('/api/handoff/save', { agentId: AGENT_ID, project: args.project, state: args.state, session: args.session });
       return textResult(id, r.error || r.message, !!r.error);
     }
     if (name === 'report_progress') {
-      await post('/api/progress', { agentId: AGENT_ID, status: args.status, percent: args.percent });
+      await post('/api/progress', { agentId: AGENT_ID, status: args.status, percent: args.percent, step: args.step });
       return textResult(id, 'Posted.');
     }
     textResult(id, 'Unknown tool: ' + name, true);

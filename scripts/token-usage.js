@@ -47,10 +47,10 @@ function sourceOf(s) {
 }
 
 function cost(model, u) {
-  const b = BASE[tier(model)];
+  const p = require('./usage-index').priceOf(model);
   const c1h = (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0;
   const c5m = (u.cache_creation_input_tokens || 0) - c1h;
-  return { input: ((u.input_tokens || 0) * b) / 1e6, write: (c5m * 1.25 * b + c1h * 2 * b) / 1e6, read: ((u.cache_read_input_tokens || 0) * 0.1 * b) / 1e6, output: ((u.output_tokens || 0) * 5 * b) / 1e6 };
+  return { input: ((u.input_tokens || 0) * p.in) / 1e6, write: (c5m * 1.25 * p.in + c1h * 2 * p.in) / 1e6, read: ((u.cache_read_input_tokens || 0) * p.read) / 1e6, output: ((u.output_tokens || 0) * p.out) / 1e6 };
 }
 
 const blank = () => ({ calls: 0, input: 0, write: 0, read: 0, output: 0, thinking: 0, usd: 0, usdParts: { input: 0, write: 0, read: 0, output: 0 } });
@@ -216,7 +216,7 @@ function text(r) {
   const carriedTotal = Object.values(r.carried).reduce((a, b) => a + b, 0) || 1;
   const out = [
     `TOKEN USAGE, last ${r.days} days: ${r.sessionCount} sessions, ${T.calls} model calls, ${r.compactions} compactions.`,
-    `Estimated at API list prices (opus $5 / sonnet $3 / haiku $1 per M input; output 5x, cache write 1.25x or 2x, cache read 0.1x). On a subscription you don't pay this; it shows relative weight and drives the usage limits.`,
+    `Estimated at API list prices per model (Opus 5.5 $4 in / $20 out / $0.20 cache read; Sonnet 5.5 $2 / $10 / $0.20; Haiku 5.5 $0.10 / $0.50; cache writes 1.25× or 2× input). On a subscription you don't pay this; it shows relative weight and drives the usage limits.`,
     '',
     'WHAT KIND OF TOKENS',
     table([['', 'tokens', 'share', 'API $', 'share of $'],

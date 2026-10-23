@@ -27,7 +27,21 @@ fs.mkdirSync(EVENTS_DIR, { recursive: true });
 
 const home = (p) => (p && p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p);
 const readJson = (f) => JSON.parse(fs.readFileSync(path.join(ROOT, f), 'utf8'));
+// Whether a folder is inside the work repository (defaults.workArea.repo in the local roster), where staff get the edit preset without web access.
+const inWorkRepo = (dir) => { const repo = require('./lib/work-area').workArea(ROOT).repo; return !!(repo && dir && home(dir).startsWith(path.dirname(repo))); };
+// roster.json and projects.json are local (git ignores them; they may name the user's employer). A fresh clone starts from the examples.
+for (const f of ['roster.json', 'projects.json']) {
+  const ex = path.join(ROOT, f.replace('.json', '.example.json'));
+  if (!fs.existsSync(path.join(ROOT, f)) && fs.existsSync(ex)) fs.copyFileSync(ex, path.join(ROOT, f));
+}
+// Team libraries (teams/) are local too; make sure each team's folder exists.
+for (const def of Object.values(readJson('roster.json').roles)) if (def.team && def.team.docs) fs.mkdirSync(path.join(ROOT, def.team.docs), { recursive: true });
 const now = () => Date.now();
+// A live view of an object held in a variable that may be replaced (passed to lib/ modules): reads and writes reach whatever it holds now.
+const live = (get) => new Proxy({}, {
+  get: (_, k) => get()[k], set: (_, k, v) => { get()[k] = v; return true; }, has: (_, k) => k in get(), deleteProperty: (_, k) => delete get()[k],
+  ownKeys: () => Reflect.ownKeys(get()), getOwnPropertyDescriptor: (_, k) => { const d = Object.getOwnPropertyDescriptor(get(), k); if (d) d.configurable = true; return d; },
+});
 const newId = () => crypto.randomBytes(4).toString('hex');
 const ACTIVE = ['running', 'queued', 'delegating'];
 
@@ -334,6 +348,8 @@ function writeMemory(agentId, content) {
   if (!a) return { error: 'Unknown agent.' };
   let text = String(content || '').trim();
   if (!text) return { error: 'Empty memory; send the full revised text.' };
+  const secret = require('./lib/secrets').findSecret(text);
+  if (secret) return { error: require('./lib/secrets').refusal(secret) };
   const cut = text.length > MEMORY_MAX;
   if (cut) text = text.slice(0, MEMORY_MAX);
   const file = path.join(MEMORY_DIR, agentId + '.md');
@@ -409,7 +425,7 @@ function systemPrompt(roster, a, childRoles) {
       'and the price of a failure, and takes the best value. So write briefs that make the difficulty clear (what is hard about it, what ' +
       'is at stake). The choice and its numbers come back to you in the delegation result. Only if you have concrete evidence the choice ' +
       `is wrong for this task, set \`pin_model: true\` with \`model\`, \`effort\` and a one-line \`pin_reason\`. You cannot go above ${modelOf(roster, a).model}. ` +
-      'Each ticket has a budget; if it runs out, new sub-agents wait until the user raises it.');
+      (ticketBudget() != null ? 'Each ticket has a budget; if it runs out, new sub-agents wait until the user raises it.' : 'Jobs have no dollar budget; the user\'s plan usage limits are what count, so do not spend on teammates you do not need.'));
   } else if (!def.assignTo) {
     parts.push('You cannot start sub-agents: do the work yourself.');
   }
@@ -432,22 +448,25 @@ function systemPrompt(roster, a, childRoles) {
     'team library (`add_to_team_docs`), not in your memory. ' +
     (childRoles.length ? 'When someone you delegated to did notably good or weak work, tell them with `give_feedback` so they improve.' : ''));
   parts.push('', '## Scripts first',
-    'Mechanical work is done by office scripts, never by hand and never by a teammate: counting lines, finding files, finding where ' +
-    'something is defined, listing call sites, comparing files or configs byte for byte, checking XML, listing uncommitted changes. ' +
-    'Call the `script` tool for these: the results are exact, instant and free. Never delegate a task a script can do. ' +
-    'Read files in parts: find the lines you need first (find-def, call-sites, Grep -n), then Read with offset and limit around them. ' +
-    'Everything you read stays in your context and is re-read on every later step, so a whole 2,000-line file costs you on every call that follows. ' +
-    'If you notice a mechanical step you keep doing that no script covers, record it with `add_to_team_docs` on the page "script-ideas" ' +
-    '(what it would take and give back) so it gets built.');
+    'Mechanical work (counting, finding files or definitions, call sites, comparing, checking XML, uncommitted changes) is done with the ' +
+    '`script` tool: exact, instant, free. Never do it by hand or delegate it. Read in parts: `outline`, `search` or `find-def` to find the ' +
+    'lines, then `show file:from-to` (several files at once) or Read with offset/limit. Everything you read is re-read on every later call. ' +
+    'A mechanical step no script covers goes on the "script-ideas" page (`add_to_team_docs`).');
   parts.push('', '## Past tickets',
     'Before non-trivial work, call `search_tickets` with the key terms (component, error text, file name). An earlier ticket may ' +
     'already hold the root cause, the fix that was made, or the user\'s verdict on a similar answer. Do not redo solved work blindly.');
   if (a.resident && !def.assignTo && childRoles.length) {
+    parts.push('', '## You manage; teammates do the long work',
+      'Your conversation lasts the whole job and is re-read on every call, so it is the most expensive context in the office. Keep it small: ' +
+      'read only what you need to decide, plan, write precise briefs (goal, files with line numbers, constraints, how to check), and review ' +
+      'short reports. Hand long reading, searching, multi-file edits, test runs and fix loops to teammates, who start fresh each time and ' +
+      'usually run on cheaper models. Do small, quick things yourself.');
     parts.push('', '## Plans for big tickets',
       'Before a big piece of work (two or more teammates at once, any opus teammate, or work you expect to cost more than ' +
       `$${roster.defaults.planOverUsd || 2}), call \`propose_plan\` with a short plan: the steps, who does what on which model and effort, ` +
       'and an honest cost estimate in USD. The user approves, adjusts or rejects it; follow their adjustments. ' +
-      'The office refuses a big delegation until the plan is approved. Small tickets need no plan.');
+      'The office refuses a big delegation until the plan is approved. Small tickets need no plan. ' +
+      'Write the plan\'s steps as a numbered list; while you work through an approved plan, pass `step` (the number of the step you are on) to `report_progress` so the user sees the plan tick off.');
   }
   if (a.resident && !def.assignTo) {
     parts.push('', '## Asking the user',
@@ -456,21 +475,15 @@ function systemPrompt(roster, a, childRoles) {
       'find out yourself, and ask everything you need in one question. Files the user attaches are listed in the ticket; open them with Read.');
   }
   parts.push('', '## Shared files',
-    'Make file changes with Edit, Write or MultiEdit, never with sed or shell redirection: the user reviews and can undo every ' +
-    'change those tools make on a ticket. Change existing files with Edit or MultiEdit, touching only the lines that change; use Write ' +
-    'only for new files or when you rewrite most of a file. A Write re-sends the whole file and it stays in your context for every later ' +
-    'step, so it costs far more tokens than an Edit.',
-    'Other agents may be working in the same files. If someone else edits a file you edit (or the reverse), you both get an ' +
-    'automatic heads-up. Then decide together, with `ask`/`send_message`, how to proceed: one of you makes both changes, you split ' +
-    'by function or region, or one waits for the other. `colleagues` shows who is editing what; check it before larger edits.');
+    'Change files only with Edit/MultiEdit (just the changed lines) or Write (new files, full rewrites), never sed or redirection: the ' +
+    'user reviews and can undo those changes. If another agent edits the same file you both get a heads-up; agree with `ask`/`send_message` ' +
+    'who changes what.');
   parts.push('', '## Colleagues',
-    'You can talk to anyone currently in the office: `colleagues` lists who is here and what they work on; ' +
-    '`send_message` leaves a note (non-blocking); `ask` sends a question and waits for the answer. Use them to check ' +
-    'a fact with the specialist who owns it, coordinate with someone working on the same ticket, or warn a teammate about ' +
-    'something that affects their work. Keep messages short and specific. Messages to you are delivered automatically ' +
-    'after your tool calls, marked [Mail]; answer an `ask` with `send_message` using its reply_to id.');
+    '`colleagues` lists who is here; `send_message` leaves a short note; `ask` asks and waits. Messages to you arrive after your tool calls ' +
+    'marked [Mail]; answer an `ask` with `send_message` and its reply_to id.');
   const team = teamOf(roster, a);
-  if (team && team.router && fs.existsSync(team.router)) {
+  // The area router: for leads, and for staff too when the team says it holds working knowledge (team.routerForStaff).
+  if (team && team.router && fs.existsSync(team.router) && (a.resident || (roster.roles[team.key].team || {}).routerForStaff)) {
     parts.push('', '## Your area (router)', `From ${team.router}, loaded for you because CLAUDE.md is only a map:`, '', fs.readFileSync(team.router, 'utf8').slice(0, 20000));
   }
   if (team) {
@@ -480,6 +493,24 @@ function systemPrompt(roster, a, childRoles) {
       ' Read the pages relevant to your task before you decide on an approach. When you learn something durable that future ' +
       'teammates would need (a verified fact with file:line evidence, a pitfall, where something lives, a decision and why), ' +
       'record it with `add_to_team_docs`. Do not record guesses.');
+  }
+  if (canRunCommands(roster, a) && commandMode(roster) !== 'off') {
+    parts.push('', '## Terminal commands',
+      'Your Bash tool only allows a short list of commands. For anything else (builds, test runs, installs, starting or checking a program, ' +
+      'scripts with arguments), use `run_command`: it runs `bash -lc` in the folder you give, shows the command and its live output to the user, ' +
+      'and returns the exit code and output. ' +
+      (commandMode(roster) === 'ask' ? 'The user approves each command before it runs, so put related steps in one command (joined with &&) and say why in `reason`. ' : 'Commands run without asking, so be careful. ') +
+      'Commit, push, sudo, system upgrades and rm -rf are blocked; when one of those is needed, tell the user what to run. ' +
+      'Commands cannot read input: use non-interactive flags (-y, --yes, CI=1). Set `timeout_sec` for long builds (default 300, max 1800).');
+  }
+  parts.push(...skillProposals.promptFor(roster, a));
+  const ccSkills = claudeSkillsFor(roster, a);
+  if (ccSkills.length) {
+    parts.push('', '## Claude Code skills for your team',
+      'These skills from ~/.claude/skills hold the team\'s proven procedures. When a task matches one, call the `Skill` tool with its name before you start, and follow it:',
+      ...ccSkills.map((s) => `- ${s.name}: ${s.description}`),
+      'A skill may tell you to start a subagent with the Agent tool. That tool is not available here: use `delegate` with the matching roster role instead ' +
+      '(or do the step yourself if you cannot delegate).');
   }
   const handoffs = handoffsOf(roster, a);
   if (handoffs) {
@@ -493,7 +524,7 @@ function systemPrompt(roster, a, childRoles) {
       'When you finish work on a project, and whenever the user says they are wrapping up or asks for a summary, call ' +
       '`save_project_handoff` before your final answer, once per project you worked on. `state` is the full current state, rewritten ' +
       'each time (what the project is and how to run it, what works, decisions and why, open problems, next steps in order, key files). ' +
-      '`session` is this chat: what the user asked, what you did, files changed, what the user decided or corrected. Write both so a ' +
+      '`session` is this chat: what the user asked, what you did, files changed, what the user decided or corrected. Run the `handoff-facts` script first (job number or project folder) for the facts, and `project-info` when you start on a project. Write both so a ' +
       'fresh session with no other context can carry on.',
       `Handoffs saved so far: ${saved.length ? saved.join(', ') : 'none yet'}.`);
   }
@@ -510,6 +541,40 @@ function modelOf(roster, a) {
   if (a.resident) return { model: def.model || roster.defaults.residentModel || 'opus',
     effort: (a.id !== roster.root && a.runEffort) || def.effort || roster.defaults.residentEffort || 'high' };
   return { model: a.model || def.model || roster.defaults.model, effort: a.effort || def.effort || roster.defaults.effort };
+}
+
+// How big each role's fixed instructions and tool definitions are (scripts/prompt-size.js): what every call of that role re-sends.
+async function promptSizes() {
+  const roster = readJson('roster.json');
+  const out = [];
+  const leadsList = roster.residents.filter((k) => k !== roster.root);
+  const sample = [roster.root, ...leadsList, ...[...new Set(leadsList.flatMap((k) => roster.roles[k].children || []))].filter((r) => r !== 'custom')];
+  for (const role of sample) {
+    const def = roster.roles[role];
+    if (!def) continue;
+    const resident = roster.residents.includes(role);
+    const home = resident ? role : leadsList.find((k) => (roster.roles[k].children || []).includes(role));
+    const a = resident ? { id: role, role, resident: true, persona: def.persona || role, name: def.name, inbox: [] }
+      : { id: `size-${role}`, role, staff: true, homeId: home, parentId: home, persona: 'Sample', name: def.name, ticketN: 0, history: [] };
+    let text = '';
+    try { text = systemPrompt(roster, a, childRolesFor(roster, a)); } catch (e) { out.push({ role, error: e.message }); continue; }
+    const sections = text.split(/\n(?=## )/).map((x) => ({ name: (x.match(/^## (.*)/) || [null, '(role instructions)'])[1], chars: x.length }));
+    const args = buildArgs(roster, a);
+    const mcpEnv = JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers.workplace.env;
+    const toolsJson = await new Promise((resolve) => {
+      const c = spawn(process.execPath, [path.join(ROOT, 'mcp-delegate.js')], { env: { ...process.env, ...mcpEnv }, stdio: ['pipe', 'pipe', 'ignore'] });
+      let buf = '';
+      const done = (v) => { try { c.kill(); } catch {} resolve(v); };
+      c.stdout.on('data', (d) => { buf += d; const line = buf.split('\n').find((l) => /"id":\s*2\b/.test(l)); if (line) done(line); });
+      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'size', version: '1' } } }) + '\n');
+      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n');
+      setTimeout(() => done(''), 4000);
+    });
+    let tools = [];
+    try { tools = JSON.parse(toolsJson).result.tools.map((t) => ({ name: t.name, chars: JSON.stringify(t).length })); } catch {}
+    out.push({ role, resident, promptChars: text.length, sections, toolChars: tools.reduce((n, t) => n + t.chars, 0), tools });
+  }
+  return out;
 }
 
 function buildArgs(roster, a) {
@@ -530,13 +595,19 @@ function buildArgs(roster, a) {
            WORKPLACE_ASSIGN_TO: assignTo.join(','), WORKPLACE_ASSIGN_HELP: assignHelp,
            WORKPLACE_HAS_TEAM: teamOf(roster, a) ? '1' : '',
            WORKPLACE_HANDOFFS: handoffsOf(roster, a) ? '1' : '',
+           WORKPLACE_CAN_EDIT: canRunCommands(roster, a) ? '1' : '',
+           WORKPLACE_CAN_RUN: canRunCommands(roster, a) && commandMode(roster) !== 'off' ? commandMode(roster) : '',
+           WORKPLACE_SCRIPTS: ['all', ...(a.resident && a.id !== roster.root ? ['lead'] : []), ...(team && roster.roles[team.key].team.office ? ['office'] : [])].join(','),
            WORKPLACE_MAX_MODEL: me.model,
            WORKPLACE_CAN_ASK_USER: a.resident && a.id !== roster.root ? '1' : '' } } } };
   const allowed = [...expandTools(roster, def.tools || 'readonly'), 'mcp__workplace__report_progress',
     ...(childRoles.length ? ['mcp__workplace__delegate', 'mcp__workplace__wait_for_team'] : []), ...(assignTo.length ? ['mcp__workplace__assign'] : []),
-    'mcp__workplace__colleagues', 'mcp__workplace__send_message', 'mcp__workplace__ask', ...(team ? ['mcp__workplace__add_to_team_docs'] : []),
+    'mcp__workplace__colleagues', 'mcp__workplace__send_message', 'mcp__workplace__ask', ...(team ? ['mcp__workplace__add_to_team_docs', 'mcp__workplace__propose_skill'] : []),
     ...(handoffsOf(roster, a) ? ['mcp__workplace__save_project_handoff'] : []),
+    ...(canRunCommands(roster, a) && commandMode(roster) !== 'off' ? ['mcp__workplace__run_command'] : []),
+    ...(canRunCommands(roster, a) ? ['mcp__workplace__request_edit_access'] : []),
     'mcp__workplace__update_memory', 'mcp__workplace__give_feedback', ...(childRoles.length ? ['mcp__workplace__staff'] : []),
+    ...(claudeSkillsFor(roster, a).length ? ['Skill'] : []),
     'mcp__workplace__search_tickets', 'mcp__workplace__script', ...(a.resident && a.id !== roster.root ? ['mcp__workplace__ask_user', 'mcp__workplace__propose_plan'] : []), `Read(/${UPLOADS}/**)`];
   const addDirs = [...(team ? [team.dir, ...team.references] : []), UPLOADS];
   if (a.resident && team) allowed.push(`Edit(/${team.dir}/**)`, `Write(/${team.dir}/**)`, `MultiEdit(/${team.dir}/**)`);
@@ -545,6 +616,7 @@ function buildArgs(roster, a) {
   return ['-p', '--output-format', 'stream-json', '--verbose',
     '--settings', JSON.stringify(settings),
     ...(addDirs.length ? ['--add-dir', ...addDirs] : []),
+    ...(a.resident ? ['--include-partial-messages'] : []),
     '--model', me.model,
     '--effort', me.effort,
     '--thinking-display', roster.defaults.thinkingDisplay || 'summarized',
@@ -556,13 +628,36 @@ function buildArgs(roster, a) {
     '--disallowedTools', ...roster.alwaysDisallowed];
 }
 
-const BUILTIN_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LSP', 'Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebSearch', 'WebFetch']);
+const BUILTIN_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LSP', 'Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebSearch', 'WebFetch', 'Skill']);
+
+// Claude Code skills (~/.claude/skills) a team may use, from its team.claudeSkills: a list of names, "*" for all, or
+// "work-area" for every skill that mentions the work repository (defaults.workArea.repo), so new ones join by themselves.
+function claudeSkillsFor(roster, a) {
+  const key = a.resident ? a.id : a.homeId;
+  const want = key && roster.roles[key] && roster.roles[key].team && roster.roles[key].team.claudeSkills;
+  if (!want) return [];
+  const dir = path.join(os.homedir(), '.claude', 'skills');
+  const W = require('./lib/work-area').workArea(ROOT);
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  for (const n of names) {
+    let text;
+    try { text = fs.readFileSync(path.join(dir, n, 'SKILL.md'), 'utf8'); } catch { continue; }
+    const desc = ((text.match(/^description:\s*(.*)$/m) || [])[1] || '').trim();
+    const ok = want === '*' || (Array.isArray(want) && want.includes(n)) || (want === 'work-area' && W.repo && (text.includes(W.repo) || text.includes(W.tilde(W.repo))));
+    const first = desc.split(/(?<=[.;—])\s/)[0].replace(/\s+in \/home\/\S+/, '');
+    if (ok) out.push({ name: n, description: first.length > 110 ? first.slice(0, 107) + '…' : first });
+  }
+  return out;
+}
 function builtinTools(allowed) {
   return [...new Set(allowed.map((t) => t.split('(')[0]).filter((t) => BUILTIN_TOOLS.has(t)))];
 }
 
 function childEnv(a) {
-  const env = { ...process.env, MCP_TOOL_TIMEOUT: '86400000', MCP_TIMEOUT: '30000', WORKPLACE_AGENT_ID: a.id, WORKPLACE_PORT: String(PORT), ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
+  const compact = Number(readJson('roster.json').defaults.autoCompactTokens) || 0;
+  const env = { ...process.env, ...(compact > 0 ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(compact) } : {}), MCP_TOOL_TIMEOUT: '86400000', MCP_TIMEOUT: '30000', WORKPLACE_AGENT_ID: a.id, WORKPLACE_PORT: String(PORT), ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
   return env;
@@ -597,7 +692,21 @@ function onStreamMessage(a, m) {
       try { fs.appendFileSync(path.join(DATA, 'sessions.jsonl'), JSON.stringify({ t: now(), sid: m.session_id, agentId: a.id, persona: a.persona, role: a.role, name: a.name, homeId: a.resident ? a.id : a.homeId, ticketId: a.resident ? (a.current && a.current.ticketId) || null : a.ticketId || null }) + '\n'); } catch {}
       touch(a);
     }
+  } else if (m.type === 'stream_event' && m.event) {
+    const e = m.event;
+    if (e.type === 'content_block_start') setDraft(a, e.content_block && e.content_block.type === 'text' ? '' : null);
+    else if (e.type === 'content_block_delta' && e.delta && e.delta.type === 'text_delta' && a.draft != null) setDraft(a, a.draft + e.delta.text);
   } else if (m.type === 'assistant' && m.message) {
+    const u = m.message.usage;
+    if (u && m.message.id && m.message.id !== a.liveMsgId) {
+      // Estimate of this turn's spend so far; the exact figure replaces it when the turn ends.
+      const cc = u.cache_creation || {};
+      a.liveMsgId = m.message.id;
+      contextNudge(a, (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0));
+      a.liveUsd = (a.liveUsd || 0) + usageIndex.cost({ model: m.message.model || a.model, in: u.input_tokens || 0, r: u.cache_read_input_tokens || 0,
+        w5: cc.ephemeral_5m_input_tokens != null ? cc.ephemeral_5m_input_tokens : u.cache_creation_input_tokens || 0, w1: cc.ephemeral_1h_input_tokens || 0, out: u.output_tokens || 0 }).total;
+      touch(a);
+    }
     for (const b of m.message.content || []) {
       if (b.type === 'thinking' && b.thinking) addEvent(a, { kind: 'thinking', text: b.thinking });
       else if (b.type === 'text' && b.text.trim()) addEvent(a, { kind: 'text', text: b.text });
@@ -621,6 +730,9 @@ function onStreamMessage(a, m) {
     a.costSid = sid;
     a.costCum = cum;
     a.costUsd += cost;
+    a.liveUsd = 0;
+    setDraft(a, null);
+    refreshExactSoon();
     chargeTicket(a, cost);
     noteSpend(cost, m.usage);
     const it = m.usage && Array.isArray(m.usage.iterations) && m.usage.iterations.length ? m.usage.iterations[m.usage.iterations.length - 1] : m.usage;
@@ -634,11 +746,80 @@ function onStreamMessage(a, m) {
   return null;
 }
 
+// The text block an agent is writing right now, sent to the window a few times a second (never saved).
+const draftTimers = new Map();
+function setDraft(a, text) {
+  a.draft = text;
+  if (draftTimers.has(a.id)) return;
+  draftTimers.set(a.id, setTimeout(() => {
+    draftTimers.delete(a.id);
+    broadcast({ type: 'draft', agentId: a.id, text: a.draft || null });
+  }, 150));
+}
+
+// The per-job budget in USD, or null when jobs have no budget (defaults.ticketBudgetUsd null or 0; the plan's usage limits still apply).
+function ticketBudget() {
+  const v = readJson('roster.json').defaults.ticketBudgetUsd;
+  return typeof v === 'number' && v > 0 ? v : null;
+}
+
+// Job costs from the exact per-call token counts in Claude Code's transcripts, priced per model (scripts/job-cost.js --all).
+// Claude Code's own running total, which chargeTicket adds up live, undercounts some cache writes; this replaces it every 10 minutes
+// and shortly after a turn ends. The live figure is kept as costRecordedUsd.
+let exactRunning = false;
+function refreshExactCosts() {
+  if (exactRunning) return;
+  exactRunning = true;
+  const child = spawn(process.execPath, [path.join(SCRIPTS, 'job-cost.js'), '--all'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  let out = '';
+  child.stdout.on('data', (c) => { out += c; });
+  child.on('close', () => {
+    exactRunning = false;
+    let rows = [];
+    try { rows = JSON.parse(out); } catch { return; }
+    const byN = new Map(rows.map((r) => [r.n, r]));
+    for (const t of tickets.values()) {
+      const r = byN.get(t.n);
+      if (!r || !(r.usd > 0) || Math.abs((t.costUsd || 0) - r.usd) < 0.01) continue;
+      if (t.costRecordedUsd == null) t.costRecordedUsd = t.costUsd || 0;
+      t.costUsd = r.usd;
+      t.costExact = true;
+      touchTicket(t);
+    }
+  });
+}
+setInterval(refreshExactCosts, 10 * 60000);
+setTimeout(refreshExactCosts, 60000);
+let exactSoon = null;
+const refreshExactSoon = () => { clearTimeout(exactSoon); exactSoon = setTimeout(refreshExactCosts, 45000); };
+
+// A lead whose own conversation grows past defaults.leadContextNudge (100k tokens) is reminded, then again every 50k more, to keep
+// itself to planning and review and hand the long reading and editing to teammates with fresh contexts. Its context is re-read
+// on every call, so this is the biggest cost on long jobs.
+function contextNudge(a, ctx) {
+  a.liveContext = ctx;
+  const roster = readJson('roster.json');
+  const at = Number(roster.defaults.leadContextNudge ?? 100000);
+  if (!at || !a.resident || a.id === roster.root || !childRolesFor(roster, a).length) return;
+  if (ctx < Math.max(at, (a.ctxNudgedAt || 0) + 50000)) return;
+  a.ctxNudgedAt = ctx;
+  officeNote(a.id, `Your own context is now ${Math.round(ctx / 1000)}k tokens, and every call re-reads all of it. From here, keep yourself to ` +
+    'planning, briefing and review: hand the remaining reading, searching and editing to a teammate with a fresh context (`delegate`, with a ' +
+    'precise brief and the file:line pointers you already have), and ask for a short report back. Read only what you need to decide.');
+  addEvent(a, { kind: 'system', text: `Context ${Math.round(ctx / 1000)}k: reminded to delegate the remaining long work.` });
+}
+
 function chargeTicket(a, usd) {
   const t = a.resident ? (a.current && tickets.get(a.current.ticketId)) : tickets.get(a.ticketId);
   if (!t || !usd) return;
   t.costUsd = (t.costUsd || 0) + usd;
-  if (t.budgetUsd == null) t.budgetUsd = readJson('roster.json').defaults.ticketBudgetUsd || 5;
+  const limit = ticketBudget();
+  if (limit == null) {
+    if (t.overBudget) { t.overBudget = false; releaseBudget(t, true); }
+    touchTicket(t);
+    return;
+  }
+  if (t.budgetUsd == null) t.budgetUsd = limit;
   if (!t.overBudget && t.costUsd >= t.budgetUsd && t.status === 'open') {
     t.overBudget = true;
     thread(t, { from: 'system', kind: 'system', text: `Reached the $${t.budgetUsd.toFixed(2)} budget ($${t.costUsd.toFixed(2)} spent). New sub-agents wait until you raise it.` });
@@ -647,7 +828,7 @@ function chargeTicket(a, usd) {
 }
 
 function waitForBudget(t) {
-  if (!t || !t.overBudget || t.status !== 'open') return Promise.resolve(true);
+  if (!t || !t.overBudget || t.status !== 'open' || ticketBudget() == null) return Promise.resolve(true);
   return new Promise((resolve) => {
     const list = budgetWaiters.get(t.id) || [];
     list.push(resolve);
@@ -754,7 +935,7 @@ function effortFor(roster, a, item) {
 
 function pumpResident(a) {
   const p = procs.get(a.id);
-  if (!p || a.current || !a.inbox.length || a.killing || limits.hold) return;
+  if (!p || a.current || !a.inbox.length || a.killing || limits.hold || isRestartPending()) return;
   const idx = a.inbox.findIndex((i) => { const tk = i.ticketId && tickets.get(i.ticketId); return !tk || tk.status !== 'paused'; });
   if (idx < 0) return;
   if (idx > 0) a.inbox.unshift(...a.inbox.splice(idx, 1));
@@ -787,7 +968,17 @@ function pumpResident(a) {
       item.text = `[Context: you answered ticket #${t.n} in an earlier session; this session starts without it]\nYour last answer:\n${String(t.answer).slice(0, 4000)}${said ? `\n\nThe user's recent messages on it:\n${said}` : ''}\nReuse what you can; ask specialists again only for what this follow-up really needs.\n\n${item.text}`;
     }
     const handoffs = t && !a.sessionTickets.includes(item.ticketId) && handoffsOf(roster, a);
-    if (handoffs) item.text = handoffBrief(handoffs, t, item.text);
+    if (handoffs) {
+      item.text = handoffBrief(handoffs, t, item.text);
+      const names = projectsMentioned(handoffs, `${t.text}\n${item.text}`).filter((n) => fs.existsSync(path.join(handoffs.dir, `${n}.md`)));
+      if (names.length) { t.handoffs = [...new Set([...(t.handoffs || []), ...names])]; touchTicket(t); }
+    }
+    // When the user says they are wrapping up, the lead is told explicitly to save the project handoff before answering.
+    const ho = t && handoffsOf(roster, a);
+    if (ho && /\b(wrap(ping)?\s+up|that'?s all for (today|now)|done for (today|now|the day)|last message|end of (the |our )?session|see you tomorrow|stop here for today|call it a day)\b/i.test(String(item.text).slice(-2000))) {
+      const names = projectsMentioned(ho, `${t.title}\n${t.text}\n${item.text}`);
+      if (names.length) item.text += `\n\n[The user is wrapping up: before you answer, call save_project_handoff for ${names.join(', ')} (run the handoff-facts script first for the facts).]`;
+    }
     if (!a.sessionTickets.includes(item.ticketId)) a.sessionTickets.push(item.ticketId);
     a.lastTicketId = item.ticketId;
   }
@@ -797,6 +988,9 @@ function pumpResident(a) {
     fb.forEach((f) => { f.seen = true; });
   }
   a.current = item;
+  a.liveUsd = 0;
+  a.ctxNudgedAt = 0;
+  a.draft = null;
   a.status = 'running';
   a.progress = null;
   a.percent = null;
@@ -885,7 +1079,7 @@ function restartResident(key) {
 function newTicket({ text, project, direct, leadEffort }) {
   const t = { id: newId(), n: ++ticketSeq, title: text.split('\n')[0].slice(0, 90), text, project: project || null,
     direct: direct || null, leadEffort: leadEffort || null, leadEffortBy: leadEffort ? 'user' : null, status: 'open', pending: [], assignees: [], thread: [], answer: null,
-    costUsd: 0, budgetUsd: readJson('roster.json').defaults.ticketBudgetUsd || 5, overBudget: false,
+    costUsd: 0, budgetUsd: ticketBudget(), overBudget: false,
     createdAt: now(), updatedAt: now(), closedAt: null };
   tickets.set(t.id, t);
   return t;
@@ -896,6 +1090,8 @@ function reopen(t) {
 }
 
 function stopTicket(t) {
+  endCommands(t);
+  endAccess(t);
   releaseBudget(t, false);
   if (t.waiting) {
     const w = userAskWaiters.get(t.waiting.id);
@@ -934,7 +1130,7 @@ function runningCount() {
 }
 
 function pump() {
-  if (limits.hold) return;
+  if (limits.hold || isRestartPending()) return;
   while (queue.length && runningCount() < MAX_RUNNING) {
     const { a, prompt, resume } = queue.shift();
     if (a.status === 'queued') launch(a, prompt, resume);
@@ -1021,7 +1217,7 @@ function createTemp(roster, parent, x) {
   if (x.role === 'custom') {
     const edit = x.access === 'edit';
     customDef = { name: (x.name || 'Specialist').slice(0, 40), description: 'Custom specialist',
-      prompt: x.instructions || '', tools: edit ? (parent.cwd.startsWith(home('~/repo')) ? 'edit' : 'personal') : 'readonly',
+      prompt: x.instructions || '', tools: edit ? (inWorkRepo(parent.cwd) ? 'edit' : 'personal') : 'readonly',
       permissionMode: edit ? 'acceptEdits' : 'default', children: [], cwd: parent.cwd };
   }
   const def = customDef || roster.roles[x.role];
@@ -1057,6 +1253,7 @@ function launch(a, prompt, resume) {
   const args = buildArgs(roster, a);
   pendingFeedback(a).forEach((f) => { f.seen = true; });
   if (resume && a.sessionId) args.push('--resume', a.sessionId);
+  a.liveUsd = 0;
   a.status = 'running';
   a.startedAt = a.startedAt || now();
   a.endedAt = null;
@@ -1345,6 +1542,37 @@ function answerUser(t, text) {
   return true;
 }
 
+// ---------------------------------------------------------------- terminal commands (lib/commands.js)
+
+const { commandMode, canRunCommands, runCommand, decideCommand, stopCommand, endCommands, running: commandsRunning } = require('./lib/commands').install({
+  agents, tickets, readJson, home, now, newId, broadcast, addEvent,
+  touch: (a) => touch(a), touchTicket: (t) => touchTicket(t), thread: (t, e) => thread(t, e), ticketOfAgent: (a) => ticketOfAgent(a),
+  defOf: (r, a) => defOf(r, a), expandTools: (r, p) => expandTools(r, p),
+});
+
+// ---------------------------------------------------------------- recalling a follow-up the lead has not picked up yet
+
+// Takes the user's latest follow-up on a ticket back out of the lead's inbox, so they can edit it and send it again.
+function recallFollowup(t) {
+  const last = [...t.thread].reverse().find((e) => e.kind === 'followup');
+  if (!last || !last.fid) return { error: 'There is no message to edit.' };
+  for (const a of agents.values()) {
+    const i = (a.inbox || []).findIndex((x) => x.fid === last.fid);
+    if (i < 0) continue;
+    const [item] = a.inbox.splice(i, 1);
+    t.thread.splice(t.thread.indexOf(last), 1);
+    const stillQueued = a.inbox.some((x) => x.ticketId === t.id) || (a.current && a.current.ticketId === t.id);
+    if (!stillQueued) {
+      t.pending = t.pending.filter((k) => k !== a.id || (item.before && item.before.pending.includes(k)));
+      if (item.before && !['open', 'paused'].includes(item.before.status) && !t.pending.length) { t.status = item.before.status; t.closedAt = item.before.closedAt; }
+    }
+    touch(a);
+    touchTicket(t);
+    return { text: item.userText != null ? item.userText : last.text, attachments: item.userFiles || last.attachments || [] };
+  }
+  return { error: 'Already delivered: the agent is reading it, so it can no longer be edited.' };
+}
+
 // ---------------------------------------------------------------- tickets: rating, search, archive
 
 function rateTicket(t, score, note) {
@@ -1391,123 +1619,32 @@ function searchText(query, agentId) {
   }).join('\n');
 }
 
-// ---------------------------------------------------------------- tickets: code changes and undo
+// ---------------------------------------------------------------- tickets: code changes and undo (lib/changes.js)
 
-function snapshotBefore(agentId, file) {
-  const me = agents.get(agentId);
-  if (!me || !file) return;
-  const abs = path.resolve(me.cwd || '/', file);
-  if (abs.startsWith(DATA + path.sep)) return;
-  const t = ticketOfAgent(me);
-  if (!t) return;
-  t.changes = t.changes || [];
-  let c = t.changes.find((x) => x.path === abs);
-  if (!c) {
-    const snap = crypto.createHash('sha1').update(abs).digest('hex').slice(0, 16);
-    let existed = false;
-    try {
-      if (fs.statSync(abs).isFile()) {
-        fs.mkdirSync(path.join(SNAP_DIR, t.id), { recursive: true });
-        fs.copyFileSync(abs, path.join(SNAP_DIR, t.id, snap));
-        existed = true;
-      }
-    } catch {}
-    c = { path: abs, snap, existed, by: [], at: now() };
-    t.changes.push(c);
-  }
-  delete c.revertedAt;
-  if (!c.by.includes(agentId)) c.by.push(agentId);
-  touchTicket(t);
-}
+const { changesOf, revertChanges, snapshotBefore } = require('./lib/changes').install({
+  DATA,
+  SNAP_DIR,
+  agents,
+  crypto,
+  fs,
+  now,
+  path,
+  spawnSync,
+  thread: (...a) => thread(...a),
+  ticketOfAgent: (...a) => ticketOfAgent(...a),
+  touchTicket: (...a) => touchTicket(...a)
+});
 
-function changesOf(t) {
-  return (t.changes || []).map((c) => {
-    const snapFile = path.join(SNAP_DIR, t.id, c.snap);
-    let exists = false;
-    try { exists = fs.statSync(c.path).isFile(); } catch {}
-    const r = spawnSync('diff', ['-u', '--label', 'before', '--label', 'now', c.existed ? snapFile : '/dev/null', exists ? c.path : '/dev/null'],
-      { encoding: 'utf8', maxBuffer: 16 << 20 });
-    let diff = r.stdout || '';
-    const added = (diff.match(/^\+(?!\+\+ )/gm) || []).length;
-    const removed = (diff.match(/^-(?!-- )/gm) || []).length;
-    if (diff.length > 150000) diff = diff.slice(0, 150000) + '\n… (diff truncated)';
-    const state = !c.existed && !exists ? 'unchanged' : !c.existed ? 'added' : !exists ? 'deleted' : diff ? 'modified' : 'unchanged';
-    return { path: c.path, state, added, removed, diff, revertedAt: c.revertedAt || null,
-      by: c.by.map((id) => (agents.get(id) || {}).persona || id) };
-  });
-}
+// ---------------------------------------------------------------- tickets: timeline, spend (lib/timeline.js)
 
-function revertChanges(t, file) {
-  const done = [];
-  for (const c of t.changes || []) {
-    if (file && c.path !== file) continue;
-    if (c.existed) {
-      fs.mkdirSync(path.dirname(c.path), { recursive: true });
-      fs.copyFileSync(path.join(SNAP_DIR, t.id, c.snap), c.path);
-    } else {
-      try { fs.unlinkSync(c.path); } catch {}
-    }
-    c.revertedAt = now();
-    done.push(c.path);
-  }
-  if (done.length) thread(t, { from: 'system', kind: 'system', text: `You undid the agents' changes to ${done.length === 1 ? done[0] : `${done.length} files`}.` });
-  return done;
-}
-
-// ---------------------------------------------------------------- tickets: timeline, spend
-
-function timelineOf(t) {
-  const rows = [];
-  const end = t.closedAt || now();
-  for (const a of agents.values()) {
-    if (!a.resident && !(a.tickets || []).includes(t.id)) continue;
-    const spans = [];
-    let open = null;
-    for (const e of eventsOf(a)) {
-      if (e.t < t.createdAt - 1000 || e.t > end + 600000) continue;
-      if (e.kind === 'brief' || e.kind === 'followup') {
-        open = (e.ticketId ? e.ticketId === t.id : !a.resident) ? { start: e.t } : null;
-      } else if (e.kind === 'result' && open) {
-        spans.push({ start: open.start, end: e.t, costUsd: e.costUsd || 0, ok: !e.isError });
-        open = null;
-      }
-    }
-    if (open && (a.status === 'running' || (a.current && a.current.ticketId === t.id))) spans.push({ start: open.start, end: null, costUsd: 0, running: true });
-    if (spans.length) rows.push({ id: a.id, persona: a.persona, name: a.name, resident: !!a.resident, model: `${a.model}/${a.effort}`, spans });
-  }
-  return { start: t.createdAt, end: t.closedAt || null, rows };
-}
-
-let spendCache = null;
-function spendStats() {
-  if (spendCache && now() - spendCache.at < 30000) return spendCache.data;
-  const days = {};
-  const teams = {};
-  const models = {};
-  const since = now() - 14 * 86400000;
-  for (const a of agents.values()) {
-    const team = a.resident ? a.id : a.homeId || 'other';
-    let lines = [];
-    try { lines = fs.readFileSync(path.join(EVENTS_DIR, a.id + '.jsonl'), 'utf8').split('\n'); } catch {}
-    for (const l of lines) {
-      if (!l.includes('"kind":"result"')) continue;
-      let e;
-      try { e = JSON.parse(l); } catch { continue; }
-      if (!e.costUsd) continue;
-      if (e.t >= since) { const d = new Date(e.t).toLocaleDateString('sv'); days[d] = (days[d] || 0) + e.costUsd; }
-      teams[team] = (teams[team] || 0) + e.costUsd;
-      const m = e.model || 'not recorded (older work)';
-      models[m] = (models[m] || 0) + e.costUsd;
-    }
-  }
-  const day = [];
-  for (let i = 13; i >= 0; i--) { const d = new Date(now() - i * 86400000).toLocaleDateString('sv'); day.push({ day: d, usd: days[d] || 0 }); }
-  const data = { days: day,
-    teams: Object.entries(teams).map(([k, usd]) => ({ key: k, label: agents.get(k) ? agents.get(k).persona : k, usd })).sort((x, y) => y.usd - x.usd),
-    models: Object.entries(models).map(([k, usd]) => ({ key: k, usd })).sort((x, y) => y.usd - x.usd) };
-  spendCache = { at: now(), data };
-  return data;
-}
+const { spendStats, timelineOf } = require('./lib/timeline').install({
+  EVENTS_DIR,
+  agents,
+  eventsOf: (...a) => eventsOf(...a),
+  fs,
+  now,
+  path
+});
 
 // ---------------------------------------------------------------- app-only access
 
@@ -1548,57 +1685,30 @@ function guard(req, res, url) {
   return true;
 }
 
-// ---------------------------------------------------------------- plans for big tickets
+// ---------------------------------------------------------------- plans for big tickets (lib/plans.js)
 
-function planGate(roster, parent, t, assignments) {
-  if (!t || !parent.resident || parent.id === roster.root || roster.defaults.planApproval === false) return null;
-  if (t.plan && ['approved', 'changed'].includes(t.plan.status)) return null;
-  const big = assignments.length >= 2 || assignments.some((x) => x.model === 'opus' || (!x.model && roster.roles[x.role] && roster.roles[x.role].model === 'opus'));
-  if (!big) return null;
-  if (t.plan && t.plan.status === 'rejected') return 'The user rejected the plan for this ticket. Do not start a team; answer the user.';
-  return 'This is a big delegation (two or more teammates, or an opus teammate). Call `propose_plan` first with the steps, who does what on which model, and a cost estimate; delegate after the user approves.';
-}
-
-function proposePlan(agentId, plan, estimate) {
-  const a = agents.get(agentId);
-  const t = a && ticketOfAgent(a);
-  if (!t) return Promise.resolve({ error: 'You have no current ticket.' });
-  if (t.plan && t.plan.status === 'pending') return Promise.resolve({ error: 'A plan is already waiting for the user.' });
-  const p = { id: newId(), from: a.id, text: String(plan || '').slice(0, 8000), estimateUsd: Math.max(0, Number(estimate) || 0), status: 'pending', at: now() };
-  t.plan = p;
-  thread(t, { from: a.id, to: 'user', kind: 'plan', text: p.text, estimateUsd: p.estimateUsd });
-  broadcast({ type: 'notify', kind: 'question', ticketId: t.id, title: `${a.persona} wants your OK on a plan (#${t.n})`, text: `Estimated $${p.estimateUsd.toFixed(2)}. ${p.text}` });
-  a.progress = `Waiting for your OK on the plan for ticket #${t.n}.`;
-  addEvent(a, { kind: 'progress', text: a.progress });
-  touch(a);
-  return new Promise((resolve) => planWaiters.set(p.id, { resolve }));
-}
-
-function decidePlan(t, decision, note) {
-  const p = t.plan;
-  if (!p || p.status !== 'pending') return { error: 'No plan is waiting.' };
-  p.status = decision === 'reject' ? 'rejected' : note ? 'changed' : 'approved';
-  p.note = String(note || '').slice(0, 4000);
-  p.decidedAt = now();
-  if (p.status !== 'rejected' && p.estimateUsd * 1.3 > (t.budgetUsd || 0)) {
-    t.budgetUsd = Math.ceil(p.estimateUsd * 1.3);
-    if (t.overBudget && t.costUsd < t.budgetUsd) { t.overBudget = false; releaseBudget(t, true); }
-  }
-  thread(t, { from: 'user', to: p.from, kind: 'plandecision', decision: p.status, text: p.note });
-  const w = planWaiters.get(p.id);
-  planWaiters.delete(p.id);
-  if (w) w.resolve({ message: p.status === 'rejected'
-    ? `The user rejected the plan.${p.note ? ` Their note: ${p.note}` : ''} Do not start a team. Answer the user briefly with what you can say without it.`
-    : p.status === 'changed'
-      ? `The user approved the plan with changes: ${p.note}\nAdjust the plan accordingly and go ahead. Budget is now $${t.budgetUsd.toFixed(2)}.`
-      : `The user approved the plan. Go ahead. Budget is now $${t.budgetUsd.toFixed(2)}.` });
-  return { ok: true };
-}
+const { decidePlan, proposePlan, planGate } = require('./lib/plans').install({
+  addEvent: (...a) => addEvent(...a),
+  agents,
+  broadcast: (...a) => broadcast(...a),
+  limits: live(() => limits),
+  newId,
+  now,
+  planWaiters,
+  readJson,
+  releaseBudget: (...a) => releaseBudget(...a),
+  thread: (...a) => thread(...a),
+  ticketBudget: (...a) => ticketBudget(...a),
+  ticketOfAgent: (...a) => ticketOfAgent(...a),
+  touch: (...a) => touch(...a)
+});
 
 // ---------------------------------------------------------------- pause / resume
 
 function pauseTicket(t) {
   if (t.status !== 'open') return { error: 'Only a ticket in progress can be paused.' };
+  endCommands(t);
+  endAccess(t);
   t.status = 'paused';
   t.pausedAt = now();
   t.pausedLeads = [];
@@ -1640,222 +1750,62 @@ function resumeTicket(t) {
   return { ok: true };
 }
 
-// ---------------------------------------------------------------- fresh sessions for leads
+// ---------------------------------------------------------------- fresh sessions for leads (lib/fresh-sessions.js)
 
-const REFRESH_PROMPT = `[Housekeeping from the workplace — not a ticket]
-Your conversation has grown long, so the office will start you on a fresh session after this turn. Your memory file carries over; this conversation does not.
-Call \`update_memory\` now with your full revised memory: keep what still matters from this session (how the user likes things, open threads, lessons, where things live). Put durable code facts in the team library instead. Then reply with one line.`;
+const { maybeRefresh, restartWhenIdle, needsRefresh } = require('./lib/fresh-sessions').install({
+  agents,
+  now,
+  readJson,
+  restartResident: (...a) => restartResident(...a),
+  touch: (...a) => touch(...a)
+});
 
-function needsRefresh(roster, a) {
-  if (!a.resident || a.id === roster.root || !a.sessionId) return false;
-  const maxTok = roster.defaults.refreshContextTokens || 150000;
-  const maxDays = roster.defaults.refreshDays || 7;
-  return (a.contextTokens || 0) > maxTok || (a.sessionStartedAt && now() - a.sessionStartedAt > maxDays * 86400000);
-}
+// ---------------------------------------------------------------- weekly review (lib/weekly-review.js)
 
-function maybeRefresh(a, force) {
-  const roster = readJson('roster.json');
-  if (!a.resident || a.id === roster.root) return false;
-  if (!force && !needsRefresh(roster, a)) return false;
-  if (a.inbox.some((i) => i.refresh)) return false;
-  a.inbox.push({ kind: 'chore', refresh: true, label: 'Writing my memory before a fresh session.', text: REFRESH_PROMPT });
-  touch(a);
-  return true;
-}
+const { runReview, maybeWeeklyReviews } = require('./lib/weekly-review').install({
+  agents,
+  enqueueResident: (...a) => enqueueResident(...a),
+  newTicket: (...a) => newTicket(...a),
+  now,
+  readJson,
+  saveState: (...a) => saveState(...a),
+  teamState: live(() => teamState),
+  thread: (...a) => thread(...a),
+  tickets,
+  touchTicket: (...a) => touchTicket(...a),
+  usageIndex,
+  weeklyReport
+});
 
-function restartWhenIdle(key) {
-  const a = agents.get(key);
-  if (!a) return;
-  if (!a.current && !a.inbox.length) restartResident(key);
-  else a.restartWhenIdle = true;
-}
+// ---------------------------------------------------------------- teams and roles from the UI (lib/teams-config.js)
 
-// ---------------------------------------------------------------- weekly review
+const { configView, createTeam, deleteRole, saveRole, writeRoster } = require('./lib/teams-config').install({
+  EFFORTS,
+  MODELS,
+  ROOT,
+  broadcast: (...a) => broadcast(...a),
+  fs,
+  home,
+  inWorkRepo,
+  path,
+  readJson,
+  restartWhenIdle: (...a) => restartWhenIdle(...a),
+  startResident: (...a) => startResident(...a)
+});
 
-async function teamTokens(leadId, since) {
-  const lead = agents.get(leadId);
-  if (!lead) return null;
-  const team = `${lead.persona} · ${lead.room || lead.name || ''}`.replace(/ · $/, '');
-  const span = now() - since;
-  const day = (t) => new Date(t).toLocaleDateString('sv');
-  const [cur, prev] = await Promise.all([usageIndex.overview({ team, from: day(since), to: day(now()) }), usageIndex.overview({ team, from: day(since - span), to: day(since - 1) })]);
-  return { cur: cur.dims.agent, prev: prev.dims.agent };
-}
+// ---------------------------------------------------------------- team chat (meeting room) (lib/team-chat.js)
 
-async function runReview(leadId) {
-  const lead = agents.get(leadId);
-  const roster = readJson('roster.json');
-  if (!lead || !lead.resident || leadId === roster.root) return { error: 'Not a lead.' };
-  teamState[leadId] = teamState[leadId] || {};
-  const since = teamState[leadId].lastReview || now() - 7 * 86400000;
-  let usage = null;
-  try { usage = await teamTokens(leadId, since); } catch {}
-  const rep = weeklyReport.build(leadId, since, { tickets: [...tickets.values()], agents: [...agents.values()], usage });
-  const from = new Date(since).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  const to = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  const t = newTicket({ text: `Weekly review — ${lead.persona}, ${from} – ${to}`, direct: leadId });
-  t.review = true;
-  t.assignees.push(leadId);
-  teamState[leadId].lastReview = now();
-  saveState();
-  if (!rep.needsLead) {
-    t.answer = rep.text;
-    t.status = 'done';
-    t.closedAt = now();
-    thread(t, { from: 'script', to: 'user', kind: 'answer', text: `${rep.text}
-
-_Written by the weekly-report script: nothing needed ${lead.persona}'s judgement, so no AI time was spent. Reply here if you want ${lead.persona} to dig deeper._` });
-    return { id: t.id };
-  }
-  thread(t, { from: 'script', to: leadId, kind: 'system', text: `The weekly-report script found things that need ${lead.persona}'s judgement: ${rep.reasons.join('; ')}.` });
-  t.pending.push(leadId);
-  touchTicket(t);
-  enqueueResident(leadId, { ticketId: t.id, kind: 'direct', text: `[Weekly review, ticket #${t.n}]
-The weekly-report script compiled your team's week since ${from} and flagged: ${rep.reasons.join('; ')}.
-
-${rep.text}
-
-1. Look only at what was flagged (search_tickets, your team's feedback). Find the cause: what went wrong and why.
-2. Update your team library with durable lessons (add_to_team_docs), your own memory (update_memory), and give each teammate who needs it specific feedback (give_feedback).
-3. Your final message goes to the user: what went wrong, why, and what you changed so it goes better (under 200 words; the numbers above are already in the ticket). Do not start a team for this; keep it cheap.` });
-  return { id: t.id };
-}
-
-async function maybeWeeklyReviews() {
-  const roster = readJson('roster.json');
-  const d = new Date();
-  for (const k of roster.residents) {
-    if (k === roster.root) continue;
-    teamState[k] = teamState[k] || {};
-    if (!teamState[k].lastReview) { teamState[k].lastReview = now(); saveState(); continue; }
-    if (d.getDay() !== (roster.defaults.reviewDay ?? 1) || d.getHours() < (roster.defaults.reviewHour ?? 9)) continue;
-    if (now() - teamState[k].lastReview < 3 * 86400000) continue;
-    const lead = agents.get(k);
-    if (!lead || weeklyReport.build(k, teamState[k].lastReview, { tickets: [...tickets.values()], agents: [...agents.values()] }).count === 0) { teamState[k].lastReview = now(); saveState(); continue; }
-    await runReview(k);
-  }
-}
-
-// ---------------------------------------------------------------- teams and roles from the UI
-
-function writeRoster(r) {
-  fs.writeFileSync(path.join(ROOT, 'roster.json'), JSON.stringify(r, null, 2) + '\n');
-}
-
-function configView() {
-  const r = readJson('roster.json');
-  return { root: r.root, residents: r.residents, defaults: r.defaults, presets: Object.keys(r.toolPresets),
-    roles: Object.entries(r.roles).map(([key, d]) => ({ key, name: d.name, persona: d.persona || null, room: d.room || null, description: d.description,
-      prompt: d.prompt || '', model: d.model || null, effort: d.effort || null, tools: d.tools, children: d.children || [], createdInUi: !!d.createdInUi,
-      resident: r.residents.includes(key), agentFile: d.agentFile || null })),
-    projects: readJson('projects.json') };
-}
-
-const slug = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
-
-function saveRole(b) {
-  const r = readJson('roster.json');
-  const lead = r.roles[b.team];
-  if (!lead || !r.residents.includes(b.team) || b.team === r.root) return { error: 'Pick the team (lead) this role belongs to.' };
-  let key = b.key && r.roles[b.key] ? b.key : null;
-  if (!key) {
-    if (!b.name) return { error: 'A role needs a name.' };
-    key = `${b.team.replace(/-lead$/, '')}-${slug(b.name)}`;
-    if (r.roles[key]) return { error: `A role "${key}" already exists.` };
-    const access = ['edit', 'web', 'readonly'].includes(b.access) ? b.access : 'readonly';
-    r.roles[key] = { name: b.name, description: b.description || '', cwd: lead.cwd || '~',
-      tools: access === 'edit' ? (home(lead.cwd || '~').startsWith(home('~/repo')) ? 'edit' : 'personal') : access === 'web' ? 'web' : 'readonly',
-      permissionMode: access === 'edit' ? 'acceptEdits' : 'default', children: [], prompt: b.prompt || '', createdInUi: true };
-    lead.children = [...new Set([...(lead.children || []), key])];
-  }
-  const d = r.roles[key];
-  for (const k of ['name', 'description', 'prompt']) if (typeof b[k] === 'string' && (b[k] || k !== 'name')) d[k] = b[k];
-  if (MODELS.includes(b.model)) d.model = b.model;
-  if (EFFORTS.includes(b.effort)) d.effort = b.effort;
-  writeRoster(r);
-  restartWhenIdle(b.team);
-  return { ok: true, key };
-}
-
-function deleteRole(key) {
-  const r = readJson('roster.json');
-  const d = r.roles[key];
-  if (!d || !d.createdInUi) return { error: 'Only roles created here can be removed.' };
-  delete r.roles[key];
-  for (const x of Object.values(r.roles)) if (x.children) x.children = x.children.filter((c) => c !== key);
-  writeRoster(r);
-  for (const k of r.residents) if (k !== r.root) restartWhenIdle(k);
-  return { ok: true };
-}
-
-function createTeam(b) {
-  const r = readJson('roster.json');
-  const persona = String(b.persona || '').trim();
-  const room = String(b.room || '').trim();
-  if (!persona || !room) return { error: 'A team needs a lead name and a room name.' };
-  if ([...agents.values()].some((x) => (x.persona || '').toLowerCase() === persona.toLowerCase())) return { error: `Someone called ${persona} already works here.` };
-  const key = `${slug(room)}-lead`;
-  if (r.roles[key]) return { error: 'That team already exists.' };
-  const cwd = b.cwd && fs.existsSync(home(b.cwd)) ? b.cwd : '~';
-  const edit = b.access === 'edit';
-  const docs = `teams/${slug(room)}`;
-  r.roles[key] = { name: `${room} Lead`, persona, room, description: b.description || `Owns ${room}.`, cwd,
-    tools: edit ? 'personal' : 'readonly', permissionMode: edit ? 'acceptEdits' : 'default', children: ['researcher'],
-    prompt: `You are ${persona}, the permanent lead for ${room}. ${b.description || ''} You own each ticket end to end: do small things yourself, ` +
-      'and build a team with `delegate` (roster roles or a `custom` specialist) when work is broad or parallel. Post `report_progress` at each phase. ' +
-      'Your final message goes directly to the user as the answer, so write it for them. Never commit or push. ' +
-      'Your sub-agents are permanent staff who stay on your team and learn: check `staff` before delegating, name the teammate with `who`, and use `give_feedback` after notable work.',
-    team: { docs }, createdInUi: true };
-  r.residents.push(key);
-  const mgr = r.roles[r.root];
-  mgr.assignTo = [...new Set([...(mgr.assignTo || []), key])];
-  writeRoster(r);
-  fs.mkdirSync(path.join(ROOT, docs), { recursive: true });
-  const idx = path.join(ROOT, docs, 'INDEX.md');
-  if (!fs.existsSync(idx)) fs.writeFileSync(idx, `# ${room} library\n\n${b.description || ''}\n\nWorking folder: ${cwd}\n`);
-  try { fs.appendFileSync(path.join(ROOT, 'teams/front-desk/INDEX.md'), `\n- ${room}: ${b.description || ''} → ${persona} (${key}).\n`); } catch {}
-  startResident(key);
-  restartWhenIdle(r.root);
-  broadcast({ type: 'roster' });
-  return { ok: true, key };
-}
-
-// ---------------------------------------------------------------- team chat (meeting room)
-
-function floorOfAgent(a) {
-  return a.resident ? a.id : a.homeId;
-}
-
-function teamChat(key) {
-  const out = [];
-  for (const a of agents.values()) {
-    if (floorOfAgent(a) !== key) continue;
-    for (const e of eventsOf(a)) {
-      if (e.kind === 'msg_out') out.push({ t: e.t, from: a.persona, fromId: a.id, to: e.toPersona, toId: e.to, text: e.text, ask: !!e.ask });
-    }
-  }
-  for (const t of tickets.values()) {
-    if (!t.teamAsk || t.direct !== key) continue;
-    out.push({ t: t.createdAt, from: 'You', fromId: 'user', to: 'the team', text: t.text, ticketId: t.id });
-    if (t.answer) out.push({ t: t.closedAt || t.updatedAt, from: (agents.get(key) || {}).persona, fromId: key, to: 'You', text: t.answer, ticketId: t.id });
-  }
-  return out.sort((x, y) => x.t - y.t).slice(-150);
-}
-
-function askTeam(key, text) {
-  const lead = agents.get(key);
-  const roster = readJson('roster.json');
-  if (!lead || !lead.resident || key === roster.root) return { error: 'No such team.' };
-  const t = newTicket({ text: String(text).trim(), direct: key });
-  t.teamAsk = true;
-  thread(t, { from: 'user', to: key, kind: 'user', text: t.text });
-  t.pending.push(key);
-  t.assignees.push(key);
-  touchTicket(t);
-  enqueueResident(key, { ticketId: t.id, kind: 'direct', text: `[The user asks your whole team, ticket #${t.n}]\n${t.text}\n\n` +
-    'Collect input from the teammates whose experience matters (a quick, cheap delegate to the right staff, or ask those who are busy), then answer the user directly with the team\'s view.' });
-  return { id: t.id };
-}
+const { askTeam, teamChat } = require('./lib/team-chat').install({
+  agents,
+  ask: (...a) => ask(...a),
+  enqueueResident: (...a) => enqueueResident(...a),
+  eventsOf: (...a) => eventsOf(...a),
+  newTicket: (...a) => newTicket(...a),
+  readJson,
+  thread: (...a) => thread(...a),
+  tickets,
+  touchTicket: (...a) => touchTicket(...a)
+});
 
 // ---------------------------------------------------------------- health
 
@@ -1897,370 +1847,111 @@ function healthView() {
     login, residents, errors: errors.sort((x, y) => y.t - x.t).slice(0, 40), failed: failed.sort((x, y) => y.t - x.t).slice(0, 20),
     limits: { status: limits.status, hold: limits.hold || null, updatedAt: limits.updatedAt },
     refresh: { contextTokens: roster.defaults.refreshContextTokens || 150000, days: roster.defaults.refreshDays || 7 },
-    selftest, logTail,
+    selftest: selftestNow(), logTail,
     scripts: [...agents.values()].filter((x) => x.scriptRuns || x.scriptNudges).map((x) => ({ id: x.id, who: x.persona, runs: x.scriptRuns || 0, nudges: x.scriptNudges || 0 })).sort((x, y) => y.runs - x.runs) };
 }
 
-// ---------------------------------------------------------------- self-test
+// ---------------------------------------------------------------- self-test (lib/selftest.js)
 
-const SELFTEST_FILE = path.join(os.homedir(), '.cache', 'agent-office-selftest', 'notes.txt');
-let selftest = null;
-try { selftest = JSON.parse(fs.readFileSync(path.join(DATA, 'selftest.json'), 'utf8')); } catch {}
+const { runSelfTest, selftestNow } = require('./lib/selftest').install({
+  DATA,
+  agents,
+  answerUser: (...a) => answerUser(...a),
+  broadcast: (...a) => broadcast(...a),
+  changesOf,
+  createTicket: (...a) => createTicket(...a),
+  decidePlan,
+  eventsOf: (...a) => eventsOf(...a),
+  fs,
+  limits: live(() => limits),
+  now,
+  os,
+  path,
+  readJson,
+  revertChanges,
+  stopTicket: (...a) => stopTicket(...a),
+  touchTicket: (...a) => touchTicket(...a)
+});
 
-function selftestStep(name, ok, detail) {
-  selftest.steps.push({ name, ok: !!ok, detail: detail || '' });
-  broadcast({ type: 'selftest', selftest });
-}
+// ---------------------------------------------------------------- office scripts (lib/office-scripts.js)
 
-async function runSelfTest() {
-  if (selftest && selftest.status === 'running') return selftest;
-  const roster = readJson('roster.json');
-  selftest = { status: 'running', startedAt: now(), steps: [], costUsd: 0 };
-  broadcast({ type: 'selftest', selftest });
-  const finish = (status) => {
-    selftest.status = status;
-    selftest.finishedAt = now();
-    try { fs.writeFileSync(path.join(DATA, 'selftest.json'), JSON.stringify(selftest, null, 1)); } catch {}
-    broadcast({ type: 'selftest', selftest });
-    broadcast({ type: 'notify', kind: status === 'passed' ? 'answer' : 'limit', title: `Self-test ${status}`,
-      text: `${selftest.steps.filter((x) => x.ok).length} of ${selftest.steps.length} checks passed · $${selftest.costUsd.toFixed(2)}` });
-  };
-  const leads = roster.residents.map((k) => agents.get(k)).filter(Boolean);
-  const down = leads.filter((a) => a.status === 'offline');
-  selftestStep('Server and leads are up', !down.length, down.length ? `Offline: ${down.map((a) => a.persona).join(', ')}` : leads.map((a) => a.persona).join(', '));
-  if (limits.hold) { selftestStep('Usage limit allows work', false, 'Work is paused near a limit; continue or wait for the reset first.'); return finish('failed'); }
-  const original = 'Self-test notes\nfirst line is: alpha-7\n';
-  fs.mkdirSync(path.dirname(SELFTEST_FILE), { recursive: true });
-  fs.writeFileSync(SELFTEST_FILE, original);
-  const lead = roster.roles['personal-lead'] ? 'personal-lead' : roster.residents.find((k) => k !== roster.root);
-  const leadName = roster.roles[lead].persona;
-  const t = createTicket({ effort: 'low', text: `Office self-test (automatic; keep it cheap). This is for ${leadName}, the ${roster.roles[lead].name}.
-Do exactly these steps, nothing more:
-1. Call search_tickets with "self-test".
-2. Delegate ONE teammate (role "researcher", model haiku, effort low) to read ${SELFTEST_FILE} and report its second line.
-3. Call ask_user: "Top or bottom?" with options ["Top", "Bottom"].
-4. With the Edit tool, add the line "selftest: <second line the teammate reported>" to ${SELFTEST_FILE} at the position the user chose.
-5. Answer in one sentence.` });
-  const startedAt = now();
-  const answered = { q: false };
-  const ok = await new Promise((resolve) => {
-    const timer = setInterval(() => {
-      if (t.waiting && !answered.q) { answered.q = true; answerUser(t, 'Bottom'); }
-      if (t.plan && t.plan.status === 'pending') decidePlan(t, 'approve', '');
-      if (['done', 'failed', 'stopped', 'interrupted'].includes(t.status)) { clearInterval(timer); resolve(t.status === 'done'); }
-      else if (now() - startedAt > 8 * 60000) { clearInterval(timer); stopTicket(t); resolve(false); }
-    }, 1500);
-  });
-  selftest.ticketId = t.id;
-  selftest.costUsd = t.costUsd || 0;
-  const routed = t.thread.find((e) => e.kind === 'assign' && e.from === roster.root);
-  selftestStep('Ticket reached the right lead (routing rules or God)', t.direct === lead || (routed && routed.to === lead),
-    t.direct === lead ? `routing rules → ${leadName}` : routed ? `God → ${(agents.get(routed.to) || {}).persona}` : 'nobody');
-  const leadEvents = eventsOf(agents.get(lead)).filter((e) => e.t >= startedAt);
-  selftestStep('Lead searched earlier tickets', leadEvents.some((e) => e.kind === 'tool_use' && /search_tickets/.test(e.name)), '');
-  const team = [...agents.values()].filter((a) => !a.resident && (a.tickets || []).includes(t.id));
-  selftestStep('A teammate was delegated and reported back', team.some((a) => a.lastOutcome === 'done'), team.map((a) => `${a.persona} (${a.model}/${a.effort}) ${a.lastOutcome}`).join(', ') || 'nobody');
-  selftestStep('Lead asked you a question and got the answer', t.thread.some((e) => e.kind === 'question') && t.thread.some((e) => e.kind === 'reply'), '');
-  const ch = changesOf(t).find((c) => c.path === SELFTEST_FILE);
-  const now1 = fs.existsSync(SELFTEST_FILE) ? fs.readFileSync(SELFTEST_FILE, 'utf8') : '';
-  selftestStep('File edit was made at the chosen spot and tracked', ch && ch.state === 'modified' && /selftest:.*alpha-7/.test(now1) && now1.trim().endsWith('alpha-7'),
-    ch ? `+${ch.added} −${ch.removed}` : 'not tracked');
-  if (ch) revertChanges(t, SELFTEST_FILE);
-  const back = fs.existsSync(SELFTEST_FILE) ? fs.readFileSync(SELFTEST_FILE, 'utf8') : '';
-  selftestStep('Undo restored the file exactly', back === original, '');
-  selftestStep('Ticket finished with an answer and a cost', ok && !!t.answer && t.costUsd > 0, ok ? `$${t.costUsd.toFixed(3)} in ${Math.round((now() - startedAt) / 1000)}s` : `status ${t.status}`);
-  selftestStep('Usage limits are being read', !!limits.updatedAt && now() - limits.updatedAt < 3600000, limits.updatedAt ? `updated ${Math.round((now() - limits.updatedAt) / 60000)} min ago` : 'never');
-  t.archived = true;
-  touchTicket(t);
-  try { fs.rmSync(path.dirname(SELFTEST_FILE), { recursive: true, force: true }); } catch {}
-  finish(selftest.steps.every((x) => x.ok) ? 'passed' : 'failed');
-  return selftest;
-}
+const { runScript, scriptManifest } = require('./lib/office-scripts').install({
+  SCRIPTS,
+  addEvent: (...a) => addEvent(...a),
+  agents,
+  fs,
+  home,
+  os,
+  path,
+  spawn
+});
 
-// ---------------------------------------------------------------- office scripts
+// ---------------------------------------------------------------- talking between agents (lib/mail.js)
 
-const scriptManifest = () => JSON.parse(fs.readFileSync(path.join(SCRIPTS, 'manifest.json'), 'utf8'));
+const { ask, colleagues, sendMail, takeUnread, officeNote } = require('./lib/mail').install({
+  ACTIVE,
+  addEvent: (...a) => addEvent(...a),
+  agents,
+  askWaiters,
+  broadcast: (...a) => broadcast(...a),
+  enqueueResident: (...a) => enqueueResident(...a),
+  filesOf: (...a) => filesOf(...a),
+  mail,
+  mailWake,
+  newId,
+  now,
+  procs,
+  thread: (...a) => thread(...a),
+  ticketOfAgent: (...a) => ticketOfAgent(...a),
+  tickets
+});
 
-function runScript(agentId, name, args) {
-  const a = agents.get(agentId);
-  const list = scriptManifest();
-  if (!list.some((x) => x.name === name)) return Promise.resolve({ error: `No script "${name}". Scripts: ${list.map((x) => x.name).join(', ')}.` });
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [path.join(SCRIPTS, `${name}.js`), ...(Array.isArray(args) ? args.map(String) : [])],
-      { cwd: a && a.cwd ? home(a.cwd) : os.homedir(), stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '', err = '';
-    child.stdout.on('data', (c) => { if (out.length < 60000) out += c; });
-    child.stderr.on('data', (c) => { if (err.length < 4000) err += c; });
-    const timer = setTimeout(() => child.kill('SIGKILL'), 120000);
-    child.on('error', (e) => { err += e.message; });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (a) { a.scriptRuns = (a.scriptRuns || 0) + 1; addEvent(a, { kind: 'script', name, args: (args || []).slice(0, 8), ok: code === 0 }); }
-      resolve(code === 0 ? { message: (out || '(no output)').slice(0, 50000) } : { error: (err || out || `exit code ${code}`).slice(0, 4000) });
-    });
-  });
-}
+// ---------------------------------------------------------------- shared files (lib/shared-files.js)
 
-// ---------------------------------------------------------------- talking between agents
+const { filesOf, touchFile } = require('./lib/shared-files').install({
+  ACTIVE,
+  agents,
+  fileTouches,
+  now,
+  path,
+  sendMail
+,
+  ticketOfAgent: (...a) => ticketOfAgent(...a)
+});
 
-function present() {
-  return [...agents.values()].filter((x) => (x.resident && x.status !== 'offline') || (!x.resident && ACTIVE.includes(x.status)));
-}
+// ---------------------------------------------------------------- team libraries (lib/libraries.js)
 
-function findColleague(name) {
-  const n = String(name || '').trim().toLowerCase();
-  return present().find((x) => x.id.toLowerCase() === n || x.persona.toLowerCase() === n);
-}
+const { addToDocs, libraryRoots, maybeTidy, refreshLibraryIndex, teamsList } = require('./lib/libraries').install({
+  ROOT,
+  addEvent: (...a) => addEvent(...a),
+  agents,
+  broadcast: (...a) => broadcast(...a),
+  enqueueResident: (...a) => enqueueResident(...a),
+  fs,
+  home,
+  libraryCheck,
+  now,
+  path,
+  procs,
+  readJson,
+  saveState: (...a) => saveState(...a),
+  teamOf: (...a) => teamOf(...a),
+  teamState: live(() => teamState),
+  ticketOfAgent: (...a) => ticketOfAgent(...a)
+});
 
-function colleagues(agentId) {
-  const lines = present().filter((x) => x.id !== agentId).map((x) => {
-    const t = ticketOfAgent(x);
-    return `- ${x.persona} — ${x.name}${x.resident ? ' (permanent)' : ''} — ${x.status === 'delegating' ? 'waiting on their sub-agents (reads mail when that finishes)' : x.status}` +
-      `${t ? ` — ticket #${t.n}` : ''}${x.resident ? '' : ` — working on: ${x.title}`}` +
-      (filesOf(x.id).length ? ` — editing: ${filesOf(x.id).join(', ')}` : '');
-  });
-  return lines.length ? 'In the office now:\n' + lines.join('\n') : 'Nobody else is in the office right now.';
-}
+// ---------------------------------------------------------------- personal projects: handoffs, board, opening files (lib/projects.js)
 
-function sendMail(fromId, toName, text, replyTo, ask) {
-  const from = agents.get(fromId);
-  const to = findColleague(toName);
-  if (!from) return { error: 'Unknown sender.' };
-  if (!to) return { error: `"${toName}" is not in the office. ${colleagues(fromId)}` };
-  if (to.id === from.id) return { error: 'That is you.' };
-  const t = ticketOfAgent(from) || ticketOfAgent(to);
-  const msg = { id: newId(), from: from.id, to: to.id, text: String(text || '').slice(0, 8000), replyTo: replyTo || null,
-    ask: !!ask, ticketId: t ? t.id : null, t: now(), read: false };
-  mail.push(msg);
-  if (mail.length > 2000) mail.splice(0, mail.length - 2000);
-  addEvent(from, { kind: 'msg_out', to: to.id, toPersona: to.persona, text: msg.text, ask: msg.ask });
-  broadcast({ type: 'chat', from: from.id, to: to.id, text: msg.text, ask: msg.ask });
-  if (t) thread(t, { from: from.id, to: to.id, kind: 'chat', text: msg.text, ask: msg.ask });
-  if (msg.ask && mailWake.has(to.id)) {
-    mailWake.get(to.id)();
-  } else if (replyTo && askWaiters.has(replyTo)) {
-    msg.read = true;
-    addEvent(to, { kind: 'msg_in', from: from.id, fromPersona: from.persona, text: msg.text });
-    askWaiters.get(replyTo)(msg);
-  } else if (to.resident && !to.current && procs.get(to.id)) {
-    msg.read = true;
-    addEvent(to, { kind: 'msg_in', from: from.id, fromPersona: from.persona, text: msg.text });
-    enqueueResident(to.id, { ticketId: msg.ticketId, kind: 'message', text: formatMail([msg]) });
-  }
-  return { msg, to };
-}
+const { handoffsOf, savedHandoffs, projectsMentioned, handoffBrief, projectsBoard, openFile, saveHandoff } = require('./lib/projects').install({
+  ROOT, agents, tickets, readJson, home, broadcast, addEvent, thread: (t, e) => thread(t, e), ticketOfAgent: (a) => ticketOfAgent(a),
+});
 
-function formatMail(list) {
-  return list.map((m) => {
-    const f = agents.get(m.from);
-    const t = m.ticketId && tickets.get(m.ticketId);
-    return `[Mail from ${f ? `${f.persona} (${f.name})` : m.from}${t ? `, ticket #${t.n}` : ''}${m.ask ? `, QUESTION — they are waiting; answer with send_message to "${f ? f.persona : m.from}" and reply_to "${m.id}"` : ''}]\n${m.text}`;
-  }).join('\n\n');
-}
+// ---------------------------------------------------------------- skills agents propose (lib/skills.js)
 
-function takeUnread(agentId) {
-  const a = agents.get(agentId);
-  const list = mail.filter((m) => m.to === agentId && !m.read);
-  for (const m of list) {
-    m.read = true;
-    const f = agents.get(m.from);
-    if (a) addEvent(a, { kind: 'msg_in', from: m.from, fromPersona: f ? f.persona : m.from, text: m.text, ask: m.ask });
-  }
-  return list.length ? formatMail(list) : '';
-}
-
-function ask(agentId, toName, question, timeoutSec) {
-  const r = sendMail(agentId, toName, question, null, true);
-  if (r.error) return Promise.resolve({ error: r.error });
-  const secs = Math.max(30, Math.min(900, Number(timeoutSec) || 300));
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      askWaiters.delete(r.msg.id);
-      resolve({ message: `${r.to.persona} has not answered within ${Math.round(secs / 60)} minute(s). Carry on with your best judgment; their answer, if it comes, will arrive as mail.` });
-    }, secs * 1000);
-    askWaiters.set(r.msg.id, (reply) => {
-      clearTimeout(timer);
-      askWaiters.delete(r.msg.id);
-      resolve({ message: `${r.to.persona} answered:\n${reply.text}` });
-    });
-  });
-}
-
-// ---------------------------------------------------------------- shared files
-
-function isPresent(a) {
-  return a && ((a.resident && (a.current || ACTIVE.includes(a.status))) || (!a.resident && ACTIVE.includes(a.status)));
-}
-
-function filesOf(agentId) {
-  const out = [];
-  for (const [file, who] of fileTouches) if (who.has(agentId)) out.push(file);
-  return out;
-}
-
-function touchFile(agentId, file) {
-  const me = agents.get(agentId);
-  if (!me || !file) return '';
-  const abs = path.resolve(me.cwd || '/', file);
-  if (!fileTouches.has(abs)) fileTouches.set(abs, new Map());
-  const who = fileTouches.get(abs);
-  for (const id of [...who.keys()]) if (!isPresent(agents.get(id))) who.delete(id);
-  const first = !who.has(agentId);
-  who.set(agentId, now());
-  const others = [...who.keys()].filter((id) => id !== agentId).map((id) => agents.get(id));
-  if (!others.length || !first) return '';
-  for (const o of others) {
-    sendMail(agentId, o.id, `(automatic notice) I just edited ${abs}, which you have also been editing. Let's agree who changes what so we don't overwrite each other.`, null, false);
-  }
-  return `Heads-up: ${others.map((o) => { const t = ticketOfAgent(o); return `${o.persona} (${o.name}${t ? `, ticket #${t.n}` : ''})`; }).join(' and ')} ` +
-    `also edited ${abs}. They have been notified. Coordinate with them (ask / send_message) before further changes to this file.`;
-}
-
-// ---------------------------------------------------------------- team libraries
-
-function libraryRoots(roster, key) {
-  const def = roster.roles[key] || {};
-  const projects = readJson('projects.json').filter((p) => p.department === key).map((p) => home(p.path));
-  return [...new Set([home(def.cwd || '~'), ...((def.team && def.team.references) || []).map(home), ...projects])];
-}
-
-function refreshLibraryIndex(dir) {
-  try { libraryCheck.writeIndex(dir, libraryCheck.pagesOf(dir)); } catch {}
-}
-
-const TIDY_PROMPT = (team, found) => `[Housekeeping from the workplace — not a ticket]
-Tidy your team library at ${team.dir}. The office's library-check script found problems that need your judgement:
-
-${found}
-
-Fix exactly these: merge the duplicate notes into one, and for each stale reference check the code and correct it or remove the claim.
-- Read INDEX.md and every page. Merge duplicates, group notes into clear topic pages, and remove entries that are superseded.
-- Where notes contradict each other or look doubtful, check the code or config before keeping either version. Never keep a guess.
-- Keep each fact's evidence (file:line, ticket number). Keep dated entries only where the date matters.
-- Keep the hand-written part of INDEX.md a short map of what each page covers. The "All pages" list at its end is maintained by a script; do not edit it.${team.references.length ? `
-- Do not edit the reference docs (${team.references.join(', ')}). If you find something wrong there, record it on a "corrections" page with evidence.` : ''}
-Use Edit/Write only inside ${team.dir}. Finish with a two-line summary of what changed.`;
-
-function maybeTidy(key, force) {
-  const roster = readJson('roster.json');
-  const a = agents.get(key);
-  if (!a || !a.resident) return false;
-  const team = teamOf(roster, a);
-  if (!team) return false;
-  const st = teamState[key] || (teamState[key] = { sinceTidy: 0, lastTidy: null });
-  const threshold = roster.defaults.tidyAfterNotes || 6;
-  if (!force && (st.sinceTidy < threshold || a.current || a.inbox.length || !procs.get(key))) return false;
-  if (a.inbox.some((i) => i.kind === 'chore') || (a.current && a.current.kind === 'chore')) return false;
-  refreshLibraryIndex(team.dir);
-  const r = libraryCheck.check(team.dir, libraryRoots(roster, key));
-  st.sinceTidy = 0;
-  st.lastCheck = now();
-  st.lastFound = { dups: r.dups.length, refs: r.refs.length };
-  saveState();
-  if (!r.dups.length && !r.refs.length) return false;
-  st.lastTidy = now();
-  enqueueResident(key, { ticketId: null, kind: 'chore', label: 'Fixing what the library check found.', text: TIDY_PROMPT(team, libraryCheck.report(r)) });
-  return true;
-}
-
-function teamsList() {
-  const roster = readJson('roster.json');
-  return roster.residents.filter((k) => roster.roles[k].team).map((k) => {
-    const def = roster.roles[k];
-    const dir = path.join(ROOT, def.team.docs);
-    const listDir = (d, label) => {
-      try {
-        return fs.readdirSync(d).filter((f) => f.endsWith('.md')).sort((x, y) => (x === 'INDEX.md' ? -1 : y === 'INDEX.md' ? 1 : x.localeCompare(y)))
-          .map((f) => { const st = fs.statSync(path.join(d, f)); return { name: f, path: path.join(d, f), group: label, size: st.size, mtime: st.mtimeMs }; });
-      } catch { return []; }
-    };
-    const handoffs = def.handoffs ? listDir(path.join(ROOT, def.handoffs.dir), 'Project handoffs') : [];
-    return { key: k, room: def.room, dir, sinceTidy: (teamState[k] || {}).sinceTidy || 0, lastTidy: (teamState[k] || {}).lastTidy || null, pages: [...listDir(dir, 'Team library'), ...handoffs, ...(def.team.references || []).flatMap((r) => listDir(home(r), r))] };
-  });
-}
-
-function addToDocs(agentId, page, text) {
-  const roster = readJson('roster.json');
-  const a = agents.get(agentId);
-  const team = a && teamOf(roster, a);
-  if (!team) return { error: 'You have no team library.' };
-  const name = (String(page || 'notes').toLowerCase().replace(/\.md$/, '').replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'notes') + '.md';
-  if (name === 'index.md') return { error: 'INDEX.md is curated by hand; pick another page name.' };
-  const file = path.join(team.dir, name);
-  const t = ticketOfAgent(a);
-  const isNew = !fs.existsSync(file);
-  if (isNew) fs.writeFileSync(file, `# ${name.replace(/\.md$/, '').replace(/-/g, ' ')}\n`);
-  const stamp = new Date().toISOString().slice(0, 10);
-  fs.appendFileSync(file, `\n### ${stamp} — ${a.persona} (${a.name})${t ? `, ticket #${t.n}` : ''}\n\n${String(text).trim()}\n`);
-  refreshLibraryIndex(team.dir);
-  addEvent(a, { kind: 'doc', page: name, text: String(text).trim() });
-  const st = teamState[team.key] || (teamState[team.key] = { sinceTidy: 0, lastTidy: null });
-  st.sinceTidy += 1;
-  saveState();
-  setTimeout(() => maybeTidy(team.key), 1000);
-  broadcast({ type: 'docs', team: team.key, by: a.id, page: name });
-  return { message: `Recorded in ${team.room} library: ${name}.` };
-}
-
-// ---------------------------------------------------------------- project handoffs (a lead picks up a project where the last chat left it)
-
-function handoffsOf(roster, a) {
-  const h = a && a.resident && (roster.roles[a.id] || {}).handoffs;
-  return h ? { dir: path.join(ROOT, h.dir), root: home(h.projectsRoot) } : null;
-}
-
-function projectFolders(h) {
-  try { return fs.readdirSync(h.root, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.')).map((d) => d.name); } catch { return []; }
-}
-
-function savedHandoffs(h) {
-  try { return fs.readdirSync(h.dir).filter((f) => f.endsWith('.md')).map((f) => ({ name: f.slice(0, -3), mtime: fs.statSync(path.join(h.dir, f)).mtimeMs })); } catch { return []; }
-}
-
-// Folders a text names: "DianisCommunication", "dianis-communication" and "Dianis Communication" all match.
-function projectsMentioned(h, text) {
-  const words = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-  const t = ` ${words(String(text || ''))} `;
-  const hits = projectFolders(h).filter((name) => {
-    const spaced = words(name.replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
-    return [words(name), spaced, spaced.replace(/ /g, '')].some((v) => v && t.includes(` ${v} `));
-  });
-  return hits.filter((x) => !hits.some((y) => y !== x && y.toLowerCase().includes(x.toLowerCase())));
-}
-
-function handoffBrief(h, t, text) {
-  const names = projectsMentioned(h, `${t.text}\n${text}`);
-  if (!names.length) return text;
-  const parts = names.map((name) => {
-    const file = path.join(h.dir, `${name}.md`);
-    if (!fs.existsSync(file)) return `[No handoff for ${name} yet: this is the first session on it here. Save one with save_project_handoff when you finish.]`;
-    return `[Project handoff: ${name} — where you left off last time (${file})]\n${fs.readFileSync(file, 'utf8').slice(0, 12000)}`;
-  });
-  return `${parts.join('\n\n')}\n\n${text}`;
-}
-
-function saveHandoff(agentId, project, state, session) {
-  const roster = readJson('roster.json');
-  const a = agents.get(agentId);
-  const h = a && handoffsOf(roster, a);
-  if (!h) return { error: 'Project handoffs are kept only for the Personal Projects team.' };
-  const name = projectFolders(h).find((n) => n.toLowerCase() === String(project || '').trim().toLowerCase());
-  if (!name) return { error: `No folder "${project}" in ${h.root}. Use the project's folder name.` };
-  if (!String(state || '').trim() || !String(session || '').trim()) return { error: 'Both state and session are required.' };
-  const file = path.join(h.dir, `${name}.md`);
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  const log = (old.split(/^## Session log\n/m)[1] || '').split(/^(?=### )/m).map((s) => s.trim()).filter(Boolean);
-  const t = ticketOfAgent(a);
-  const stamp = new Date().toISOString().slice(0, 10);
-  log.unshift(`### ${stamp}${t ? ` — ticket #${t.n}: ${t.title}` : ''}\n\n${String(session).trim()}`);
-  fs.mkdirSync(h.dir, { recursive: true });
-  fs.writeFileSync(file, `# ${name} — handoff\n\nProject folder: ${path.join(h.root, name)}\nUpdated ${stamp} by ${a.persona}.\n\n` +
-    `## Current state\n\n${String(state).trim()}\n\n## Session log\n\n${log.slice(0, roster.defaults.handoffSessions || 12).join('\n\n')}\n`);
-  addEvent(a, { kind: 'doc', page: `projects/${name}.md`, text: String(session).trim() });
-  if (t) thread(t, { from: 'system', kind: 'system', text: `${a.persona} saved the ${name} handoff: the next chat about it continues from here.` });
-  broadcast({ type: 'docs', team: a.id, by: a.id, page: `projects/${name}.md` });
-  return { message: `Saved handoff for ${name} (${file}).` };
-}
+const skillProposals = require('./lib/skills').install({
+  ROOT, DATA, agents, now, newId, broadcast, addEvent, readJson,
+  teamOf: (r, a) => teamOf(r, a), giveFeedback: (f, t, x) => giveFeedback(f, t, x), ticketOfAgent: (a) => ticketOfAgent(a),
+});
 
 // ---------------------------------------------------------------- ARMS (skills, routines, memory, apps)
 
@@ -2291,6 +1982,7 @@ const server = http.createServer(async (req, res) => {
   if (!guard(req, res, url)) return;
   try {
     if (await arms.route(req, res, url, p, body, json)) return;
+    if (await skillProposals.route(req, res, url, p, body, json)) return;
     if (req.method === 'POST' && p === '/api/shutdown') {
       json(res, 200, { ok: true });
       setTimeout(() => shutdown(), 150);
@@ -2356,9 +2048,27 @@ const server = http.createServer(async (req, res) => {
         tickets: [...tickets.values()],
         residents: roster.residents,
         root: roster.root,
-        roles: Object.fromEntries(Object.entries(roster.roles).map(([k, v]) => [k, { name: v.name, persona: v.persona, room: v.room, description: v.description }])),
+        roles: Object.fromEntries(Object.entries(roster.roles).map(([k, v]) => [k, { name: v.name, persona: v.persona, room: v.room, description: v.description, handoffs: !!v.handoffs }])),
         projects: readJson('projects.json'),
+        restart: restartView(),
       });
+    }
+    if (req.method === 'GET' && p === '/api/prompt-size') return json(res, 200, await promptSizes());
+    if (req.method === 'GET' && p === '/api/restart') return json(res, 200, restartView());
+    if (req.method === 'POST' && p === '/api/restart') {
+      const b = await body(req);
+      return json(res, 200, requestRestart(b.when !== 'cancel', { check: b.check !== false }));
+    }
+    if (req.method === 'GET' && p === '/api/office-settings') {
+      const d = readJson('roster.json').defaults;
+      return json(res, 200, Object.fromEntries(Object.keys(OFFICE_SETTINGS).map((k) => [k, d[k] ?? null])));
+    }
+    if (req.method === 'POST' && p === '/api/office-settings') {
+      const b = await body(req);
+      const r = readJson('roster.json');
+      for (const [k, fix] of Object.entries(OFFICE_SETTINGS)) if (k in b) r.defaults[k] = fix(b[k]);
+      writeRoster(r);
+      return json(res, 200, Object.fromEntries(Object.keys(OFFICE_SETTINGS).map((k) => [k, r.defaults[k] ?? null])));
     }
     if (req.method === 'GET' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/events$/))) {
       const a = agents.get(m[1]);
@@ -2393,6 +2103,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/files/before') {
       const b = await body(req);
+      const deny = denyEdit(b.agentId, b.file);
+      if (deny) return json(res, 200, { deny });
       snapshotBefore(b.agentId, b.file);
       return json(res, 200, { ok: true });
     }
@@ -2403,7 +2115,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/revert$/))) {
       const t = tickets.get(m[1]);
       const b = await body(req);
-      return t ? json(res, 200, { reverted: revertChanges(t, b.path || null) }) : json(res, 404, { error: 'not found' });
+      if (!t) return json(res, 404, { error: 'not found' });
+      const reverted = revertChanges(t, b.path || null);
+      if (reverted && (!Array.isArray(reverted) || reverted.length)) { t.undone = (t.undone || 0) + 1; touchTicket(t); }
+      return json(res, 200, { reverted });
     }
     if (req.method === 'GET' && (m = p.match(/^\/api\/tickets\/(\w+)\/timeline$/))) {
       const t = tickets.get(m[1]);
@@ -2494,7 +2209,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await runScript(b.agentId, b.name, b.args));
     }
     if (req.method === 'POST' && p === '/api/selftest') {
-      if (selftest && selftest.status === 'running') return json(res, 409, { error: 'A self-test is already running.' });
+      if (selftestNow() && selftestNow().status === 'running') return json(res, 409, { error: 'A self-test is already running.' });
       runSelfTest();
       return json(res, 200, { ok: true });
     }
@@ -2508,16 +2223,24 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, answered: true });
       }
       const roster = readJson('roster.json');
+      const before = { status: t.status, closedAt: t.closedAt, pending: [...t.pending] };
+      // A follow-up within 2 hours of the answer counts as rework: the answer was not what the user needed.
+      if (['done', 'failed'].includes(t.status) && t.closedAt && now() - t.closedAt < 2 * 3600000) t.rework = (t.rework || 0) + 1;
       reopen(t);
-      thread(t, { from: 'user', kind: 'followup', text: b.text, attachments: files });
+      const fid = newId();
+      thread(t, { from: 'user', kind: 'followup', text: b.text, attachments: files, fid });
       const to = t.direct || (t.assignees.length === 1 ? t.assignees[0] : roster.root);
       if (!t.pending.includes(to)) t.pending.push(to);
       touchTicket(t);
-      enqueueResident(to, { ticketId: t.id, kind: to === roster.root ? 'followup' : 'direct',
+      enqueueResident(to, { ticketId: t.id, fid, before, userText: b.text, userFiles: files, kind: to === roster.root ? 'followup' : 'direct',
         text: to === roster.root
           ? `[User follow-up on ticket #${t.n}: "${t.title}", handled by ${t.assignees.map((k) => agents.get(k).persona + ' (' + k + ')').join(', ') || 'nobody yet'}]\n${b.text}${attachText(files)}`
           : `[User follow-up on ticket #${t.n}]\n${b.text}${attachText(files)}` });
       return json(res, 200, { ok: true });
+    }
+    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/recall$/))) {
+      const t = tickets.get(m[1]);
+      return json(res, 200, t ? recallFollowup(t) : { error: 'not found' });
     }
     if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/stop$/))) {
       const t = tickets.get(m[1]);
@@ -2620,7 +2343,7 @@ const server = http.createServer(async (req, res) => {
       const b = await body(req);
       if (!t) return json(res, 404, { error: 'not found' });
       const add = Math.max(0, Number(b.add) || 0);
-      t.budgetUsd = (t.budgetUsd || readJson('roster.json').defaults.ticketBudgetUsd || 5) + add;
+      t.budgetUsd = (t.budgetUsd || ticketBudget() || 0) + add;
       if (t.overBudget && (t.costUsd || 0) < t.budgetUsd) {
         t.overBudget = false;
         thread(t, { from: 'system', kind: 'system', text: `Budget raised to $${t.budgetUsd.toFixed(2)}. Work continues.` });
@@ -2647,6 +2370,41 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/docs/add') {
       const b = await body(req);
       return json(res, 200, addToDocs(b.agentId, b.page, b.text || ''));
+    }
+    if (req.method === 'GET' && p === '/api/projects-board') {
+      return json(res, 200, projectsBoard());
+    }
+    if (req.method === 'POST' && p === '/api/open-file') {
+      const b = await body(req);
+      return json(res, 200, openFile(b.path, b.ticketId));
+    }
+    if (req.method === 'POST' && p === '/api/command/run') {
+      const b = await body(req);
+      return json(res, 200, await runCommand(b.agentId, b));
+    }
+    if (req.method === 'POST' && (m = p.match(/^\/api\/commands\/(\w+)\/(decide|stop)$/))) {
+      const b = await body(req);
+      return json(res, 200, m[2] === 'stop' ? stopCommand(m[1]) : decideCommand(m[1], b.decision === 'run' ? 'run' : 'deny', b.note, !!b.allowAll));
+    }
+    if (req.method === 'POST' && p === '/api/edit-access/request') {
+      const b = await body(req);
+      return json(res, 200, await requestAccess(b.agentId, b.folder, b.reason));
+    }
+    if (req.method === 'POST' && (m = p.match(/^\/api\/edit-access\/(\w+)\/decide$/))) {
+      const b = await body(req);
+      return json(res, 200, decideAccess(tickets, m[1], b.decision === 'allow'));
+    }
+    if (req.method === 'GET' && p === '/api/terminal-mode') {
+      return json(res, 200, { mode: commandMode(readJson('roster.json')) });
+    }
+    if (req.method === 'POST' && p === '/api/terminal-mode') {
+      const b = await body(req);
+      if (!['off', 'ask', 'allow'].includes(b.mode)) return json(res, 400, { error: 'mode must be off, ask or allow' });
+      const r = readJson('roster.json');
+      r.defaults.terminalCommands = b.mode;
+      writeRoster(r);
+      for (const a of agents.values()) if (a.resident && canRunCommands(r, a)) a.restartWhenIdle = true;
+      return json(res, 200, { mode: b.mode });
     }
     if (req.method === 'POST' && p === '/api/handoff/save') {
       const b = await body(req);
@@ -2679,6 +2437,8 @@ const server = http.createServer(async (req, res) => {
       if (a) {
         a.progress = b.status;
         if (typeof b.percent === 'number') a.percent = Math.max(0, Math.min(100, b.percent));
+        const pt = typeof b.step === 'number' && a.resident && ticketOfAgent(a);
+        if (pt && pt.plan) { pt.plan.step = Math.max(1, Math.round(b.step)); touchTicket(pt); }
         addEvent(a, { kind: 'progress', text: b.status, percent: a.percent });
         touch(a);
       }
@@ -2703,12 +2463,12 @@ for (const t of tickets.values()) {
     if (a.resident) for (const e of eventsOf(a)) if (e.kind === 'result' && e.ticketId === t.id) usd += e.costUsd || 0;
   }
   t.costUsd = usd;
-  t.budgetUsd = t.budgetUsd || readJson('roster.json').defaults.ticketBudgetUsd || 5;
+  t.budgetUsd = t.budgetUsd || ticketBudget();
 }
 fs.mkdirSync(UPLOADS, { recursive: true });
 for (const def of Object.values(readJson('roster.json').roles)) if (def.team && def.team.docs && fs.existsSync(path.join(ROOT, def.team.docs))) refreshLibraryIndex(path.join(ROOT, def.team.docs));
-for (const t of tickets.values()) { t.waiting = null; if (t.plan && t.plan.status === 'pending') t.plan.status = 'interrupted'; }
-if (selftest && selftest.status === 'running') selftest.status = 'interrupted';
+for (const t of tickets.values()) { t.waiting = null; if (t.plan && t.plan.status === 'pending') t.plan.status = 'interrupted'; if (ticketBudget() == null) { t.budgetUsd = null; t.overBudget = false; } }
+if (selftestNow() && selftestNow().status === 'running') selftestNow().status = 'interrupted';
 setInterval(runSchedule, 20000);
 setInterval(() => arms.schedule(), 60000);
 const longChatWarned = new Map();
@@ -2735,6 +2495,21 @@ server.listen(PORT, HOST, () => {
   for (const key of readJson('roster.json').residents) startResident(key);
   if (!limits.updatedAt || now() - limits.updatedAt > 600000) probeLimits();
 });
+// ---------------------------------------------------------------- where agents may edit (lib/edit-scope.js)
+
+const { denyEdit, requestAccess, decideAccess, endAccess } = require('./lib/edit-scope').install({
+  agents, readJson, home, now, newId, broadcast, addEvent,
+  touch: (...a) => touch(...a), touchTicket: (...a) => touchTicket(...a), thread: (...a) => thread(...a), ticketOfAgent: (...a) => ticketOfAgent(...a),
+  teamOf: (...a) => teamOf(...a), handoffsOf: (...a) => handoffsOf(...a), projectsMentioned: (...a) => projectsMentioned(...a),
+});
+
+// ---------------------------------------------------------------- upkeep: reminders, restart when idle, office settings (lib/upkeep.js)
+
+const { restartView, requestRestart, OFFICE_SETTINGS, isRestartPending } = require('./lib/upkeep').install({
+  ROOT, agents, tickets, readJson, now, broadcast, ACTIVE, commandsRunning,
+  pumpResident: (a) => pumpResident(a), pump: () => pump(), isShuttingDown: () => shuttingDown, shutdown: () => shutdown(),
+});
+
 const shutdown = () => {
   shuttingDown = true;
   for (const [id, p] of procs) { try { process.kill(-p.pid, 'SIGTERM'); } catch {} }
