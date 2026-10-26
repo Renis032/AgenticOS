@@ -1147,7 +1147,7 @@ function pickPersona() {
   }
 }
 
-function findStaff(roster, homeId, x) {
+function findStaff(roster, homeId, x, t) {
   const pool = [...agents.values()].filter((s) => s.staff && s.homeId === homeId && s.status === 'idle');
   const sameRole = (s) => (x.role === 'custom'
     ? s.role === 'custom' && s.name.toLowerCase() === String(x.name || 'Specialist').slice(0, 40).toLowerCase() &&
@@ -1157,7 +1157,7 @@ function findStaff(roster, homeId, x) {
     const w = pool.find((s) => s.persona.toLowerCase() === String(x.who).toLowerCase());
     if (w && sameRole(w)) return w;
   }
-  return pool.filter(sameRole).sort((p, q) => (q.tasksDone || 0) - (p.tasksDone || 0))[0] || null;
+  return pool.filter((s) => onCall.available(s, t) && sameRole(s)).sort((p, q) => (q.tasksDone || 0) - (p.tasksDone || 0))[0] || null;
 }
 
 function staffList(agentId) {
@@ -1166,15 +1166,16 @@ function staffList(agentId) {
   const homeId = me.resident ? me.id : me.homeId;
   const roster = readJson('roster.json');
   const list = [...agents.values()].filter((s) => s.staff && s.homeId === homeId).sort((p, q) => (q.tasksDone || 0) - (p.tasksDone || 0));
-  const lines = list.map((s) => {
+  const describe = (s) => {
     const last = (s.history || []).slice(-1)[0];
     return `- ${s.persona} — ${s.name} (${s.role === 'custom' ? 'custom' : s.role}) — ${s.status === 'idle' ? 'free' : 'busy: ' + s.title} — ` +
       `${s.tasksDone || 0} done, ${s.tasksFailed || 0} not completed${s.model ? ` — last ran on ${s.model}/${s.effort}` : ''}` +
       `${last ? ` — last task: #${last.n} ${last.title}` : ''}${readMemory(s.id) ? ' — has memory' : ''}`;
-  });
-  return (lines.length ? `Your team:\n${lines.join('\n')}` : 'Your team has no staff yet.') +
+  };
+  return onCall.staffLines(list, ticketOfAgent(me), describe) +
     '\n\nDelegating reuses a free teammate of that role (the most experienced, or the one you name with `who`). ' +
-    'If nobody suitable is free, a new teammate joins and stays on the team.';
+    'If nobody suitable is free, someone new is hired: roster roles join the team; custom specialists are on call for this ' +
+    'project only, unless you set `stay: "team"` because the role is useful beyond it.';
 }
 
 function ticketOfAgent(a) {
@@ -1199,7 +1200,7 @@ function pickModel(roster, parent, x, def) {
 function createTemp(roster, parent, x) {
   const t = ticketOfAgent(parent);
   const homeId = parent.resident ? parent.id : parent.homeId;
-  const existing = findStaff(roster, homeId, x);
+  const existing = findStaff(roster, homeId, x, t);
   if (existing) {
     const def = existing.customDef || roster.roles[existing.role];
     const { model, effort, choice, pickId, source: pickSource } = pickModel(roster, parent, x, def);
@@ -1207,6 +1208,7 @@ function createTemp(roster, parent, x) {
       ticketId: t ? t.id : null, ticketN: t ? t.n : null, depth: parent.depth + 1, children: [],
       result: null, error: null, progress: null, percent: null, sessionId: null, startedAt: null, endedAt: null,
       taskCostStart: existing.costUsd, status: 'queued', newHire: false });
+    onCall.onReuse(existing, x, t);
     if (t && !existing.tickets.includes(t.id)) existing.tickets.push(t.id);
     if (!parent.children.includes(existing.id)) parent.children.push(existing.id);
     touch(parent);
@@ -1229,8 +1231,9 @@ function createTemp(roster, parent, x) {
     ticketId: t ? t.id : null, ticketN: t ? t.n : null, depth: parent.depth + 1,
     cwd: customDef ? parent.cwd : home(def.cwd || '~'),
     staff: true, tickets: t ? [t.id] : [], history: [], feedback: [], tasksDone: 0, tasksFailed: 0,
-    taskCostStart: 0, hiredAt: now(), newHire: true,
+    taskCostStart: 0, hiredAt: now(), newHire: true, scopeChecked: true,
   });
+  onCall.onHire(a, x, t);
   agents.set(a.id, a);
   assignPids();
   parent.children.push(a.id);
@@ -1365,7 +1368,7 @@ async function delegate(parentId, assignments) {
   assignments.forEach((x, i) => { x.__pick = picks[i]; });
   const kids = assignments.map((x) => createTemp(roster, parent, x));
   addEvent(parent, { kind: 'delegate', text: kids.map((k) => `${k.persona} (${k.name}) on ${k.model}/${k.effort}: ${k.title}\n  ${k.choice}`).join('\n'), children: kids.map((k) => k.id) });
-  if (t) thread(t, { from: parent.id, kind: 'team', text: kids.map((k) => `${k.persona} (${k.name}${k.newHire ? ', new hire' : ''}) — ${k.title} · ${k.model}/${k.effort}`).join('\n'),
+  if (t) thread(t, { from: parent.id, kind: 'team', text: kids.map((k) => `${k.persona} (${k.name}${k.newHire ? ', new hire' : ''}${k.onCall ? `, on call for ${k.onCall.project || 'this job'}` : ''}) — ${k.title} · ${k.model}/${k.effort}`).join('\n'),
     choices: kids.map((k) => ({ id: k.id, model: `${k.model}/${k.effort}`, why: k.choice })), agents: kids.map((k) => k.id) });
   const batch = { id: newId(), parentId: parent.id, kids,
     all: Promise.all(kids.map((k) => enqueue(k, k.task, false))).then((finished) => finished.map((c) => ({
@@ -1942,7 +1945,7 @@ const { addToDocs, libraryRoots, maybeTidy, refreshLibraryIndex, teamsList } = r
 
 // ---------------------------------------------------------------- personal projects: handoffs, board, opening files (lib/projects.js)
 
-const { handoffsOf, savedHandoffs, projectsMentioned, handoffBrief, projectsBoard, openFile, saveHandoff } = require('./lib/projects').install({
+const { handoffsOf, savedHandoffs, projectsMentioned, handoffBrief, projectsBoard, openFile, saveHandoff, projectFolders } = require('./lib/projects').install({
   ROOT, agents, tickets, readJson, home, broadcast, addEvent, thread: (t, e) => thread(t, e), ticketOfAgent: (a) => ticketOfAgent(a),
 });
 
@@ -1951,6 +1954,16 @@ const { handoffsOf, savedHandoffs, projectsMentioned, handoffBrief, projectsBoar
 const skillProposals = require('./lib/skills').install({
   ROOT, DATA, agents, now, newId, broadcast, addEvent, readJson,
   teamOf: (r, a) => teamOf(r, a), giveFeedback: (f, t, x) => giveFeedback(f, t, x), ticketOfAgent: (a) => ticketOfAgent(a),
+});
+
+// ---------------------------------------------------------------- the brain: knowledge graph, decision flow, optimizer (lib/brain.js)
+
+const onCall = require('./lib/on-call').install({ agents, tickets, now, touch: (...a) => touch(...a) });
+
+const brain = require('./lib/brain').install({
+  ROOT, DATA, agents, tickets, readJson, home, now, broadcast,
+  teamOf: (...a) => teamOf(...a), handoffsOf: (...a) => handoffsOf(...a), projectFolders: (...a) => projectFolders(...a),
+  claudeSkillsFor: (...a) => claudeSkillsFor(...a), eventsOf: (...a) => eventsOf(...a), giveFeedback: (...a) => giveFeedback(...a), maybeTidy: (...a) => maybeTidy(...a),
 });
 
 // ---------------------------------------------------------------- ARMS (skills, routines, memory, apps)
@@ -1983,6 +1996,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (await arms.route(req, res, url, p, body, json)) return;
     if (await skillProposals.route(req, res, url, p, body, json)) return;
+    if (await brain.route(req, res, url, p, body, json)) return;
     if (req.method === 'POST' && p === '/api/shutdown') {
       json(res, 200, { ok: true });
       setTimeout(() => shutdown(), 150);
@@ -2007,7 +2021,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (p === '/review' || p.startsWith('/ui/'))) {
       const f = p === '/review' ? path.join(ROOT, 'public', 'review.html') : path.resolve(ROOT, 'public', p.slice(1));
       if (!f.startsWith(path.join(ROOT, 'public') + path.sep) || !fs.existsSync(f)) return json(res, 404, { error: 'not found' });
-      res.writeHead(200, { 'content-type': f.endsWith('.css') ? 'text/css' : f.endsWith('.js') ? 'text/javascript' : 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      const font = f.endsWith('.woff2');
+      res.writeHead(200, { 'content-type': f.endsWith('.css') ? 'text/css' : f.endsWith('.js') ? 'text/javascript' : font ? 'font/woff2' : f.endsWith('.txt') ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'cache-control': font ? 'max-age=31536000' : 'no-cache' });
       return res.end(fs.readFileSync(f));
     }
     if (req.method === 'GET' && p.startsWith('/artifacts/')) {
@@ -2168,6 +2183,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/review$/))) {
       const r = await runReview(m[1]);
+      return json(res, r.error ? 400 : 200, r);
+    }
+    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/scope$/))) {
+      const r = onCall.setScope(m[1], !!(await body(req)).team);
       return json(res, r.error ? 400 : 200, r);
     }
     if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/refresh$/))) {
@@ -2454,6 +2473,7 @@ server.headersTimeout = 0;
 server.timeout = 0;
 
 loadState();
+if (onCall.migrate()) saveState();
 assignPids();
 for (const t of tickets.values()) {
   if (t.costUsd != null) continue;

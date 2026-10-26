@@ -58,7 +58,7 @@ function renderTitlebar(running, open) {
 }
 
 // ---------------------------------------------------------------- preferences applied to the page
-const ACCENTS = { amber: ['#e8a33d', '#b86e1c'], blue: ['#5aa6ef', '#2f6fbf'], violet: ['#a98bf0', '#7a55d4'], green: ['#4fbf86', '#23885c'], rose: ['#ef6f93', '#c43d66'], teal: ['#3fbab2', '#1f8a84'] };
+const ACCENTS = { gold: ['#d9b77a', '#9c7a3c'], amber: ['#e8a33d', '#b86e1c'], blue: ['#5aa6ef', '#2f6fbf'], violet: ['#a98bf0', '#7a55d4'], green: ['#4fbf86', '#23885c'], rose: ['#ef6f93', '#c43d66'], teal: ['#3fbab2', '#1f8a84'] };
 const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
 function isDark() { const t = pref('theme', 'system'); return t === 'dark' || (t === 'system' && darkMq.matches); }
 function applyPrefs() {
@@ -68,9 +68,16 @@ function applyPrefs() {
   root.dataset.density = pref('density', 'comfortable');
   root.dataset.motion = pref('motion', 'full');
   root.dataset.sidebar = pref('sidebar', 'expanded');
-  const [dark, light] = ACCENTS[pref('accent', 'amber')] || ACCENTS.amber;
+  const [dark, light] = ACCENTS[pref('accent', 'gold')] || ACCENTS.gold;
   root.style.setProperty('--accent', isDark() ? dark : light);
-  root.style.setProperty('--accent-ink', isDark() ? '#16110a' : '#ffffff');
+  root.style.setProperty('--accent-ink', isDark() ? '#17120a' : '#ffffff');
+  // Older WebKitGTK has no color-mix(), so the tints are built from the accent's RGB.
+  const rgb = [1, 3, 5].map((i) => parseInt((isDark() ? dark : light).slice(i, i + 2), 16));
+  const mix = (c, k) => '#' + rgb.map((v) => Math.round(v * (1 - k) + c * k).toString(16).padStart(2, '0')).join('');
+  root.style.setProperty('--accent-rgb', rgb.join(', '));
+  root.style.setProperty('--accent-soft', `rgba(${rgb.join(', ')}, .16)`);
+  root.style.setProperty('--accent-hi', mix(255, 0.22));
+  root.style.setProperty('--accent-lo', mix(0, 0.15));
   if (!NATIVE) root.style.zoom = pref('zoomCss', '1');
   renderWindowControls();
 }
@@ -246,7 +253,7 @@ const PREF_BODY = {
   appearance: () => `<h2>Appearance</h2><div class="hint">Theme, colour and size.</div>` +
     pGroup('', [
       prow('Theme', 'Follow Ubuntu’s light or dark style, or pick one.', pSeg('theme', 'system', [['system', 'System', 'monitor'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']])),
-      prow('Accent colour', 'Used for highlights, switches and the active app.', `<div class="swatches">${Object.entries(ACCENTS).map(([k, [d, l]]) => `<button class="${pref('accent', 'amber') === k ? 'on' : ''}" style="--c:${isDark() ? d : l}" data-act="prefSeg" data-k="accent" data-v="${k}" data-tip="${k}"></button>`).join('')}</div>`),
+      prow('Accent colour', 'Used for highlights, switches and the active app.', `<div class="swatches">${Object.entries(ACCENTS).map(([k, [d, l]]) => `<button class="${pref('accent', 'gold') === k ? 'on' : ''}" style="--c:${isDark() ? d : l}" data-act="prefSeg" data-k="accent" data-v="${k}" data-tip="${k}"></button>`).join('')}</div>`),
       prow('Text size', 'Zooms the whole window (also Ctrl + and Ctrl −).', `<div class="range"><input type="range" min="70" max="160" step="10" value="${Math.round(S.zoom * 100)}" id="zoomRange" style="--fill:${((Math.round(S.zoom * 100) - 70) / 90) * 100}%"><output id="zoomOut">${Math.round(S.zoom * 100)}%</output></div>`),
       prow('Density', 'Compact fits more rows on screen.', pSeg('density', 'comfortable', [['comfortable', 'Comfortable'], ['compact', 'Compact']])),
       prow('Animations', 'Reduce motion turns off fades and slides.', pSeg('motion', 'full', [['full', 'On'], ['reduced', 'Reduced']])),

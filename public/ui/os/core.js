@@ -44,7 +44,7 @@ const prefObj = (k) => { try { return JSON.parse(pref(k, 'null')); } catch { ret
 // ================================================================ state
 const S = {
   agents: {}, tickets: {}, roles: {}, residents: [], root: 'manager', projects: [], limits: null, health: null, selftest: null,
-  app: pref('startApp', 'today') === 'last' ? pref('app', 'today') : pref('startApp', 'today'), sel: null, job: null, jtab: 'thread', itab: 'mind', collapsed: new Set(), showIdle: pref('showIdle', '1') === '1',
+  app: pref('startApp', 'today') === 'last' ? pref('app', 'today') : pref('startApp', 'today'), sel: null, job: null, jtab: 'thread', itab: 'mind', collapsed: new Set(), showIdle: pref('showIdle', '1') === '1', showOnCall: pref('showOnCall', '0') === '1',
   pq: '', pjob: '', jq: '', showArchived: false, events: {}, live: {}, newFiles: [], followFiles: [], chatTeam: null, libTeam: null, libPage: null,
   memAgent: null, term: { out: [], hist: [], hi: -1 }, timeline: {}, replay: null, spend: null, cfg: null, scripts: [], rerate: false,
   drafts: {}, seen: prefObj('seen'), compose: prefObj('compose'), openGroups: new Set(), handoffDocs: {},
@@ -197,6 +197,7 @@ function tick() {
 // ================================================================ chrome: top bar, dock, alert
 const APP_LIST = [
   { id: 'today', ic: 'home', name: 'Today', key: 'd', grp: 'Home' },
+  { id: 'brain', ic: 'brain', name: 'Brain', key: 'b' },
   { id: 'processes', ic: 'processes', name: 'Processes', key: 'p', grp: 'System' },
   { id: 'jobs', ic: 'jobs', name: 'Jobs', key: 'j' },
   { id: 'newjob', ic: 'newjob', name: 'New job', key: 'n' },

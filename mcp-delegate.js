@@ -71,9 +71,10 @@ if (ROLES.length) {
     name: 'delegate',
     description:
       'Start one or more sub-agents. All assignments run in parallel; the call returns when every one has ' +
-      'finished, with each final report. Work goes to your permanent staff: a free teammate of that role is reused ' +
-      '(check `staff` to see who is on your team and how experienced they are); if nobody suitable is free, a new ' +
-      'teammate joins and stays. It returns when everyone has finished — or earlier, if a colleague asks you a question meanwhile: then answer it with ' +
+      'finished, with each final report. Work goes to your staff: a free teammate of that role is reused ' +
+      '(check `staff` to see who is on your team and how experienced they are); if nobody suitable is free, someone new ' +
+      'is hired. Roster roles join your team. A custom specialist is on call for this project only (reused when the project ' +
+      'comes back, off your team otherwise) unless you set `stay: "team"` because the role is useful beyond this project. It returns when everyone has finished — or earlier, if a colleague asks you a question meanwhile: then answer it with ' +
       '`send_message` and call `wait_for_team` with the batch_id to keep waiting (your sub-agents keep working). Write each task as a complete, self-contained brief: a sub-agent ' +
       'cannot see your conversation. You decide whether a task needs sub-agents at all.\nRoster roles:\n' + ROLES_HELP +
       (ROLES.includes('custom') ? '\n- custom: a specialist you design yourself. Give it `name` (job title), ' +
@@ -88,6 +89,7 @@ if (ROLES.length) {
             properties: {
               role: { type: 'string', enum: ROLES, description: 'Roster role, or "custom".' },
               who: { type: 'string', description: 'Optional: a specific teammate (see `staff`) to give this to, if they are free.' },
+              stay: { type: 'string', enum: ['team', 'project'], description: 'Optional: "team" keeps this person on your team for good (a role useful across projects); "project" keeps them on call for this project only. Default: roster roles "team", custom "project".' },
               title: { type: 'string', description: 'Short name for this sub-task (3-8 words), shown on the dashboard.' },
               task: { type: 'string', description: 'The full brief: goal, context, relevant paths, what to return.' },
               name: { type: 'string', description: 'custom only: job title, e.g. "Shader Expert".' },

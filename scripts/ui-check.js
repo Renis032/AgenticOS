@@ -72,11 +72,34 @@ async function check(opt) {
     const now = await call(port, T, 'GET', '/api/state');
     const waiting = (now.tickets || []).find((t) => t.plan && t.plan.status === 'pending') || job;
     const done = (state.tickets || []).filter((t) => t.status === 'done' && t.answer).sort((a, b) => b.createdAt - a.createdAt)[0];
-    const apps = (opt.quick ? ['today', 'processes', 'jobs', 'projects', 'newjob'] : ['today', 'processes', 'jobs', 'newjob', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings']);
+    const apps = (opt.quick ? ['today', 'brain', 'processes', 'jobs', 'projects', 'newjob'] : ['today', 'brain', 'processes', 'jobs', 'newjob', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings']);
     const steps = [
       ...apps.map((a) => ({ name: `app-${a}`, js: `openApp('${a}')`, wait: a === 'tokens' || a === 'usage' ? 1800 : 800 })),
       { name: 'job-waiting', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'thread'; openApp('jobs')`, wait: 1000 },
       ...(done ? [{ name: 'job-done', js: `S.job = '${done.id}'; S.jtab = 'thread'; openApp('jobs')`, wait: 1000 }, { name: 'job-changes', js: `S.jtab = 'changes'; S.jviewFor = null; openApp('jobs')`, wait: 900 }, { name: 'job-timeline', js: `S.jtab = 'timeline'; openApp('jobs')`, wait: 900 }] : []),
+      { name: 'brain-flow', js: `openApp('brain'); ACT.brainTab({ tab: 'flow' })`, wait: 2500 },
+      { name: 'brain-optimize', js: `ACT.brainTab({ tab: 'optimize' })`, wait: 1500 },
+      { name: 'brain-knowledge', js: `ACT.brainTab({ tab: 'knowledge' })`, wait: 2500 },
+      // Drag the busiest agent 160px and hold it: its linked nodes must follow (physics), unlinked ones much less.
+      { name: 'brain-map-drag', js: `(() => {
+        const c = document.querySelector('canvas.bmap'), p0 = typeof BrainMap !== 'undefined' && BrainMap.positions();
+        if (!c || !p0) return __uiErrors.push('brain map did not start');
+        const id = Object.keys(p0).filter((k) => k.startsWith('agent:')).map((k) => [k, BrainMap.screenOf(k)]).filter(([, s]) => s).sort((a, b) => b[1].links.length - a[1].links.length)[0];
+        if (!id) return __uiErrors.push('brain map: no agent on screen');
+        const [aid, s] = id, r = c.getBoundingClientRect(), at = (x, y) => ({ clientX: r.left + x, clientY: r.top + y, bubbles: true });
+        c.dispatchEvent(new MouseEvent('mousedown', at(s.x, s.y)));
+        let i = 0; const t = setInterval(() => { i++; window.dispatchEvent(new MouseEvent('mousemove', at(s.x + i * 16, s.y))); if (i === 10) { clearInterval(t);
+          setTimeout(() => {
+            // Movement along the drag direction: the layout may still be settling, but that drift has no direction.
+            const p1 = BrainMap.positions(), D = p1[aid].map((v, j) => v - p0[aid][j]), len = Math.hypot(...D) || 1;
+            const along = (k) => p1[k].reduce((a, v, j) => a + (v - p0[k][j]) * D[j], 0) / len, avg = (ks) => ks.reduce((a, k) => a + along(k), 0) / Math.max(1, ks.length);
+            const linked = s.links.filter((k) => p1[k]), far = Object.keys(p1).filter((k) => k !== aid && !s.links.includes(k));
+            window.dispatchEvent(new MouseEvent('mouseup', at(s.x + 160, s.y)));
+            window.__dragResult = { node: Math.round(len), linked: Math.round(avg(linked)), others: Math.round(avg(far)) };
+            if (len < 60) __uiErrors.push('map drag: the node did not move (' + Math.round(len) + ')');
+            else if (avg(linked) < 10 || avg(linked) < avg(far) + 8) __uiErrors.push('map drag: neighbours did not follow ' + JSON.stringify(window.__dragResult));
+          }, 600); } }, 30);
+      })()`, wait: 2000 },
       { name: 'main-menu', js: `ACT.appmenu({}, { target: document.querySelector('[data-act=appmenu]') })` },
       { name: 'palette', js: `closeMenu(); openPal()` },
       { name: 'notifications', js: `closePal(); ACT.ncenter()` },

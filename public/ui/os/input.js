@@ -207,6 +207,7 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   fold: (d) => { S.collapsed.has(d.id) ? S.collapsed.delete(d.id) : S.collapsed.add(d.id); APPS.processes.update(); },
   expandAll: () => { S.collapsed.clear(); APPS.processes.update(); },
   itab: (d) => { S.itab = d.tab; S.itabKey = null; renderInspector(); },
+  staffScope: (d) => api('POST', `/api/agents/${S.sel}/scope`, { team: !!d.team }),
   kill: () => { const a = S.agents[S.sel]; if (confirm(`Stop ${a.persona} (PID ${a.no}) and its children?`)) api('POST', `/api/agents/${a.id}/stop`); },
   fresh: () => { const a = S.agents[S.sel]; if (confirm(`${a.persona} saves what matters to memory, then starts a fresh session. Continue?`)) api('POST', `/api/agents/${a.id}/refresh`); },
   review: () => api('POST', `/api/agents/${S.sel}/review`).then((r) => { if (r.id) { S.job = r.id; openApp('jobs'); } }),

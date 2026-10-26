@@ -19,6 +19,16 @@ sidebar, start-up app, what closing does, notifications, sounds, do not disturb,
 its size and position. No npm install (Node 18 built-ins only).
 Uses your Claude Code login. `./start.sh` and `./stop.sh` still work.
 
+**The look.** `public/ui/os.css` holds the layout; `public/ui/os-lux.css`, loaded after it, holds the finish: deep ink
+surfaces (warm ivory in light mode), a champagne-gold accent (the default; others in Preferences → Appearance),
+frosted title bar, sidebar and menus, softer corners, and Fraunces for headings, Inter for text, JetBrains Mono for code.
+The fonts are bundled in `public/ui/fonts/` (SIL Open Font License, `OFL-LICENSE.txt`), so nothing is fetched from the
+internet. Cards rise into place, primary buttons catch a light sweep on hover, and the active app, open questions and
+badges glow slowly. Preferences → Appearance → Animations → Reduced turns all of it off. The window's WebKitGTK has no
+CSS `color-mix()`, so tints are written as `rgba(var(--x-rgb), alpha)`: each colour has an `--x-rgb` token next to it
+(the accent's is set by `applyPrefs` in `shell.js`). Entrance animations only move things and never fade them in,
+because WebKit can pause animations in a hidden window and content must never be left invisible.
+
 ## Today
 
 The start page (key `D`, changeable in Preferences → General): what needs you, who is working on what, what finished in the

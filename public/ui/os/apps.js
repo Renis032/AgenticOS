@@ -157,8 +157,8 @@ APPS.memory = {
     S.memKey = null;
   },
   update() {
-    const groups = leads().map((k) => [k, [S.agents[k], ...Object.values(S.agents).filter((a) => a.staff && a.homeId === k).sort((x, y) => (y.memoryVersion || 0) - (x.memoryVersion || 0))].filter(Boolean)]);
-    $('#memList').innerHTML = groups.map(([k, list]) => `<div class="grp">${esc(teamName(k))}</div>` + list.map((a) => `<div class="li ${S.memAgent === a.id ? 'on' : ''}" data-act="memSel" data-id="${a.id}"><span>${esc(a.persona)}</span><span class="hint">${a.memoryVersion ? 'v' + a.memoryVersion : 'empty'}</span></div>`).join('')).join('');
+    const groups = leads().map((k) => [k, [S.agents[k], ...Object.values(S.agents).filter((a) => a.staff && a.homeId === k).sort((x, y) => !!x.onCall - !!y.onCall || (y.memoryVersion || 0) - (x.memoryVersion || 0))].filter(Boolean)]);
+    $('#memList').innerHTML = groups.map(([k, list]) => `<div class="grp">${esc(teamName(k))}</div>` + list.map((a) => `<div class="li ${S.memAgent === a.id ? 'on' : ''}" data-act="memSel" data-id="${a.id}"><span>${esc(a.persona)}${a.onCall ? ` <span class="hint">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}</span><span class="hint">${a.memoryVersion ? 'v' + a.memoryVersion : 'empty'}</span></div>`).join('')).join('');
     const a = S.agents[S.memAgent];
     if (!a) { $('#memBody').innerHTML = '<div class="empty">Pick an agent to read what they have learned. Each agent rewrites its memory at the end of a task, and sees it at the start of the next.</div>'; return; }
     const key = a.id + '|' + a.memoryVersion;

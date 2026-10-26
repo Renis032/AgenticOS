@@ -60,6 +60,23 @@ async function check() {
   if (fs.existsSync(path.join(ROOT, 'data', 'usage'))) spawnSync('rsync', ['-a', path.join(ROOT, 'data', 'usage') + '/', path.join(office, 'data', 'usage') + '/']);
   const results = [];
   const ok = (name, pass, detail) => results.push({ name, pass: !!pass, detail: pass ? '' : String(detail || '').slice(0, 300) });
+
+  // Who stays on a team (lib/on-call.js), checked directly: no agents needed.
+  {
+    const agents = new Map(), tickets = new Map([['t1', { id: 't1', handoffs: ['FridgeOracle'] }], ['t2', { id: 't2', handoffs: ['news-aggregator'] }]]);
+    const oc = require(path.join(ROOT, 'lib', 'on-call')).install({ agents, tickets, now: () => 1, touch: () => {} });
+    const curator = { id: 'c', staff: true, role: 'custom', tickets: ['t1'] }, researcher = { id: 'r', staff: true, role: 'researcher', tickets: ['t1'] };
+    agents.set('c', curator); agents.set('r', researcher);
+    oc.onHire(curator, {}, tickets.get('t1')); oc.onHire(researcher, {}, tickets.get('t1'));
+    ok('a custom hire is on call for its project; a roster role joins the team', curator.onCall && curator.onCall.project === 'FridgeOracle' && !researcher.onCall, JSON.stringify([curator.onCall, researcher.onCall]));
+    ok('an on-call specialist is only picked for their own project', oc.available(curator, tickets.get('t1')) && !oc.available(curator, tickets.get('t2')) && oc.available(researcher, tickets.get('t2')));
+    oc.onReuse(curator, {}, tickets.get('t2')); curator.tickets.push('t2');
+    ok('used on a second project, an on-call specialist joins the team', !curator.onCall && curator.joinedTeam, JSON.stringify(curator));
+    const kept = { id: 'k', staff: true, role: 'custom', tickets: [] };
+    oc.onHire(kept, { stay: 'team' }, tickets.get('t1'));
+    oc.setScope('c', false);
+    ok('`stay: "team"` keeps a custom hire; the user can switch someone back to project only', !kept.onCall && curator.onCall && curator.onCall.project === 'news-aggregator', JSON.stringify([kept.onCall, curator.onCall]));
+  }
   const offices = [];
   try {
     const O = await startOffice(office, claude);
@@ -215,6 +232,16 @@ async function check() {
     }
     ok('a lead past the context threshold is reminded to delegate', nudged, why);
     const t1stop = big.id || t1.id;
+    // The brain: knowledge graph, decision flow, optimizer and node details.
+    const kg = (await A('GET', '/api/brain/knowledge')).body || {};
+    ok('the brain builds a knowledge graph of agents, memories and libraries', Array.isArray(kg.nodes) && kg.nodes.some((n) => n.type === 'agent') && kg.nodes.some((n) => n.type === 'page') && Array.isArray(kg.edges) && kg.edges.length > 0, JSON.stringify(Object.keys(kg)));
+    const fl = (await A('GET', '/api/brain/flow?days=30')).body || {};
+    ok('the brain maps how jobs flow from routing to outcome', Array.isArray(fl.nodes) && fl.nodes.some((n) => n.col === 0) && fl.nodes.some((n) => n.col === 2) && Array.isArray(fl.columns) && fl.columns.length === 8, JSON.stringify(Object.keys(fl)));
+    const fi = (await A('GET', '/api/brain/findings')).body;
+    ok('the optimizer returns findings with actions', Array.isArray(fi) && fi.every((x) => x.title && Array.isArray(x.actions)), JSON.stringify(fi).slice(0, 200));
+    const page = (kg.nodes || []).find((n) => n.type === 'page');
+    const nd = page ? (await A('GET', `/api/brain/node?id=${encodeURIComponent(page.id)}`)).body || {} : {};
+    ok('a knowledge node opens with its content and connections', page && typeof nd.content === 'string' && Array.isArray(nd.links), JSON.stringify(nd).slice(0, 200));
     const stop = (await A('POST', `/api/tickets/${t1stop}/stop`)).code === 200;
     const stopped = await until(async () => ((await A('GET', '/api/state')).body.tickets.find((t) => t.id === t1stop) || {}).status === 'stopped', 4000);
     ok('a job can be stopped', stop && stopped, 'not stopped');

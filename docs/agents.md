@@ -18,7 +18,21 @@ across tickets, has an inbox, and restarts itself (resuming the same session) if
 
 Leads decide per ticket whether to work alone or hire **sub-agents** — roster specialists
 (analysts, implementer, reviewers, researcher) or a **custom** specialist they invent on the spot.
-Staff are permanent: they appear under their lead in the process tree and move under whoever starts them while they work.
+Staff appear under their lead in the process tree and move under whoever starts them while they work.
+
+**Who stays on the team** (`lib/on-call.js`). Only generally useful people are permanent:
+
+- **Roster roles** (researcher, the WORK analysts and so on) join the team for good.
+- **A custom specialist is on call for the project it was hired for.** The project is the folder the job is about, or
+  the job's configured project. Leads reuse them whenever that project is worked on again. Otherwise they are off:
+  hidden in Processes (tick **on call** to see them), listed apart in the lead's `staff`, and drawn next to their project
+  in the Brain map, not in the team's lobe. Their memory and track record are kept.
+- **Used on a second project, an on-call specialist joins the team**: they have proven generally useful.
+- **The lead can decide when hiring.** `delegate` takes `stay: "team"` or `stay: "project"`.
+- **You can switch it** in Processes: select the teammate, then **Keep on the team** or **Project only**.
+
+Staff hired before this rule existed were sorted once at start-up: custom specialists used on fewer than two projects
+went on call for their project.
 
 ## How a ticket flows
 

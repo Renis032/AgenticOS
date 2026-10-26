@@ -21,6 +21,7 @@ Code login. Everything runs on this computer.
   The strip under the conversation shows who is working on what and what it has cost so far.
 - **When an agent needs you** (a question, a plan, a command to run) the job says *needs you*, you get a notification,
   and reminders follow if it waits. Plans under an amount you choose can be approved automatically.
+- **Brain** (`B`) shows everything the agents know as a graph, how jobs flow through the office, and what to improve.
 - **Today** (`D`, the start page) shows what needs you, what's running and what finished; **Projects** (`O`) where every
   personal project stands; **Skills** the skills your agents propose.
 - **In the background**: close the window while jobs run and it waits in the tray; `./agentos autostart on` starts it at login.
@@ -31,6 +32,7 @@ Code login. Everything runs on this computer.
 
 | Page | What's in it |
 |---|---|
+| [The brain](docs/brain.md) | the knowledge graph, the decision flow and the optimizer, with every rule and number explained |
 | [The window and its apps](docs/window.md) | the title bar, menus, Preferences, and every app (Processes, Jobs, Projects…) |
 | [Agents and jobs](docs/agents.md) | who works here, how jobs flow, models, plans, terminal commands, skills, handoffs, libraries |
 | [Scripts](docs/scripts.md) | the scripts agents use instead of doing mechanical work by hand |

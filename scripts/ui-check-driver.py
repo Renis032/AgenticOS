@@ -40,7 +40,7 @@ CHECK = """JSON.stringify((() => {
   }
   for (const el of document.querySelectorAll('#top, .jhead h2, .toolbar, .prow')) if (el.offsetParent && el.scrollWidth > el.clientWidth + 4) p.push('overflows: ' + (el.id ? '#' + el.id : el.className.split(' ')[0]) + ' (' + el.scrollWidth + ' > ' + el.clientWidth + ')');
   const top = document.getElementById('top');
-  if (top && Math.round(top.getBoundingClientRect().height) > 46) p.push('title bar wraps to ' + Math.round(top.getBoundingClientRect().height) + 'px');
+  if (top && Math.round(top.getBoundingClientRect().height) > 50) p.push('title bar wraps to ' + Math.round(top.getBoundingClientRect().height) + 'px');
   if (document.body.scrollWidth > innerWidth + 2) p.push('page scrolls sideways');
   return p;
 })())"""
