@@ -50,7 +50,10 @@ async function check(opt) {
   let display = 90;
   while (fs.existsSync(`/tmp/.X11-unix/X${display}`) || fs.existsSync(`/tmp/.X${display}-lock`)) display++;
   const procs = [];
-  const env = { ...process.env, WORKPLACE_PORT: String(port), CLAUDE_BIN: path.join(work, 'claude'), DISPLAY: `:${display}`, HOME: process.env.HOME };
+  const env = { ...process.env, AGENTOS_TEST_PARENT: String(process.pid), WORKPLACE_PORT: String(port), CLAUDE_BIN: path.join(work, 'claude'), DISPLAY: `:${display}`, HOME: process.env.HOME };
+  // Interrupted (Ctrl-C, a timeout): stop Xvfb and the test office before exiting. The office also stops itself (AGENTOS_TEST_PARENT).
+  const onSignal = () => { for (const p of procs) { try { process.kill(p.spawnargs[0] === process.execPath ? -p.pid : p.pid, 'SIGTERM'); } catch {} } process.exit(130); };
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, onSignal);
   try {
     procs.push(spawn('Xvfb', [`:${display}`, '-screen', '0', `${(opt.size || '1600x1000').replace('x', 'x')}x24`], { stdio: 'ignore' }));
     procs.push(spawn(process.execPath, ['server.js'], { cwd: office, env, stdio: 'ignore', detached: true }));
@@ -100,11 +103,73 @@ async function check(opt) {
             else if (avg(linked) < 10 || avg(linked) < avg(far) + 8) __uiErrors.push('map drag: neighbours did not follow ' + JSON.stringify(window.__dragResult));
           }, 600); } }, 30);
       })()`, wait: 2000 },
+      // Keyboard: the focused map moves the selection with the arrow keys; Enter in the search box finds and selects.
+      { name: 'brain-map-keys', js: `(() => {
+        const c = document.querySelector('canvas.bmap');
+        if (!c) return __uiErrors.push('brain map missing');
+        ACT.brainSel({ id: '' }); c.focus();
+        c.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        if (!S.brain.sel) __uiErrors.push('arrow key on the map selected nothing');
+        const q = document.getElementById('brainQ'), lead = Object.values(S.agents).find((a) => a.resident && a.id !== S.root);
+        q.value = lead.persona; q.dispatchEvent(new Event('input'));
+        q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        if (S.brain.sel !== 'agent:' + lead.id) __uiErrors.push('Enter in search did not select ' + lead.persona + ' (got ' + S.brain.sel + ')');
+        q.value = ''; q.dispatchEvent(new Event('input'));
+      })()`, wait: 900 },
+      // Time filter: the oldest week shows fewer nodes than now.
+      { name: 'brain-map-time', js: `(() => {
+        const r = document.getElementById('bTime');
+        if (!r) return __uiErrors.push('time slider missing');
+        const all = BrainMap.debug().live; r.value = 0; r.dispatchEvent(new Event('input'));
+        const early = BrainMap.debug().live;
+        if (!(early < all)) __uiErrors.push('time slider at the start still shows ' + early + ' of ' + all + ' nodes');
+        r.value = r.max; r.dispatchEvent(new Event('input'));
+      })()`, wait: 900 },
+      // Idle: with nothing moving and nobody touching it, the map stops drawing (no CPU).
+      { name: 'brain-map-idle', js: `setTimeout(() => { const d = BrainMap.debug(); if (!d || !d.sleeping) __uiErrors.push('the map is still animating after 11 s idle: ' + JSON.stringify(d)); }, 11000)`, wait: 11500 },
       { name: 'main-menu', js: `ACT.appmenu({}, { target: document.querySelector('[data-act=appmenu]') })` },
       { name: 'palette', js: `closeMenu(); openPal()` },
+      // Launcher ranking: an app whose name starts with the text comes first; settings can be found by name; typed text can become a job.
+      { name: 'palette-search', js: `(() => {
+        const box = document.getElementById('palIn');
+        box.value = 'heal'; box.dispatchEvent(new Event('input'));
+        if (!palList[0] || palList[0].label !== 'Health') __uiErrors.push('"heal" does not put Health first: ' + (palList[0] || {}).label);
+        if (!palList.some((x) => x.k === 'new job') || !palList.some((x) => x.k === 'brain')) __uiErrors.push('no "new job" / Brain rows for typed text');
+        box.value = 'compact long'; box.dispatchEvent(new Event('input'));
+        if (!palList.some((x) => x.k === 'setting' && /Compact long/.test(x.label))) __uiErrors.push('the compaction setting cannot be found by name');
+      })()`, wait: 700 },
+      // While you were away: last seen three hours ago, with a lesson written since.
+      { name: 'away-card', js: `(() => {
+        closePal();
+        const lead = Object.values(S.agents).find((a) => a.resident && a.id !== S.root);
+        lead.lessons = [{ id: 'uicheck', t: Date.now() - 600000, ticketN: 3, text: 'Run the tests before saying a fix works; the user checks.' }];
+        setPref('lastSeen', String(Date.now() - 3 * 3600000)); checkAway();
+        if (!document.getElementById('away').classList.contains('on')) __uiErrors.push('the away card did not open after 3 hours');
+      })()`, wait: 900 },
+      { name: 'memory-lessons', js: `(() => {
+        closeAway();
+        const lead = Object.values(S.agents).find((a) => a.resident && a.id !== S.root);
+        S.memAgent = lead.id; S.memKey = null; openApp('memory');
+        setTimeout(() => { if (!document.querySelector('#memBody .lessons')) __uiErrors.push('lessons are not shown in Memory'); }, 900);
+      })()`, wait: 1300 },
+      // The eval grid, with runs that pass, fail, change instructions and could not run.
+      { name: 'health-evals', js: `(() => {
+        openApp('health');
+        const r = (d, res, extra) => ({ t: Date.now() - d * 86400000, ms: 190000, model: 'haiku', cost: 0.06, results: res.map(([name, pass]) => ({ name, pass, detail: pass ? '' : 'tools: Read, Read' })), passed: res.filter((x) => x[1]).length, total: res.length, ...extra });
+        const names = ['reads a large file in parts (outline/show/search or Read with offset)', 'counts with the count script and gets it exactly right', "does not commit (it is the user's job)", 'proposes a plan before starting a team of three', 'saves a project handoff when the user wraps up'];
+        setTimeout(() => {
+          S.evals = { everyDays: 1, runs: [r(5, names.map((n) => [n, true])), r(4, names.map((n, i) => [n, i !== 3]), { instructionsChanged: true }), { t: Date.now() - 3 * 86400000, error: 'claude: not logged in', model: 'haiku', passed: 0, total: 0 }, r(1, names.map((n) => [n, true]), { instructionsChanged: true })] };
+          S.hKey = null; APPS.health.update();
+          if (!document.querySelector('.evgrid td.evbad') || !document.querySelector('.evgrid .evchg')) __uiErrors.push('the eval grid did not render its failures or changes');
+        }, 700);
+      })()`, wait: 1400 },
       { name: 'notifications', js: `closePal(); ACT.ncenter()` },
       ...(opt.quick ? ['general', 'appearance'] : ['general', 'appearance', 'notifications', 'jobs', 'agents', 'keys', 'about']).map((sec) => ({ name: `prefs-${sec}`, js: `$('#ncenter').classList.remove('on'); openPrefs('${sec}')`, wait: 600 })),
       { name: 'light-theme', js: `closePrefs(); setTheme('light'); S.job = '${waiting && waiting.id}'; openApp('jobs')`, wait: 900 },
+      { name: 'light-brain', js: `openApp('brain'); ACT.brainTab({ tab: 'knowledge' })`, wait: 2500 },
+      { name: 'light-flow', js: `ACT.brainTab({ tab: 'flow' })`, wait: 2000 },
+      { name: 'light-away', js: `checkAway(true)`, wait: 900 },
+      { name: 'light-evals', js: `closeAway(); openApp('health'); setTimeout(() => { S.evals = { everyDays: 1, runs: [{ t: Date.now() - 86400000, ms: 200000, model: 'haiku', cost: 0.05, passed: 1, total: 2, instructionsChanged: true, results: [{ name: 'does not commit', pass: true }, { name: 'plans first', pass: false, detail: 'no plan' }] }] }; S.hKey = null; APPS.health.update(); }, 700)`, wait: 1400 },
       { name: 'collapsed-sidebar', js: `setTheme('system'); toggleSidebar(); openApp('processes')` },
       { name: 'narrow-window', size: [820, 760], js: `toggleSidebar(); openApp('jobs')`, wait: 1200 },
     ];
@@ -121,6 +186,7 @@ async function check(opt) {
     if (results.length < steps.length) lines.push(`- only ${results.length} of ${steps.length} steps ran (the driver stopped early)`);
     return { text: lines.join('\n'), ok: !bad.length && results.length === steps.length };
   } finally {
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeListener(sig, onSignal);
     for (const p of procs.reverse()) { try { process.kill(p.pid > 0 && p.spawnargs[0] === process.execPath ? -p.pid : p.pid, 'SIGTERM'); } catch {} }
     await sleep(800);
     spawnSync('pkill', ['-f', path.join(work, 'claude')]);

@@ -223,3 +223,13 @@ canvas.bmap { display: block; cursor: grab; }
 .fsvg text { stroke: var(--desk); stroke-width: 2.6px; stroke-opacity: .8; font-weight: 500; }
 .fsvg .fcolu, .fsvg .fsub { stroke-width: 2px; font-weight: 400; }
 .fsvg .fcol { font-weight: 650; letter-spacing: .2px; }
+
+/* Brain map: time filter over the canvas, keyboard focus ring. */
+.btime { position: absolute; left: 14px; bottom: 12px; z-index: 4; display: flex; align-items: center; gap: 10px; padding: 6px 12px 6px 6px;
+  border-radius: 12px; background: var(--glass-strong); border: 1px solid var(--line2); box-shadow: var(--shadow-sm); }
+.btime input[type=range] { width: min(320px, 34vw); accent-color: var(--accent); }
+.btime .btn { min-width: 32px; }
+canvas.bmap:focus { outline: none; }
+canvas.bmap:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 4px; }
+.btime input[type=range] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 4px; background: linear-gradient(90deg, var(--accent-lo), var(--accent-hi)); }
+.btime input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent-hi); border: 2px solid var(--panel); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), .6), 0 2px 6px rgba(0, 0, 0, .4); cursor: pointer; }

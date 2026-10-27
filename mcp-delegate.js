@@ -131,6 +131,13 @@ tools.push({
   inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'Your complete revised memory, in Markdown.' } }, required: ['content'] },
 });
 tools.push({
+  name: 'add_lesson',
+  description: 'Save ONE line (under 200 characters) you learned from a job that went wrong: what to do differently next time. ' +
+    'Lessons are kept apart from your memory and shown at the start of every session; the oldest drops off after 8. ' +
+    'Use it when you are told a job failed, was rated 👎, needed rework or was undone.',
+  inputSchema: { type: 'object', properties: { lesson: { type: 'string', description: 'One line, e.g. "Run the tests before reporting a fix as done."' } }, required: ['lesson'] },
+});
+tools.push({
   name: 'give_feedback',
   description: 'Give a teammate feedback on work they did for you, so they improve. They receive it at the start of their next ' +
     'task. Be specific: what was good or weak, and what to do differently.',
@@ -355,6 +362,10 @@ async function callTool(id, name, args) {
     }
     if (name === 'update_memory') {
       const r = await post('/api/memory', { agentId: AGENT_ID, content: args.content });
+      return textResult(id, r.error || r.message, !!r.error);
+    }
+    if (name === 'add_lesson') {
+      const r = await post('/api/lessons', { agentId: AGENT_ID, text: args.lesson });
       return textResult(id, r.error || r.message, !!r.error);
     }
     if (name === 'give_feedback') {

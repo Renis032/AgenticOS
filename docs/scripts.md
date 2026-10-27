@@ -43,7 +43,7 @@ command line), never by an agent:
 | `ui-check` | after any change to the Agentic OS window: clicks through every app, menu, Preferences and job state in a throwaway copy (fake agents, nothing spent) and lists JS errors, dead buttons, off-screen buttons and overflowing layouts, with screenshots (about 45 s) |
 | `api-check` | after any change to the Agentic OS server: exercises its API in a throwaway copy (fake agents, nothing spent) — jobs, follow-ups, recall, commands and the block list, plans, handoffs, skills, settings, restart, a fresh clone — and lists what broke (about 5 s) |
 | `prompt-size` | how many tokens each role's fixed instructions and office tools take (what every call re-sends), by section |
-| `agent-eval` | after changing agent instructions: real agents on a cheap model in a throwaway office, checking they read in parts, use scripts, refuse to commit, propose plans and save handoffs (a few cents) |
+| `agent-eval` | after changing agent instructions: real agents on a cheap model in a throwaway office, checking they read in parts, use scripts, refuse to commit, propose plans and save handoffs (a few cents); `--json` for the office's own scheduled runs |
 
 - **Agents** call them through the `script` tool, which every agent has, God included. Each script is tagged `for: all | lead | office` in the manifest, and an agent sees only the scripts meant for it (office ones for the team that maintains this office), which keeps every call's tool list short. A hook blocks shell commands
   a script already covers (`wc`, `find -name`, `diff`/`cmp`, `xmllint --noout`, `git status`, `git diff --stat`, `sed -n A,Bp file`) and

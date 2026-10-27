@@ -20,9 +20,15 @@ Leads decide per ticket whether to work alone or hire **sub-agents** — roster 
 (analysts, implementer, reviewers, researcher) or a **custom** specialist they invent on the spot.
 Staff appear under their lead in the process tree and move under whoever starts them while they work.
 
+**Lessons from jobs that went wrong** (`lib/lessons.js`). When a job fails, you rate it 👎, you follow up within two
+hours (rework) or you undo its changes, each lead on it (never God) is asked once per reason to write one line with
+`add_lesson`: what to do differently next time. Lessons are kept apart from the free-form memory, at most 8 per agent
+(the oldest drops off, a repeat replaces the old one), each under 220 characters, and shown at the start of every
+session. The Memory app lists them above the memory, with **Remove** on each.
+
 **Who stays on the team** (`lib/on-call.js`). Only generally useful people are permanent:
 
-- **Roster roles** (researcher, the WORK analysts and so on) join the team for good.
+- **Roster roles** (the researcher, the analysts and reviewers defined in the roster) join the team for good.
 - **A custom specialist is on call for the project it was hired for.** The project is the folder the job is about, or
   the job's configured project. Leads reuse them whenever that project is worked on again. Otherwise they are off:
   hidden in Processes (tick **on call** to see them), listed apart in the lead's `staff`, and drawn next to their project
@@ -33,6 +39,16 @@ Staff appear under their lead in the process tree and move under whoever starts 
 
 Staff hired before this rule existed were sorted once at start-up: custom specialists used on fewer than two projects
 went on call for their project.
+
+**Keeping the list short.** Checked at start-up and every hour:
+
+- **Parallel duplicates merge.** A lead may hire several of the same specialist at once (four QA testers, say) because
+  they finish a job faster working side by side. Once that job is closed, the one with the best record stays on call and
+  the others retire.
+- **Unused specialists retire**: on call with no project and unused for 30 days, or with a project and unused for 90.
+- **Retiring is reversible.** Retired staff disappear from the lists, the lead's `staff` and the Brain map, and their
+  memory moves to `data/memory/archive/` (the Memory app still shows it). They come back with their memory when a lead
+  names them with `who`, or when you select them in Processes (tick **on call**) and press **Bring back**.
 
 ## How a ticket flows
 

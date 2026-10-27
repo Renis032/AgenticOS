@@ -208,7 +208,7 @@ function renderNcenter() {
 }
 
 // ---------------------------------------------------------------- preferences window
-const PREF_SECTIONS = [['general', 'General', 'settings'], ['appearance', 'Appearance', 'sun'], ['notifications', 'Notifications', 'bell'], ['jobs', 'Jobs & chat', 'jobs'], ['agents', 'Agents & teams', 'teams'], ['keys', 'Keyboard', 'keyboard'], ['about', 'About', 'info']];
+const PREF_SECTIONS = [['general', 'General', 'settings'], ['appearance', 'Appearance', 'sun'], ['notifications', 'Notifications', 'bell'], ['jobs', 'Jobs & chat', 'jobs'], ['agents', 'Agents & teams', 'teams'], ['keys', 'Keyboard', 'keyboard'], ['data', 'Data & backups', 'archive'], ['about', 'About', 'info']];
 // Office-wide settings live on the server (roster.json); the Preferences window edits them through /api/office-settings.
 function officeSelect(key, opts) {
   const v = (S.office || {})[key];
@@ -238,6 +238,9 @@ function renderPrefs() {
   const body = PREF_BODY[S.prefSec]();
   $('#prefsBody').innerHTML = `<button class="tb-ic x" data-act="closePrefs" data-tip="Close · Esc">${ic('close')}</button>${body}`;
 }
+// Data & backups (lib/backups.js): a daily copy of data/, "Back up now", and restore.
+function loadBackups() { api('GET', '/api/backups').then((r) => { S.backups = r; if ($('#prefs').classList.contains('on') && S.prefSec === 'data') renderPrefs(); }).catch(() => {}); }
+const sizeOf = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} kB`);
 const PREF_BODY = {
   general: () => `<h2>General</h2><div class="hint">How Agentic OS starts and closes.</div>` +
     pGroup('Start-up', [
@@ -264,6 +267,7 @@ const PREF_BODY = {
       prow('Do not disturb', 'Keep everything in the notification center, with no toasts, sounds or desktop notifications.', pSwitch('dnd', '0')),
       prow('Desktop notifications', NATIVE ? 'Ubuntu notifications while the window is in the background. Click one to open the job.' : 'Browser notifications while the window is hidden.', pSwitch('notify', NATIVE ? '1' : '0')),
       prow('Sounds', 'A short chime; questions and warnings sound different from answers.', pSwitch('sound', '0')),
+      prow('While you were away', `When the office opens, or the window comes back after ${AWAY_MIN} minutes, show one card with what finished, what waits for you and what changed. Ctrl K → "While you were away" shows it any time.`, pSwitch('awayCard', '1')),
       prow('Keep toasts on screen for', '', pSelect('toastSecs', '8', [['4', '4 seconds'], ['8', '8 seconds'], ['15', '15 seconds'], ['30', '30 seconds']])),
     ]) +
     pGroup('Tell me about', [
@@ -305,11 +309,22 @@ const PREF_BODY = {
         officeSelect('autoCompactTokens', [[0, 'Claude Code default'], [100000, '100k tokens'], [150000, '150k tokens'], [200000, '200k tokens'], [300000, '300k tokens']])),
       prow('Remind leads to delegate at', 'When a lead\'s own conversation passes this size, it is told to hand the remaining long work to teammates with fresh contexts.',
         officeSelect('leadContextNudge', [[0, 'Never'], [80000, '80k tokens'], [100000, '100k tokens'], [150000, '150k tokens']])),
+      prow('Check the agents follow their instructions', 'Runs the agent eval in a throwaway office (real agents on Haiku, a few cents) when the office has been idle for 20 minutes and you are under half of your usage windows. Results over time are in Health.',
+        officeSelect('agentEvalDays', [[0, 'Only when I run it'], [1, 'Every day'], [3, 'Every 3 days'], [7, 'Every week']])),
       prow('Remind me when something waits', 'A plan, question or command that waits this long gets a reminder (not between 22:00 and 08:00).',
         officeSelect('remindAfterMinutes', [[0, 'Never'], [30, 'After 30 minutes'], [60, 'After 1 hour'], [120, 'After 2 hours']])),
     ]) +
     pGroup('Leads', leads().map((k) => { const a = S.agents[k] || {}; return prow(`${esc(a.persona || k)} <span class="hint">· ${esc((S.roles[k] || {}).room || '')}</span>`, esc((S.roles[k] || {}).description || ''), `${modelChip(a)}`); })) +
     `<button class="btn pri" data-act="prefTeams">${ic('teams')} Open Teams & roles</button>`,
+  data: () => {
+    const B = S.backups;
+    if (!B) { loadBackups(); return '<h2>Data & backups</h2><div class="hint">Loading…</div>'; }
+    const kinds = { daily: 'daily', manual: 'made by you', 'before-restore': 'saved before a restore' };
+    return `<h2>Data & backups</h2><div class="hint">Everything the office knows (agents, jobs, memories, conversations) lives in data/. A compressed copy is saved every day; the newest ${B.keep} are kept in <code>${esc(B.dir)}</code>.</div>` +
+      pGroup('', [prow('Back up now', B.list.length ? `Newest: ${ago(B.list[0].t)}.` : 'No backup yet: the first one is made a minute after start-up.', '<button class="btn" data-act="backupNow">Back up now</button>')]) +
+      (B.pending ? '<div class="banner" style="margin:0 0 14px">A restore is waiting: the office restarts with it as soon as nothing is running.</div>' : '') +
+      pGroup('Backups', B.list.length ? B.list.map((b) => prow(esc(new Date(b.t).toLocaleString()), `${kinds[b.kind]} · ${sizeOf(b.size)}`, `<button class="btn sm" data-act="backupRestore" data-name="${esc(b.name)}">Restore</button>`)) : [prow('None yet', '', '')]);
+  },
   keys: () => `<h2>Keyboard</h2><div class="hint">Shortcuts work everywhere except while you type in a box.</div>` +
     pGroup('Window', [`<table class="ktable">${[['Ctrl K', 'Search and run commands'], ['Ctrl N', 'New job'], ['Ctrl ,', 'Preferences'], ['Ctrl B', 'Show or hide the sidebar'], ['F10', 'Main menu'], ['Ctrl + / Ctrl − / Ctrl 0', 'Zoom in, out, actual size'], ['F11', 'Full screen'], ['Ctrl R', 'Reload'], ['Ctrl Q', 'Quit'], ['Esc', 'Close a menu or panel, deselect']].map(([k, d]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`]) +
     pGroup('Apps', [`<table class="ktable">${APP_LIST.map((x) => `<tr><td><kbd>${esc(x.key.toUpperCase())}</kbd></td><td>${esc(x.name)}</td></tr>`).join('')}</table>`]) +
@@ -360,7 +375,14 @@ Object.assign(ACT, {
   appmenu: (d, ev) => { const b = ev.target.closest('button'); if ($('#menu').classList.contains('on') && S.menuAnchor === b) return closeMenu(); openMenu(appMenu(), { el: b, align: 'right' }); },
   prefs: (d) => openPrefs(d.sec),
   closePrefs: () => closePrefs(),
-  prefSec: (d) => { S.prefSec = d.sec; renderPrefs(); },
+  prefSec: (d) => { S.prefSec = d.sec; if (d.sec === 'data') S.backups = null; renderPrefs(); },
+  backupNow: async () => { notifyQuiet('Backing up…'); const r = await api('POST', '/api/backups').catch((e) => ({ error: e.message })); notifyQuiet(r.error ? `Backup failed: ${r.error}` : 'Backed up.'); loadBackups(); },
+  backupRestore: async (d) => {
+    if (!confirm(`Restore ${d.name}?\n\nThe office restarts as soon as nothing is running and goes back to that day. What it knows now is saved first as a "before restore" backup, so you can undo this.`)) return;
+    const r = await api('POST', '/api/backups/restore', { name: d.name }).catch((e) => ({ error: e.message }));
+    notifyQuiet(r.error || r.message);
+    loadBackups();
+  },
   prefSeg: (d) => { setPref(d.k, d.v); prefChanged(d.k); },
   prefTeams: () => { closePrefs(); openApp('settings'); },
   prefHealth: () => { closePrefs(); openApp('health'); },

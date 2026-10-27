@@ -157,16 +157,19 @@ APPS.memory = {
     S.memKey = null;
   },
   update() {
-    const groups = leads().map((k) => [k, [S.agents[k], ...Object.values(S.agents).filter((a) => a.staff && a.homeId === k).sort((x, y) => !!x.onCall - !!y.onCall || (y.memoryVersion || 0) - (x.memoryVersion || 0))].filter(Boolean)]);
-    $('#memList').innerHTML = groups.map(([k, list]) => `<div class="grp">${esc(teamName(k))}</div>` + list.map((a) => `<div class="li ${S.memAgent === a.id ? 'on' : ''}" data-act="memSel" data-id="${a.id}"><span>${esc(a.persona)}${a.onCall ? ` <span class="hint">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}</span><span class="hint">${a.memoryVersion ? 'v' + a.memoryVersion : 'empty'}</span></div>`).join('')).join('');
+    const groups = leads().map((k) => [k, [S.agents[k], ...Object.values(S.agents).filter((a) => a.staff && a.homeId === k).sort((x, y) => !!x.retired - !!y.retired || !!x.onCall - !!y.onCall || (y.memoryVersion || 0) - (x.memoryVersion || 0))].filter(Boolean)]);
+    $('#memList').innerHTML = groups.map(([k, list]) => `<div class="grp">${esc(teamName(k))}</div>` + list.map((a) => `<div class="li ${S.memAgent === a.id ? 'on' : ''}" data-act="memSel" data-id="${a.id}"><span>${esc(a.persona)}${a.retired ? ' <span class="hint">retired</span>' : a.onCall ? ` <span class="hint">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}</span><span class="hint">${a.memoryVersion ? 'v' + a.memoryVersion : 'empty'}</span></div>`).join('')).join('');
     const a = S.agents[S.memAgent];
     if (!a) { $('#memBody').innerHTML = '<div class="empty">Pick an agent to read what they have learned. Each agent rewrites its memory at the end of a task, and sees it at the start of the next.</div>'; return; }
-    const key = a.id + '|' + a.memoryVersion;
+    const L = a.lessons || [];
+    const key = a.id + '|' + a.memoryVersion + '|' + L.map((l) => l.id).join();
     if (key === S.memKey) return;
     S.memKey = key;
     $('#memTitle').textContent = `${a.persona} · memory`;
     $('#memSub').textContent = a.memoryVersion ? `version ${a.memoryVersion}${a.memoryUpdatedAt ? ' · updated ' + ago(a.memoryUpdatedAt) : ''}` : '';
-    api('GET', `/api/agents/${a.id}/memory`).then((r) => { if (S.memAgent === a.id) $('#memBody').innerHTML = r.text ? `<div class="md" style="max-width:820px">${md(r.text)}</div>` : '<div class="empty">Nothing written yet.</div>'; });
+    // Lessons: one line each, written after a job failed, was rated 👎, needed rework or was undone (lib/lessons.js).
+    const lessonsHtml = L.length ? `<div class="card lessons" style="max-width:820px;margin-bottom:14px"><h3>${ic('bell')} Lessons from jobs that went wrong <span class="hint">${L.length} of 8</span></h3>${L.slice().reverse().map((l) => `<div class="li"><span style="flex:1;min-width:0">${esc(l.text)}</span><span class="hint">${l.ticketN ? '#' + l.ticketN + ' · ' : ''}${ago(l.t)}</span><button class="btn sm" data-act="lessonDel" data-id="${a.id}" data-lid="${l.id}" title="Remove this lesson">Remove</button></div>`).join('')}</div>` : '';
+    api('GET', `/api/agents/${a.id}/memory`).then((r) => { if (S.memAgent === a.id) $('#memBody').innerHTML = lessonsHtml + (r.text ? `<div class="md" style="max-width:820px">${md(r.text)}</div>` : '<div class="empty">Nothing written yet.</div>'); });
   },
 };
 
@@ -275,12 +278,14 @@ APPS.usage = {
 
 // ================================================================ app: Health
 APPS.health = {
-  mount(root) { root.innerHTML = `<div class="app"><div class="toolbar"><h1>Health</h1><span class="hint" id="hSub"></span><span class="sp"></span><button class="btn sm" data-act="healthRefresh">Refresh</button><button class="btn pri sm" data-act="selftest">Run self-test</button></div><div class="page" id="hBody"></div></div>`; S.hKey = null; refreshHealth(); },
+  mount(root) { root.innerHTML = `<div class="app"><div class="toolbar"><h1>Health</h1><span class="hint" id="hSub"></span><span class="sp"></span><button class="btn sm" data-act="healthRefresh">Refresh</button><button class="btn pri sm" data-act="selftest">Run self-test</button></div><div class="page" id="hBody"></div></div>`; S.hKey = null; S.evals = null; refreshHealth(); },
   update() {
     const h = S.health;
     if (!h) return;
     const st = S.selftest || h.selftest;
-    const key = `${JSON.stringify(h).length}|${st ? st.status + st.steps.length : ''}`;
+    if (!S.evals) { S.evals = 'loading'; api('GET', '/api/evals').then((e) => { S.evals = e; S.hKey = null; dirty(); }).catch(() => { S.evals = { runs: [] }; }); }
+    const ev = S.evals === 'loading' ? null : S.evals;
+    const key = `${JSON.stringify(h).length}|${st ? st.status + st.steps.length : ''}|${ev ? ev.runs.length + '' + !!ev.running : ''}`;
     if (key === S.hKey) return;
     S.hKey = key;
     $('#hSub').textContent = { ok: 'Everything looks fine.', warn: 'Working, with a few things to look at.', bad: 'Something needs attention.' }[h.level];
@@ -292,9 +297,35 @@ APPS.health = {
       <div class="card"><h3>Leads</h3>${h.residents.map((r) => `<div class="rolerow"><div class="top"><span class="pill s-${r.status}">${esc(r.status)}</span><a data-act="sel2" data-id="${r.id}"><b>${esc(r.persona)}</b></a><span class="hint">${esc(r.model)}/${esc(r.effort)}${r.upSince ? ` · up ${dur(Date.now() - r.upSince)}` : ''}${r.restarts ? ` · ${r.restarts} restarts` : ''}</span></div>${r.id !== S.root ? `<div class="hint">session ${tokens(r.contextTokens)} / ${tokens(h.refresh.contextTokens)} tokens${r.needsRefresh ? ' · refreshes after its next job' : ''}</div><div class="bar"><i style="width:${Math.min(100, (r.contextTokens / h.refresh.contextTokens) * 100)}%"></i></div>` : '<div class="hint">fresh session every job</div>'}</div>`).join('')}</div>
       <div class="card"><h3>Office scripts</h3>${(h.scripts || []).length ? h.scripts.map((x) => `<div class="step"><span class="i">⚙</span><span><a data-act="sel2" data-id="${x.id}">${esc(x.who)}</a> ran ${x.runs}${x.nudges ? ` · ${x.nudges} shell command${x.nudges === 1 ? '' : 's'} redirected` : ''}</span></div>`).join('') : '<div class="hint">No scripts used yet.</div>'}</div>
       <div class="card"><h3>Problems · 48 hours</h3>${h.errors.length ? h.errors.slice(0, 10).map((e) => `<div class="step"><span class="i">⚠️</span><span><a data-act="sel2" data-id="${e.id}">${esc(e.who)}</a> <span class="hint">${ago(e.t)}</span><br><span class="hint">${esc(short(e.text, 200))}</span></span></div>`).join('') : '<div class="hint">None.</div>'}${h.failed.length ? `<div class="label" style="margin-top:10px">Not completed · 7 days</div>${h.failed.map((x) => `<div class="hint">${esc(x.who)} · #${x.n || '?'} ${esc(short(x.title || '', 50))} · ${esc(x.outcome)} · ${ago(x.t)}</div>`).join('')}` : ''}</div>
-      </div><div class="card" style="margin-top:12px"><h3>Server log</h3><pre style="max-height:320px">${esc(h.logTail || '(empty)')}</pre></div>`;
+      </div>${evalCard(ev)}<div class="card" style="margin-top:12px"><h3>Server log</h3><pre style="max-height:320px">${esc(h.logTail || '(empty)')}</pre></div>`;
   },
 };
+
+// The agent eval over time (lib/evals.js): one column per run, one row per behaviour. ✓/✗ carry the result, so the
+// colour is never the only signal; ◆ marks a run whose agent instructions changed since the run before.
+function evalCard(ev) {
+  if (!ev) return '<div class="card" style="margin-top:12px"><h3>Agent eval</h3><div class="hint">Loading…</div></div>';
+  const runs = ev.runs.slice(-14);
+  const every = ev.everyDays ? (ev.everyDays === 1 ? 'every day' : `every ${ev.everyDays} days`) + ' when the office has been idle for 20 minutes' : 'only when you run it';
+  const head = `<h3>${ic('check')} Agent eval</h3><div class="evtop"><span class="hint">Real agents on ${esc((runs[runs.length - 1] || ev.running || {}).model || 'haiku')} in a throwaway office · runs ${every}.</span>${ev.running ? `<span class="hint"><span class="dots"><i></i><i></i><i></i></span> Running since ${ago(ev.running.startedAt)}…</span>` : '<button class="btn sm" data-act="evalRun">Run now</button>'}</div>`;
+  if (!runs.length) return `<div class="card" style="margin-top:12px">${head}<div class="hint">No runs yet. Each run sends about five small jobs through the agents and checks they follow their instructions: reading big files in parts, using scripts, never committing, planning before a big team, saving project handoffs. A few cents each.</div></div>`;
+  const names = [];
+  for (const r of runs.slice().reverse()) for (const x of r.results || []) if (!names.includes(x.name)) names.push(x.name);
+  const day = (t) => new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' });
+  const col = (r) => `<th title="${esc(new Date(r.t).toLocaleString())}${r.head ? ' · code ' + esc(r.head) : ''}${r.instructionsChanged ? ' · instructions changed since the run before' : ''} · ${money(r.cost || 0)}">${r.instructionsChanged ? '<span class="evchg">◆</span>' : ''}${day(r.t)}</th>`;
+  const cell = (r, n) => {
+    if (r.error) return `<td class="everr" title="Could not run: ${esc(r.error)}">!</td>`;
+    const x = (r.results || []).find((y) => y.name === n);
+    if (!x) return '<td class="evnone" title="Not checked in this run">·</td>';
+    return x.pass ? '<td class="evok" title="Followed">✓</td>' : `<td class="evbad" title="Not followed${x.detail ? ': ' + esc(x.detail) : ''}">✗</td>`;
+  };
+  const last = runs[runs.length - 1];
+  const total = runs.reduce((n, r) => n + (r.cost || 0), 0);
+  return `<div class="card" style="margin-top:12px">${head}<div style="overflow-x:auto"><table class="evgrid"><thead><tr><th class="evname"></th>${runs.map(col).join('')}</tr></thead><tbody>
+    ${names.map((n) => `<tr><td class="evname">${esc(n)}</td>${runs.map((r) => cell(r, n)).join('')}</tr>`).join('')}
+    <tr class="evsum"><td class="evname">followed</td>${runs.map((r) => `<td>${r.error ? '–' : `${r.passed}/${r.total}`}</td>`).join('')}</tr></tbody></table></div>
+    <div class="hint" style="margin-top:8px">Last run ${ago(last.t)}${last.error ? ' could not run' : `: ${last.passed} of ${last.total} followed · ${money(last.cost || 0)} · ${dur(last.ms || 0)}`} · ${runs.length} runs shown cost ${money(total)}. ◆ = the agents' instructions changed since the run before. Change how often it runs in Preferences → Agents &amp; teams.</div></div>`;
+}
 
 // ================================================================ app: Settings
 APPS.settings = {

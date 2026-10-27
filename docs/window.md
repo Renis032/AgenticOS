@@ -49,11 +49,22 @@ waiting, and usage against your limits.
 | **Terminal** | `t` | `ps`, `jobs`, `open <pid\|#job>`, `kill <pid>`, `new <text>`, and every office script (`count`, `find-def`, `call-sites`, `diff-files`, `route`…). |
 | **Usage** | `u` | Plan limits (also in the top bar), pace, estimated window size, spend by day, team and model. |
 | **Tokens** | `k` | Every model call on this machine (your Claude Code chats, every agent, tests), with the exact token counts from the API: by kind (fresh input, cache write 5 min / 1 h, cache read, output, thinking, web searches), by day, hour, weekday, source, team, agent, role, job, project, model, main thread vs subagents, service tier and stop reason. Filters for all of them; click a day or a row to filter. **Cache read** shows what every call re-read from the prompt cache: by source and in detail (each tool's results, Claude's own Write/Edit text, the fixed system prompt and tools, listings, reminders, your messages; spread over each call's exact cache read), by context size with what starting fresh at 100k/150k/200k/300k would have saved, by model with its price, cold reloads, and the single items that cost the most to carry (size × number of calls that re-read them); every chat has the same breakdown. **Context** shows what filled the context (each tool's results, Claude's own Write/Edit text, CLAUDE.md, skill and tool listings, reminders, your messages, the fixed system prompt and tool definitions) and the biggest single items. **Sessions** and **Every call** list everything; open a session for a bar per call and, per call, the exact usage and cost, what entered the context since the previous call, what the context held, and which tools Claude used. Long chats right now, Jev's OpenRouter calls, and **Save as CSV** (one row per call, to ~/Downloads). |
-| **Health** | `h` | System, Claude login, leads' sessions, script use, problems, self-test, server log. |
+| **Health** | `h` | System, Claude login, leads' sessions, script use, problems, self-test, the agent eval over time, server log. |
 | **Settings** | `,` | Roles, models, instructions, projects and routing keywords, new teams. |
 
-`Ctrl/⌘+K` opens the launcher (apps, jobs, processes, actions); `?` lists the keys; arrow keys move through
+`Ctrl/⌘+K` opens the launcher: apps, jobs, processes, projects, agents' memories, every Preferences setting by name,
+and actions (self-test, agent eval, back up now, while you were away). A match at the start of a name ranks first;
+recent picks come first, and an empty box shows them and what waits for you. With three or more letters it also finds
+jobs whose text matches, and the last two rows turn what you typed into a new job or a Brain search. `?` lists the keys; arrow keys move through
 processes and jobs, ←/→ fold the tree. Notifications: 🔔 desktop notifications, 🔊 sounds; toasts always.
+
+## While you were away
+
+When the office opens after being closed, or the window comes back after 30 minutes in the background, one card sums up
+what happened since you last looked: what waits for you, jobs finished and not finished (with what they cost), who was
+hired, joined the team or retired, and lessons the leads wrote. Click a row to open it. The time you last looked is kept
+in the window (it updates every minute while the window is visible). Turn the card off in Preferences → Notifications;
+`Ctrl+K` → **While you were away** shows the last day at any time.
 
 ## Health & self-test
 

@@ -24,7 +24,7 @@ function procRows() {
     const busy = ACTIVE.includes(a.status) || (a.resident && a.current);
     let self = true;
     if (!S.showIdle && !a.resident && !busy) self = false;
-    if (!S.showOnCall && a.onCall && !busy) self = false; // hired for one project: off the team until it comes back
+    if (!S.showOnCall && (a.onCall || a.retired) && !busy) self = false; // hired for one project, or retired: off the team list
     if (q && !(`${a.persona} ${a.name} ${a.role} ${a.no}`.toLowerCase().includes(q))) self = false;
     if (jobIds && !jobIds.has(a.id)) self = false;
     const k = self || childKeep || a.id === S.root || (a.resident && !q && !jobIds);
@@ -89,7 +89,7 @@ APPS.processes = {
       const busy = ACTIVE.includes(st) || (a.resident && a.current);
       return `<tr class="${S.sel === a.id ? 'on' : ''} ${!busy && !a.resident ? 'dim' : ''}" data-act="sel" data-id="${a.id}">
         <td class="pid">${a.no || ''}</td>
-        <td class="nm"><span class="tree">${esc(glyph)}</span>${has ? `<span class="tw" data-act="fold" data-id="${a.id}">${S.collapsed.has(a.id) ? '▸' : '▾'}</span>` : '<span class="tw"></span>'}<b>${esc(a.persona)}</b><span class="r">${esc(a.id === S.root ? 'router' : a.name)}</span>${a.onCall ? ` <span class="hint" title="Hired for one project; comes back when it does">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}${a.staff && starOf(a.homeId) === a.id ? ' <span class="lv" title="most reliable on the team">★</span>' : ''}</td>
+        <td class="nm"><span class="tree">${esc(glyph)}</span>${has ? `<span class="tw" data-act="fold" data-id="${a.id}">${S.collapsed.has(a.id) ? '▸' : '▾'}</span>` : '<span class="tw"></span>'}<b>${esc(a.persona)}</b><span class="r">${esc(a.id === S.root ? 'router' : a.name)}</span>${a.retired ? ` <span class="hint" title="${esc(a.retired.why)}">retired</span>` : a.onCall ? ` <span class="hint" title="Hired for one project; comes back when it does">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}${a.staff && starOf(a.homeId) === a.id ? ' <span class="lv" title="most reliable on the team">★</span>' : ''}</td>
         <td>${modelChip(a)}</td><td>${pill(st)}</td>
         <td>${j ? `<a data-act="openJob" data-id="${j.id}">#${j.n}</a>` : '<span class="hint">—</span>'}</td>
         <td class="act ${act.think ? 'th' : ''}" title="${esc(act.text)}">${esc(short(act.text, 160))}</td>
@@ -107,7 +107,7 @@ function renderInspector() {
   if (!a) {
     if (S.inspFor !== '') { S.inspFor = ''; el.innerHTML = `<div class="insp-head"><h2>System</h2><div class="sub">Select a process to inspect its thinking, memory and work.</div></div><div class="body" id="inspBody"></div>`; }
     const all = Object.values(S.agents);
-    $('#inspBody').innerHTML = `<div class="sec"><div class="label">Overview</div><div class="kv"><span>leads <b>${leads().length}</b></span><span>staff <b>${all.filter((x) => x.staff && !x.onCall).length}</b></span><span>on call <b>${all.filter((x) => x.onCall).length}</b></span><span>jobs done <b>${Object.values(S.tickets).filter((t) => t.status === 'done').length}</b></span><span>total spend <b>${money(all.reduce((x, y) => x + (y.costUsd || 0), 0))}</b></span></div></div>
+    $('#inspBody').innerHTML = `<div class="sec"><div class="label">Overview</div><div class="kv"><span>leads <b>${leads().length}</b></span><span>staff <b>${all.filter((x) => x.staff && !x.onCall && !x.retired).length}</b></span><span>on call <b>${all.filter((x) => x.onCall && !x.retired).length}</b></span><span>retired <b>${all.filter((x) => x.retired).length}</b></span><span>jobs done <b>${Object.values(S.tickets).filter((t) => t.status === 'done').length}</b></span><span>total spend <b>${money(all.reduce((x, y) => x + (y.costUsd || 0), 0))}</b></span></div></div>
       <div class="sec"><div class="label">How the tree works</div><div class="hint">God (PID 1) is the root and only routes jobs the routing rules can't place. Each lead runs permanently under God. Staff sit under their lead while idle; while working they appear under whoever started them, so delegations nest as deep as they go.</div></div>
       <div class="sec"><div class="label">Keys</div><div class="hint"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>←</kbd><kbd>→</kbd> fold · <kbd>Enter</kbd> inspect · <kbd>Ctrl K</kbd> launcher</div></div>`;
     return;
@@ -151,7 +151,9 @@ function renderInspector() {
 function historyHtml(a) {
   const h = (a.history || []).slice(-15).reverse();
   const fb = (a.feedback || []).slice(-8).reverse();
-  const scope = a.staff ? `<div class="sec"><div class="label">Place on the team</div>${a.onCall
+  const scope = a.staff ? `<div class="sec"><div class="label">Place on the team</div>${a.retired
+    ? `Retired ${ago(a.retired.t)}: ${esc(a.retired.why)}. Their memory is archived. <button class="btn sm" data-act="staffBack">Bring back</button>`
+    : a.onCall
     ? `On call for <b>${esc(a.onCall.project || 'a past job')}</b>: reused when that project is worked on again, off the team otherwise. <button class="btn sm" data-act="staffScope" data-team="1">Keep on the team</button>`
     : `On the team for good${a.joinedTeam ? ` (${esc(a.joinedTeam.why)})` : ''}.${a.role === 'custom' ? ' <button class="btn sm" data-act="staffScope" data-team="">Project only</button>' : ''}`}</div>` : '';
   return `${scope}${a.staff ? `<div class="sec"><div class="label">Track record</div><b>${a.tasksDone || 0}</b> done · <b>${a.tasksFailed || 0}</b> not completed · hired ${ago(a.hiredAt || a.createdAt)}

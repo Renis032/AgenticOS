@@ -21,7 +21,17 @@ Two views of the same data, switched in the toolbar (the choice is remembered):
 
 The map is a physics simulation. Links are springs and every node pushes the others away, so **dragging one figure pulls
 its neighbours along** and the rest make room. A released figure keeps its momentum and settles back into its lobe.
-Drag empty space to pan, scroll to zoom, double-click to fit everything in view. Hover to highlight a node's
+Drag empty space to pan, scroll to zoom, double-click to fit everything in view. Physics cools down a few seconds after
+every change (forces fade, as in d3-force), so the layout comes to rest; dragging warms it again. Once nothing moves and
+nobody touches the map for 8 seconds it stops drawing completely (no CPU), and it does the same while the window is
+hidden. The next mouse move, key or change wakes it.
+
+- **Find**: type in *Find in the brain…* to highlight matches; **Enter** selects the best match and glides to it, and
+  Enter again moves to the next one.
+- **Time**: the slider under the map shows the knowledge as it was on a past week (from file birth times, hire dates and
+  job dates), and ▶ plays it forward week by week so you watch it grow. Nodes pop in as they appear.
+- **Keyboard**: click or Tab onto the map, then use the **arrow keys** to move the selection to the nearest node in that
+  direction (the view follows), **Esc** to clear it, **+**, **−** and **0** to zoom and fit. Hover to highlight a node's
 connections, and click for its details, content and fixes. The chips above show and hide each kind of node (jobs start
 hidden). Reduced motion turns off the pop-in, the hover lift and the pulses. The UI check (`scripts/ui-check.js`, step
 `brain-map-drag`) drags the busiest agent and fails if its neighbours don't follow.

@@ -562,3 +562,30 @@ pre.cmdout { max-height: 320px; overflow: auto; margin: 6px 0 0; padding: 8px 10
 .bfh { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
 @media (max-width: 1100px) { .brain-side { width: 280px; } }
 .btable th { cursor: pointer; } .btable th.on { color: var(--accent); } .btable tr { cursor: pointer; } .btable tr.on td { background: var(--sel); }
+
+/* Agent eval grid (Health): one column per run, ✓/✗ carry the result, colour only reinforces it. */
+.evtop { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-bottom: 10px; }
+.evgrid { border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+.evgrid th { font-weight: 500; color: var(--muted); padding: 2px 6px; white-space: nowrap; font-size: 11px; }
+.evgrid td { text-align: center; min-width: 44px; height: 24px; border-radius: 4px; font-weight: 700; }
+.evgrid td.evname, .evgrid th.evname { text-align: left; font-weight: 400; color: var(--text); padding-right: 14px; min-width: 0; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evgrid td.evok { background: rgba(var(--done-rgb), .16); color: var(--done); }
+.evgrid td.evbad { background: rgba(var(--fail-rgb), .18); color: var(--fail); }
+.evgrid td.everr { background: rgba(var(--muted-rgb), .14); color: var(--muted); }
+.evgrid td.evnone { color: var(--muted); font-weight: 400; }
+.evgrid tr.evsum td { color: var(--muted); font-weight: 600; font-size: 11px; }
+.evgrid .evchg { color: var(--accent); margin-right: 3px; }
+
+/* While you were away (away.js) */
+.modal.away { width: min(620px, calc(100vw - 32px)); max-height: min(78vh, 760px); display: flex; flex-direction: column; }
+.modal.away header, .modal.away footer { display: flex; align-items: center; gap: 10px; padding: 18px 22px; }
+.modal.away header { justify-content: space-between; border-bottom: 1px solid var(--line); }
+.modal.away header h2 { margin: 0 0 2px; font-size: 19px; }
+.modal.away footer { border-top: 1px solid var(--line); } .modal.away footer .sp { flex: 1; }
+.modal.away .awbody { overflow-y: auto; padding: 6px 22px 12px; }
+.modal.away section { margin-top: 12px; }
+.modal.away section h3 { white-space: nowrap; margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.modal.away section h3 svg.i { width: 14px; height: 14px; }
+.modal.away .li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: default; }
+.modal.away .li[data-act] { cursor: pointer; } .modal.away .li[data-act]:hover { background: rgba(var(--accent-rgb), .08); }
+.modal.away .awt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

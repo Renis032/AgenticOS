@@ -1,5 +1,7 @@
 # Runtime state, not code: agents, jobs, conversations, logs, uploads, backups and the app token.
 data/
+# Daily snapshots of data/ (lib/backups.js).
+backups/
 # Python bytecode
 __pycache__/
 *.pyc

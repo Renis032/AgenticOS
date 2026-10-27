@@ -68,6 +68,12 @@ function renderKnowledge() {
   for (const n of K.nodes) counts[n.type] = (counts[n.type] || 0) + 1;
   $('#brainTools').innerHTML = `<input class="in" id="brainQ" placeholder="Find in the brain…" value="${esc(B.q)}" style="width:200px"> <div class="seg">${[['map', 'Map'], ['table', 'Table']].map(([v, l]) => `<button class="${B.view === v ? 'on' : ''}" data-act="brainView" data-v="${v}">${l}</button>`).join('')}</div>`;
   $('#brainQ').oninput = (e) => { B.q = e.target.value; if (B.view === 'table') renderBrainTable(); else BrainMap.search(B.q); };
+  $('#brainQ').onkeydown = (e) => {
+    if (e.key !== 'Enter' || B.view === 'table') return;
+    e.preventDefault();
+    const n = BrainMap.findNext();
+    $('#brainQ').title = n ? `${n} match${n === 1 ? '' : 'es'} · Enter for the next` : 'No match';
+  };
   BrainMap.stop();
   if (B.view === 'table') return renderBrainTable();
   return renderBrainMap(counts);
@@ -114,11 +120,12 @@ async function showNode(id) {
 function renderBrainMap(counts) {
   const B = S.brain, K = B.data.knowledge;
   $('#brainMain').innerHTML = `<div class="blegend">${BRAIN_TYPES.map(([t, l]) => `<button class="bchip ${B.hidden.has(t) ? 'off' : ''}" data-act="brainType" data-t="${t}">${spriteSvg(t, 16)}${esc(l)} <span class="hint">${counts[t] || 0}</span></button>`).join('')}
-      <span class="hint" style="margin-left:auto">Drag a figure to pull its neighbours · drag space to pan · scroll to zoom · double-click to fit</span></div>
-    <div class="bgraph bmapwrap" id="bgraph"><div class="btip" id="btip"></div></div>`;
+      <span class="hint" style="margin-left:auto">Drag a node to pull its neighbours · drag space to pan · scroll to zoom · double-click to fit · Enter in search finds</span></div>
+    <div class="bgraph bmapwrap" id="bgraph"><div class="btip" id="btip"></div>${timeBar(K)}</div>`;
   const visible = { nodes: K.nodes.filter((n) => !B.hidden.has(n.type)), edges: K.edges };
   BrainMap.start($('#bgraph'), visible, {
     sel: B.sel,
+    until: B.until || 0,
     onSelect: (id) => { B.sel = id; if (id) showNode(id); else sideSummary(); },
     onHover: (n, ev) => {
       const tip = $('#btip');
@@ -130,7 +137,38 @@ function renderBrainMap(counts) {
     },
   });
   BrainMap.search(B.q);
+  wireTimeBar(K);
   if (B.sel) showNode(B.sel); else sideSummary();
+}
+
+// The time filter: a slider over the weeks since the first node appeared; the map shows only what existed by then.
+// ▶ plays it week by week, so you watch the knowledge grow.
+const WEEK = 7 * 86400000;
+function timeWeeks(K) {
+  const first = Math.min(...K.nodes.map((n) => n.createdAt).filter((t) => t > 0), Date.now());
+  return Math.max(1, Math.ceil((Date.now() - first) / WEEK));
+}
+function timeBar(K) {
+  const weeks = timeWeeks(K), v = S.brain.until ? Math.max(0, weeks - Math.ceil((Date.now() - S.brain.until) / WEEK)) : weeks;
+  return `<div class="btime"><button class="btn sm" id="bPlay" title="Play: watch the knowledge grow week by week">▶</button>
+    <input type="range" id="bTime" min="0" max="${weeks}" step="1" value="${v}" aria-label="Show the knowledge as it was"><span class="hint" id="bTimeL"></span></div>`;
+}
+function wireTimeBar(K) {
+  const B = S.brain, weeks = timeWeeks(K), range = $('#bTime');
+  const label = (v) => { const t = v >= weeks ? 0 : Date.now() - (weeks - v) * WEEK; $('#bTimeL').textContent = t ? `as of ${new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ${K.nodes.filter((n) => !B.hidden.has(n.type) && (n.createdAt || 0) <= t).length} nodes` : 'now · everything'; return t; };
+  const apply = (v) => { B.until = label(v); BrainMap.setUntil(B.until); };
+  label(+range.value);
+  range.oninput = () => { clearInterval(B.play); B.play = null; $('#bPlay').textContent = '▶'; apply(+range.value); };
+  $('#bPlay').onclick = () => {
+    if (B.play) { clearInterval(B.play); B.play = null; $('#bPlay').textContent = '▶'; return; }
+    if (+range.value >= weeks) range.value = 0;
+    $('#bPlay').textContent = '❚❚';
+    apply(+range.value);
+    B.play = setInterval(() => {
+      if (!document.body.contains(range) || +range.value >= weeks) { clearInterval(B.play); B.play = null; if (document.body.contains(range)) $('#bPlay').textContent = '▶'; return; }
+      range.value = +range.value + 1; apply(+range.value);
+    }, 900);
+  };
 }
 
 // The same knowledge as a table: every node, sortable, for reading exact values (and when colour is hard to tell apart).
@@ -149,6 +187,12 @@ function renderBrainTable() {
 }
 
 // ---------------------------------------------------------------- flow view
+// Split a heading into lines of at most n characters (at most two; the rest is cut).
+function wrapWords(text, n) {
+  const lines = [''];
+  for (const w of text.split(' ')) { const cur = lines[lines.length - 1]; if (cur && (cur + ' ' + w).length > n) lines.push(w); else lines[lines.length - 1] = cur ? `${cur} ${w}` : w; }
+  return lines.length > 2 ? [lines[0], short(lines.slice(1).join(' '), n)] : lines;
+}
 function renderFlow() {
   const B = S.brain, F = B.data.flow;
   const main = $('#brainMain');
@@ -157,7 +201,8 @@ function renderFlow() {
   if (!F) { main.innerHTML = '<div class="empty">Could not load the flow.</div>'; return; }
   main.innerHTML = `<div class="bflow" id="bflow"></div>`;
   const box = $('#bflow').getBoundingClientRect();
-  const cols = F.columns.length, colW = Math.max(190, (box.width - 20) / cols), W = colW * cols, H = Math.max(460, box.height - 10), nodeW = 12, top = 40;
+  // Columns share the width, with room after the last one for its labels; below 118px a column scrolls sideways instead.
+  const cols = F.columns.length, lastW = 170, colW = Math.max(118, (box.width - 24 - lastW) / Math.max(1, cols - 1)), W = colW * (cols - 1) + lastW + 14, H = Math.max(460, box.height - 10), nodeW = 12, top = 54;
   const units = ['jobs', 'jobs', 'jobs', 'model picks', 'teammate tasks', 'tool calls', 'jobs', 'events'];
   const pos = new Map();
   for (let c = 0; c < cols; c++) {
@@ -187,10 +232,10 @@ function renderFlow() {
   }
   const usage = F.usageReady ? '' : '<tspan class="hint"> (usage per lead loading…)</tspan>';
   const svg = `<svg width="${W}" height="${H}" class="fsvg">
-    ${F.columns.map((c, i) => `<text class="fcol" x="${i * colW + 10}" y="14">${esc(c)}</text><text class="fcolu" x="${i * colW + 10}" y="27">${units[i]}</text>`).join('')}
+    ${F.columns.map((c, i) => { const lines = wrapWords(c, Math.floor((i === cols - 1 ? lastW : colW - 8) / 7)); return `<text class="fcol" x="${i * colW + 10}" y="14">${lines.map((l, j) => `<tspan x="${i * colW + 10}" dy="${j ? 14 : 0}">${esc(l)}</tspan>`).join('')}</text><text class="fcolu" x="${i * colW + 10}" y="${14 + lines.length * 14}">${units[i]}</text>`; }).join('')}
     <g>${bands.join('')}</g>
-    ${[...pos.values()].map(({ x, y, h, n }) => `<g class="fnode ${S.brain.sel === n.id ? 'sel' : ''}" data-act="brainFlowSel" data-id="${esc(n.id)}" data-tip="${esc(`${n.label}: ${n.value.toLocaleString()} ${units[n.col]}${n.costUsd ? ` · ${money(n.costUsd)}` : ''}`)}"><rect x="${x}" y="${y}" width="${nodeW}" height="${h}" rx="3"/><text x="${x + nodeW + 6}" y="${y + Math.min(h / 2, 14) + 4}">${esc(short(n.label, Math.floor((colW - 60) / 7)))} <tspan class="fval">${n.value.toLocaleString()}</tspan></text>${n.avgContext ? `<text class="fsub" x="${x + nodeW + 6}" y="${y + Math.min(h / 2, 14) + 17}">avg context ${Math.round(n.avgContext / 1000)}k</text>` : n.tasks ? `<text class="fsub" x="${x + nodeW + 6}" y="${y + Math.min(h / 2, 14) + 17}">${n.ok}/${n.tasks} finished</text>` : ''}</g>`).join('')}
-    ${usage ? `<text x="${W - 260}" y="14">${usage}</text>` : ''}</svg>`;
+    ${[...pos.values()].map(({ x, y, h, n }) => `<g class="fnode ${S.brain.sel === n.id ? 'sel' : ''}" data-act="brainFlowSel" data-id="${esc(n.id)}" data-tip="${esc(`${n.label}: ${n.value.toLocaleString()} ${units[n.col]}${n.costUsd ? ` · ${money(n.costUsd)}` : ''}`)}"><rect x="${x}" y="${y}" width="${nodeW}" height="${h}" rx="3"/><text x="${x + nodeW + 6}" y="${y + Math.min(h / 2, 14) + 4}">${esc(short(n.label, Math.floor(((n.col === cols - 1 ? lastW : colW) - 40) / 6.4)))} <tspan class="fval">${n.value.toLocaleString()}</tspan></text>${n.avgContext ? `<text class="fsub" x="${x + nodeW + 6}" y="${y + Math.min(h / 2, 14) + 17}">avg context ${Math.round(n.avgContext / 1000)}k</text>` : n.tasks ? `<text class="fsub" x="${x + nodeW + 6}" y="${y + Math.min(h / 2, 14) + 17}">${n.ok}/${n.tasks} finished</text>` : ''}</g>`).join('')}
+    ${usage ? `<text x="${W - 8}" y="${H - 4}" text-anchor="end" class="fsub">${usage}</text>` : ''}</svg>`;
   $('#bflow').innerHTML = svg;
   if (S.brain.sel && S.brain.sel.includes(':') && F.nodes.some((n) => n.id === S.brain.sel)) showFlowNode(S.brain.sel); else flowSummary();
 }

@@ -120,6 +120,7 @@ async function init() {
   await Promise.all(Object.values(S.agents).filter((a) => a.resident || ACTIVE.includes(a.status)).map((a) => loadEvents(a.id)));
   readHash();
   openApp(S.app, true);
+  checkAway();
   if (!/[?&]nosse/.test(location.search)) connect();
   setInterval(tick, 1000);
   tick();
@@ -152,6 +153,8 @@ function connect() {
     } else if (m.type === 'skills') {
       S.skProps = null; S.skillsData = null; S.skKey = null;
       api('GET', '/api/skill-proposals').then((l) => { S.skPending = l.filter((x) => x.status === 'pending').length; dirty(); }).catch(() => {});
+    } else if (m.type === 'backups') {
+      if ($('#prefs').classList.contains('on') && S.prefSec === 'data') loadBackups();
     } else if (m.type === 'restart') {
       S.restart = m.restart;
     } else if (m.type === 'cmd') {
@@ -176,6 +179,7 @@ function connect() {
     } else if (m.type === 'limits') S.limits = m.limits;
     else if (m.type === 'notify') notify(m.kind, m.title, m.text, m.ticketId);
     else if (m.type === 'selftest') S.selftest = m.selftest;
+    else if (m.type === 'evals') { S.evals = null; S.hKey = null; }
     else if (m.type === 'roster') api('GET', '/api/state').then((st) => { S.roles = st.roles; S.residents = st.residents; S.projects = st.projects; for (const a of st.agents) S.agents[a.id] = a; S.cfg = null; dirty(); });
     else if (m.type === 'chat') S.chat = null;
     else if (m.type === 'docs') S.teams = null;

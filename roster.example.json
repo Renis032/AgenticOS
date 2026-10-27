@@ -33,7 +33,8 @@
     "leadContextNudge": 100000,
     "autoRunKnownCommands": true,
     "keepBackupsDays": 30,
-    "editScope": "project"
+    "editScope": "project",
+    "agentEvalDays": 1
   },
   "toolPresets": {
     "manager": [

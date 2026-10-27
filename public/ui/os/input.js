@@ -66,32 +66,90 @@ document.addEventListener('scroll', hideTip, true);
 document.addEventListener('keydown', hideTip, true);
 
 // ================================================================ launcher (Ctrl+K)
-let palList = [], palSel = 0;
+// Everything the window can open or do, ranked: a match at the start of the label beats one at the start of a word, which
+// beats one inside a word; recent picks come first; an empty box shows recent picks, then what waits for you. Typed text
+// can also become a new job, a Brain search, or a search through the text of every job (asked of the server).
+let palList = [], palSel = 0, palFound = { q: '', ids: [] }, palTimer = null, palSettings = null;
+// Every row in Preferences, read once from the rendered pages, so each setting can be found by its name.
+function prefRows() {
+  if (palSettings) return palSettings;
+  palSettings = [];
+  const box = document.createElement('div');
+  for (const [sec, label] of PREF_SECTIONS) {
+    if (sec === 'data' || sec === 'about' || !PREF_BODY[sec]) continue;
+    try { box.innerHTML = PREF_BODY[sec](); } catch { continue; }
+    for (const b of box.querySelectorAll('.prow .pt b')) palSettings.push({ sec, label: b.textContent.trim(), where: label });
+  }
+  return palSettings;
+}
+const palRecent = () => { try { return JSON.parse(pref('palRecent', '[]')); } catch { return []; } };
+function palRemember(it) { setPref('palRecent', JSON.stringify([it.k + '|' + it.label, ...palRecent().filter((x) => x !== it.k + '|' + it.label)].slice(0, 8))); }
 function palItems(q) {
   const items = APP_LIST.map((x) => ({ k: 'app', label: x.name, hint: `key ${x.key}`, run: () => openApp(x.id) }));
-  for (const t of Object.values(S.tickets).sort((a, b) => b.createdAt - a.createdAt)) items.push({ k: 'job', label: `#${t.n} ${t.title}`, hint: stateLabel(t.status) + (t.archived ? ' · archived' : ''), run: () => { S.job = t.id; openApp('jobs'); } });
-  for (const a of Object.values(S.agents)) items.push({ k: 'process', label: `${a.no || ''} ${a.persona} — ${a.id === S.root ? 'router' : a.name}`, hint: stateLabel(a.status), run: () => { S.sel = a.id; openApp('processes'); } });
+  const jobs = Object.values(S.tickets).sort((a, b) => needsYou(b) - needsYou(a) || b.createdAt - a.createdAt);
+  for (const t of jobs) items.push({ k: 'job', id: t.id, label: `#${t.n} ${t.title}`, hint: (needsYou(t) ? 'needs you · ' : '') + stateLabel(t.status) + (t.archived ? ' · archived' : ''), needs: needsYou(t), run: () => { S.job = t.id; openApp('jobs'); } });
+  for (const a of Object.values(S.agents)) {
+    items.push({ k: 'process', label: `${a.no || ''} ${a.persona} — ${a.id === S.root ? 'router' : a.name}`, hint: a.retired ? 'retired' : a.onCall ? 'on call' : stateLabel(a.status), run: () => { S.sel = a.id; openApp('processes'); } });
+    if (a.memoryVersion || (a.lessons || []).length) items.push({ k: 'memory', label: `${a.persona}'s memory`, hint: `${a.memoryVersion ? 'v' + a.memoryVersion : ''}${(a.lessons || []).length ? ` · ${a.lessons.length} lesson${a.lessons.length === 1 ? '' : 's'}` : ''}`, run: () => { S.memAgent = a.id; S.memKey = null; openApp('memory'); } });
+  }
+  for (const c of S.board || []) items.push({ k: 'project', label: c.name, hint: c.handoff ? `updated ${c.handoff.updated || '?'}` : `${c.jobs || 0} jobs`, run: () => { S.boardQ = c.name; openApp('projects'); } });
   for (const k of leads()) {
     items.push({ k: 'action', label: `Weekly review — ${who(k)}`, hint: '', run: () => api('POST', `/api/agents/${k}/review`).then((r) => { if (r.id) { S.job = r.id; openApp('jobs'); } }) });
     items.push({ k: 'action', label: `Fresh session — ${who(k)}`, hint: 'saves memory first', run: () => api('POST', `/api/agents/${k}/refresh`) });
   }
+  items.push({ k: 'action', label: 'While you were away', hint: 'last 24 hours at least', run: () => checkAway(true) });
   items.push({ k: 'action', label: 'Run self-test', hint: '', run: () => { openApp('health'); api('POST', '/api/selftest').catch((e) => alert(e.message)); } });
+  items.push({ k: 'action', label: 'Run agent eval', hint: 'a few cents', run: () => { openApp('health'); ACT.evalRun(); } });
+  items.push({ k: 'action', label: 'Back up now', hint: 'data/', run: () => { openPrefs('data'); ACT.backupNow(); } });
   items.push({ k: 'action', label: 'Keyboard shortcuts', hint: '?', run: () => openPrefs('keys') });
   for (const [sec, label] of PREF_SECTIONS) items.push({ k: 'settings', label: `Preferences: ${label}`, hint: 'Ctrl+,', run: () => openPrefs(sec) });
+  for (const r of prefRows()) items.push({ k: 'setting', label: r.label, hint: r.where, run: () => openPrefs(r.sec) });
   items.push({ k: 'action', label: 'Toggle sidebar', hint: 'Ctrl+B', run: toggleSidebar });
   items.push({ k: 'action', label: 'Theme: system', hint: '', run: () => setTheme('system') }, { k: 'action', label: 'Theme: dark', hint: '', run: () => setTheme('dark') }, { k: 'action', label: 'Theme: light', hint: '', run: () => setTheme('light') });
   items.push({ k: 'action', label: 'Notifications', hint: '', run: () => ACT.ncenter() });
   if (NATIVE) items.push({ k: 'action', label: 'About Agentic OS', hint: '', run: () => native('about') }, { k: 'action', label: 'Full screen', hint: 'F11', run: () => native('fullscreen') });
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  return items.filter((it) => words.every((w) => (it.label + ' ' + it.k + ' ' + it.hint).toLowerCase().includes(w))).slice(0, 60);
+
+  const recent = palRecent();
+  const rec = (it) => { const i = recent.indexOf(it.k + '|' + it.label); return i < 0 ? 0 : 8 - i; };
+  const query = q.trim();
+  if (!query) {
+    const top = items.filter((it) => rec(it)).sort((a, b) => rec(b) - rec(a)).map((it) => ({ ...it, hint: it.hint ? it.hint + ' · recent' : 'recent' }));
+    const waiting = items.filter((it) => it.needs && !rec(it));
+    return [...top, ...waiting, ...items.filter((it) => !rec(it) && !it.needs && it.k !== 'setting')].slice(0, 60);
+  }
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const score = (it) => {
+    const label = it.label.toLowerCase(), hay = label + ' ' + it.k + ' ' + it.hint.toLowerCase();
+    let sc = 0;
+    for (const w of words) {
+      const i = label.indexOf(w);
+      if (i === 0) sc += 30;
+      else if (i > 0 && /[^\p{L}\p{N}]/u.test(label[i - 1])) sc += 20;
+      else if (i > 0) sc += 8;
+      else if (hay.includes(w)) sc += 3;
+      else return 0;
+    }
+    return sc + rec(it) * 4 + (it.needs ? 5 : 0) + (it.k === 'app' ? 4 : 0);
+  };
+  const hits = items.map((it) => [score(it), it]).filter(([sc]) => sc > 0).sort((a, b) => b[0] - a[0]).map(([, it]) => it).slice(0, 50);
+  // Jobs whose text (not just the title) matches, from the server.
+  if (palFound.q === query) for (const id of palFound.ids.filter((x) => S.tickets[x] && !hits.some((h) => h.id === x)).slice(0, 6)) { const t = S.tickets[id]; hits.push({ k: 'in job', id, label: `#${t.n} ${t.title}`, hint: 'text matches', run: () => { S.job = id; openApp('jobs'); } }); }
+  hits.push({ k: 'new job', label: query, hint: 'Enter on this row starts a new job with this text', run: () => { S.quickText = query; openApp('newjob'); } });
+  hits.push({ k: 'brain', label: `Find "${query}" in the Brain`, hint: '', run: () => { S.brain.q = query; openApp('brain'); } });
+  return hits;
 }
 function renderPal() {
-  palList = palItems($('#palIn').value);
+  const q = $('#palIn').value;
+  palList = palItems(q);
   palSel = Math.min(palSel, Math.max(0, palList.length - 1));
-  $('#palItems').innerHTML = palList.map((it, i) => `<div class="it ${i === palSel ? 'on' : ''}" data-pi="${i}"><span class="k">${esc(it.k)}</span><span>${esc(short(it.label, 70))}</span><span class="hint">${esc(it.hint)}</span></div>`).join('') || '<div class="hint" style="padding:12px 16px">Nothing matches.</div>';
+  $('#palItems').innerHTML = palList.map((it, i) => `<div class="it ${i === palSel ? 'on' : ''}" data-pi="${i}" role="option" aria-selected="${i === palSel}"><span class="k">${esc(it.k)}</span><span>${esc(short(it.label, 70))}</span><span class="hint">${esc(it.hint)}</span></div>`).join('') || '<div class="hint" style="padding:12px 16px">Nothing matches.</div>';
   const on = $('#palItems .it.on'); if (on) on.scrollIntoView({ block: 'nearest' });
+  const query = q.trim();
+  clearTimeout(palTimer);
+  if (query.length >= 3 && palFound.q !== query) palTimer = setTimeout(() => api('GET', '/api/search?q=' + encodeURIComponent(query)).then((r) => { palFound = { q: query, ids: r.ids || [] }; if ($('#pal').classList.contains('on') && $('#palIn').value.trim() === query) renderPal(); }).catch(() => {}), 220);
 }
-function openPal() { $('#pal').classList.add('on'); $('#palIn').value = ''; palSel = 0; renderPal(); setTimeout(() => $('#palIn').focus(), 0); }
+function palRun(it) { closePal(); if (!it) return; if (it.k !== 'new job' && it.k !== 'brain' && it.k !== 'in job') palRemember(it); it.run(); }
+function openPal() { $('#pal').classList.add('on'); $('#palIn').value = ''; palSel = 0; loadBoard().then(() => { if ($('#pal').classList.contains('on')) renderPal(); }); renderPal(); setTimeout(() => $('#palIn').focus(), 0); }
 function closePal() { $('#pal').classList.remove('on'); }
 function showKeys() {
   $('#pal').classList.add('on'); $('#palIn').value = '';
@@ -102,10 +160,10 @@ $('#palIn').addEventListener('input', () => { palSel = 0; renderPal(); });
 $('#palIn').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown') { e.preventDefault(); palSel = Math.min(palList.length - 1, palSel + 1); renderPal(); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); palSel = Math.max(0, palSel - 1); renderPal(); }
-  else if (e.key === 'Enter') { e.preventDefault(); const it = palList[palSel]; closePal(); if (it) it.run(); }
+  else if (e.key === 'Enter') { e.preventDefault(); palRun(palList[palSel]); }
   else if (e.key === 'Escape') { e.preventDefault(); closePal(); }
 });
-$('#pal').addEventListener('click', (e) => { const it = e.target.closest('[data-pi]'); if (it) { closePal(); palList[Number(it.dataset.pi)].run(); } else if (e.target.id === 'pal') closePal(); });
+$('#pal').addEventListener('click', (e) => { const it = e.target.closest('[data-pi]'); if (it) palRun(palList[Number(it.dataset.pi)]); else if (e.target.id === 'pal') closePal(); });
 $('#quickIn').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.value.trim()) { S.quickText = e.target.value.trim(); e.target.value = ''; openApp('newjob'); } });
 
 // ================================================================ keyboard
@@ -208,6 +266,7 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   expandAll: () => { S.collapsed.clear(); APPS.processes.update(); },
   itab: (d) => { S.itab = d.tab; S.itabKey = null; renderInspector(); },
   staffScope: (d) => api('POST', `/api/agents/${S.sel}/scope`, { team: !!d.team }),
+  staffBack: () => api('POST', `/api/agents/${S.sel}/scope`, { restore: true }),
   kill: () => { const a = S.agents[S.sel]; if (confirm(`Stop ${a.persona} (PID ${a.no}) and its children?`)) api('POST', `/api/agents/${a.id}/stop`); },
   fresh: () => { const a = S.agents[S.sel]; if (confirm(`${a.persona} saves what matters to memory, then starts a fresh session. Continue?`)) api('POST', `/api/agents/${a.id}/refresh`); },
   review: () => api('POST', `/api/agents/${S.sel}/review`).then((r) => { if (r.id) { S.job = r.id; openApp('jobs'); } }),
@@ -307,6 +366,8 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   libCheck: async () => { const r = await api('GET', `/api/teams/${S.libTeam}/check`).catch((e) => ({ text: e.message })); S.libCheck = { team: S.libTeam, text: r.text, at: Date.now() }; APPS.library.update(); },
   libTidy: () => api('POST', `/api/teams/${S.libTeam}/tidy`).then((r) => notify('answer', 'Library', r.message || 'Tidy-up queued.')).catch((e) => alert(e.message)),
   healthRefresh: () => { S.hKey = null; refreshHealth(); },
+  lessonDel: (d) => api('DELETE', `/api/agents/${d.id}/lessons/${d.lid}`).catch((e) => alert(e.message)),
+  evalRun: () => api('POST', '/api/evals/run').then((r) => { S.evals = null; S.hKey = null; notifyQuiet(r.message); dirty(); }).catch((e) => alert(e.message)),
   selftest: () => { S.selftest = { status: 'running', steps: [], startedAt: Date.now() }; S.hKey = null; dirty(); api('POST', '/api/selftest').catch((e) => alert(e.message)); },
   saveRole: (d, ev) => api('POST', '/api/config/role', { key: d.key, team: d.team, model: $('#m_' + d.key).value || undefined, effort: $('#e_' + d.key).value || undefined, prompt: $('#p_' + d.key) ? $('#p_' + d.key).value : undefined }).then(() => { ev.target.textContent = 'Saved ✓'; setTimeout(() => { S.cfg = null; dirty(); }, 700); }).catch((e) => alert(e.message)),
   delRole: (d) => { if (confirm('Remove this role? Staff already hired keep working.')) api('DELETE', `/api/config/role/${d.key}`).then(() => { S.cfg = null; dirty(); }).catch((e) => alert(e.message)); },

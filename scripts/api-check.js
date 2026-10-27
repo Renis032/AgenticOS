@@ -39,7 +39,7 @@ const freePort = () => new Promise((resolve) => { const s = require('net').creat
 
 async function startOffice(dir, claude) {
   const port = await freePort();
-  const proc = spawn(process.execPath, ['server.js'], { cwd: dir, env: { ...process.env, WORKPLACE_PORT: String(port), CLAUDE_BIN: claude }, stdio: 'ignore', detached: true });
+  const proc = spawn(process.execPath, ['server.js'], { cwd: dir, env: { ...process.env, AGENTOS_TEST_PARENT: String(process.pid), WORKPLACE_PORT: String(port), CLAUDE_BIN: claude }, stdio: 'ignore', detached: true });
   const token = () => { try { return fs.readFileSync(path.join(dir, 'data', 'app-token'), 'utf8').trim(); } catch { return ''; } };
   for (let i = 0; i < 60; i++) {
     await sleep(250);
@@ -76,6 +76,57 @@ async function check() {
     oc.onHire(kept, { stay: 'team' }, tickets.get('t1'));
     oc.setScope('c', false);
     ok('`stay: "team"` keeps a custom hire; the user can switch someone back to project only', !kept.onCall && curator.onCall && curator.onCall.project === 'news-aggregator', JSON.stringify([kept.onCall, curator.onCall]));
+    // Parallel duplicates merge once their job closes; long-unused specialists retire; memory moves to the archive and back.
+    const mem = fs.mkdtempSync(path.join(os.tmpdir(), 'agentos-oncall-'));
+    fs.mkdirSync(path.join(mem, 'memory'));
+    const t3 = { id: 't3', n: 3, closedAt: 5, handoffs: ['wow'] };
+    const ag2 = new Map(), tk2 = new Map([['t3', t3]]);
+    const oc2 = require(path.join(ROOT, 'lib', 'on-call')).install({ agents: ag2, tickets: tk2, now: () => 100 * 86400000, touch: () => {}, DATA: mem });
+    const dup = (id, done) => ({ id, persona: id, name: 'Build Watcher', staff: true, role: 'custom', customDef: { name: 'Build Watcher' }, homeId: 'lead', status: 'idle', tickets: ['t3'], tasksDone: done, tasksFailed: 0, hiredAt: 99 * 86400000, onCall: { project: 'wow' } });
+    ag2.set('w1', dup('w1', 1)); ag2.set('w2', dup('w2', 2)); ag2.set('old', { ...dup('old', 1), tickets: [], onCall: { project: null }, hiredAt: 1 });
+    fs.writeFileSync(path.join(mem, 'memory', 'w1.md'), 'notes');
+    oc2.tidy();
+    ok('after a job, parallel duplicates merge into the best one', ag2.get('w1').retired && !ag2.get('w2').retired && fs.existsSync(path.join(mem, 'memory', 'archive', 'w1.md')), JSON.stringify([ag2.get('w1').retired, ag2.get('w2').retired]));
+    ok('an on-call specialist unused for 30 days retires', ag2.get('old').retired && /30 days/.test(ag2.get('old').retired.why), JSON.stringify(ag2.get('old').retired));
+    oc2.onReuse(ag2.get('w1'), {}, t3);
+    ok('naming a retired teammate brings them back with their memory', !ag2.get('w1').retired && fs.existsSync(path.join(mem, 'memory', 'w1.md')));
+    fs.rmSync(mem, { recursive: true, force: true });
+  }
+  // Lessons from jobs that went wrong (lib/lessons.js), checked directly.
+  {
+    const agents = new Map([['lead', { id: 'lead' }], ['god', { id: 'god' }]]);
+    const fb = [];
+    const L = require(path.join(ROOT, 'lib', 'lessons')).install({ agents, readJson: () => ({ root: 'god' }), now: () => 1, newId: (() => { let i = 0; return () => 'l' + ++i; })(),
+      touch: () => {}, addEvent: () => {}, giveFeedback: (from, to, text) => fb.push({ to, text }), findSecret: require(path.join(ROOT, 'lib', 'secrets')).findSecret });
+    const t = { n: 7, title: 'x', direct: 'lead', assignees: ['god', 'lead'] };
+    L.ask(t, 'failed'); L.ask(t, 'failed'); L.ask(t, 'rated', 'wrong file');
+    ok('a job that went wrong asks its lead (not the router) for a lesson, once per reason', fb.length === 2 && fb.every((f) => f.to === 'lead' && /add_lesson/.test(f.text)) && /wrong file/.test(fb[1].text), JSON.stringify(fb));
+    for (let i = 1; i <= 9; i++) L.add('lead', `lesson number ${i}`);
+    const ls = agents.get('lead').lessons;
+    ok('lessons are capped at 8, the oldest dropping off', ls.length === 8 && ls[0].text === 'lesson number 2', JSON.stringify(ls.map((x) => x.text)));
+    L.add('lead', 'Lesson number 5!');
+    ok('a repeated lesson replaces the old one instead of adding a copy', agents.get('lead').lessons.filter((x) => /number 5/i.test(x.text)).length === 1, '');
+    ok('a lesson must be one short line', /Too long/.test(L.add('lead', 'x'.repeat(300)).error || ''), 'accepted');
+    ok('a lesson can be removed', L.remove('lead', ls[0].id).ok && !agents.get('lead').lessons.some((x) => x.id === ls[0].id), '');
+  }
+  // The agent eval over time (lib/evals.js), with a stand-in eval script so nothing is spent.
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentos-evals-'));
+    fs.mkdirSync(path.join(root, 'scripts')); fs.mkdirSync(path.join(root, 'data'));
+    fs.writeFileSync(path.join(root, 'roster.json'), '{}');
+    fs.writeFileSync(path.join(root, 'scripts', 'agent-eval.js'), `const n = require('fs').readdirSync(${JSON.stringify(path.join(root, 'data'))}).length;
+console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'never commits', pass: true }, { name: 'plans first', pass: n === 0 }] }));`);
+    const notes = [];
+    const E = require(path.join(ROOT, 'lib', 'evals')).install({ ROOT: root, DATA: path.join(root, 'data'), readJson: () => ({ defaults: {} }), now: Date.now,
+      broadcast: (m) => { if (m.type === 'notify') notes.push(m); }, isIdle: () => true, canSpend: () => true });
+    const finished = async () => { for (let i = 0; i < 60 && E.view().running; i++) await sleep(100); };
+    E.runNow('manual'); await finished();
+    fs.writeFileSync(path.join(root, 'roster.json'), '{"changed":1}');
+    E.runNow('manual'); await finished();
+    const runs = E.history();
+    ok('each agent eval run is kept, with whether the instructions changed since the run before', runs.length === 2 && runs[0].passed === 2 && runs[1].passed === 1 && !runs[0].instructionsChanged && runs[1].instructionsChanged, JSON.stringify(runs).slice(0, 300));
+    ok('a behaviour that passed last time and fails now is notified', notes.some((n) => /no longer followed/.test(n.title) && /plans first/.test(n.text)), JSON.stringify(notes));
+    fs.rmSync(root, { recursive: true, force: true });
   }
   const offices = [];
   try {
@@ -171,6 +222,12 @@ async function check() {
     ok('an agent\'s file edit shows up as a change with a diff', Array.isArray(changes) && changes.some((c) => c.path === target && /after/.test(c.diff || '')), JSON.stringify(changes).slice(0, 200));
     await A('POST', `/api/tickets/${t1.id}/revert`, { path: target });
     ok('undo puts the file back', fs.readFileSync(target, 'utf8') === 'before\n', fs.readFileSync(target, 'utf8'));
+    const fbLead = ((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).feedback || [];
+    ok('undoing a job\'s changes asks its lead for a lesson', fbLead.some((f) => /add_lesson/.test(f.text)), JSON.stringify(fbLead).slice(0, 200));
+    const les = (await A('POST', '/api/lessons', { agentId: lead, text: 'Check the target file is the one the user meant before editing.' })).body || {};
+    const withLesson = ((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).lessons || [];
+    const delL = withLesson[0] ? (await A('DELETE', `/api/agents/${lead}/lessons/${withLesson[0].id}`)).code : 0;
+    ok('agents save lessons through the API, and the user can remove one', /Lesson saved/.test(les.message || '') && withLesson.length === 1 && delL === 200, JSON.stringify({ les, withLesson, delL }));
     ok('undoing a job\'s changes is recorded as a signal for model choice', ((await A('GET', '/api/state')).body.tickets.find((t) => t.id === t1.id) || {}).undone >= 1, 'not recorded');
     const tl = (await A('GET', `/api/tickets/${t1.id}/timeline`)).body || {};
     ok('the job timeline lists who worked on it', Array.isArray(tl.rows) && tl.rows.length > 0, JSON.stringify(tl).slice(0, 200));
@@ -195,6 +252,9 @@ async function check() {
     ok('the team room takes questions and lists them', !chatAsk.error && Array.isArray(chat), JSON.stringify(chatAsk).slice(0, 200));
     const cfg = (await A('GET', '/api/config')).body || {};
     ok('Teams & roles loads the configuration', Array.isArray(cfg.roles) && cfg.roles.length > 0, JSON.stringify(Object.keys(cfg)));
+    const ev = (await A('GET', '/api/evals')).body || {};
+    const evSet = (await A('POST', '/api/office-settings', { agentEvalDays: 3 })).body || {};
+    ok('the agent eval history loads, and how often it runs can be set', Array.isArray(ev.runs) && evSet.agentEvalDays === 3, JSON.stringify({ ev, evSet: evSet.agentEvalDays }));
     ok('the health report loads', ((await A('GET', '/api/health')).body || {}).level !== undefined, 'no level');
     const rev = (await A('POST', `/api/agents/${lead}/review`)).body || {};
     ok('a weekly review can be started', rev.id || /no tickets|nothing|week/i.test(JSON.stringify(rev)), JSON.stringify(rev).slice(0, 200));
@@ -254,6 +314,35 @@ async function check() {
     offices.push(F);
     const fs2 = F.failed ? {} : (await call(F.port, F.token, 'GET', '/api/state')).body || {};
     ok('a fresh clone starts from the example roster and projects', !F.failed && (fs2.residents || []).length && fs.existsSync(path.join(fresh, 'roster.json')), F.failed ? 'did not start' : 'no residents');
+
+    // A damaged agents.json (a crash mid-write, a full disk) is set aside and the rolling backup loaded.
+    if (!F.failed) {
+      stopOffice(F);
+      await sleep(1200);
+      const af = path.join(fresh, 'data', 'agents.json'), good = fs.readFileSync(af, 'utf8');
+      fs.writeFileSync(`${af}.bak`, good);
+      fs.writeFileSync(af, good.slice(0, Math.floor(good.length / 2)));
+      const G = await startOffice(fresh, claude);
+      offices.push(G);
+      const gs = G.failed ? {} : (await call(G.port, G.token, 'GET', '/api/state')).body || {};
+      const aside = fs.readdirSync(path.join(fresh, 'data')).some((f) => f.startsWith('agents.json.corrupt-'));
+      ok('a damaged agents.json is set aside and its backup loaded', !G.failed && aside && (gs.agents || []).length === JSON.parse(good).length, G.failed ? 'did not start' : `aside ${aside}, agents ${(gs.agents || []).length}/${JSON.parse(good).length}`);
+
+      // Backups: back up, change something, restore; the office restarts onto the backup and keeps a before-restore copy.
+      if (!G.failed) {
+        const B = (await call(G.port, G.token, 'POST', '/api/backups')).body || {};
+        const mark = path.join(fresh, 'data', 'memory', 'restore-check.md');
+        fs.mkdirSync(path.dirname(mark), { recursive: true });
+        fs.writeFileSync(mark, 'written after the backup');
+        const R = (await call(G.port, G.token, 'POST', '/api/backups/restore', { name: B.name })).body || {};
+        const back = await until(async () => {
+          if (fs.existsSync(mark)) return null;
+          const v = (await call(G.port, G.token, 'GET', '/api/backups')).body;
+          return v && v.list ? v : null;
+        }, 20000);
+        ok('a backup can be made and restored (the office restarts onto it)', B.name && R.ok && back && back.list.some((b) => b.kind === 'before-restore'), JSON.stringify({ B: B.name || B.error, R, back: !!back }));
+      }
+    }
   } finally {
     for (const o of offices) stopOffice(o);
     await sleep(600);

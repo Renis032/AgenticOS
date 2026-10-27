@@ -67,23 +67,36 @@ says **Update ready** when the server code changed since it started (restart) or
 
 ## Development
 
-- **Layout**: `server.js` (routes, agents, jobs) with self-contained parts in `lib/` (`commands.js` terminal commands,
-  `projects.js` handoffs and the Projects board, `skills.js` skill proposals, `upkeep.js` reminders, restart and
-  office settings); ARMS in `arms.js`. The window is `public/os.html` with its styles in `public/ui/os.css` and its
-  code in `public/ui/os/*.js` (core, processes, jobs, apps, arms, input, live, shell; classic scripts sharing one scope,
-  loaded in that order). The native wrapper is `app/agentos-window.py`.
+- **Layout**: `server.js` holds the state, the agent processes (leads, staff, delegation) and the jobs' life cycle; the
+  rest is in `lib/`, each part an `install(ctx)` that gets what it uses from server.js. The HTTP routes are
+  `lib/routes-tickets.js` (jobs), `lib/routes-agents.js` (agents and the tools they call) and `lib/routes-office.js`
+  (the window, settings, teams, health); usage limits are `lib/limits.js`; other parts include `commands.js` terminal
+  commands, `projects.js` handoffs and the Projects board, `skills.js` skill proposals, `upkeep.js` reminders, restart
+  and office settings, `on-call.js` who stays on a team, `lessons.js` lessons from jobs that went wrong, `evals.js` the
+  agent eval over time, `backups.js`. ARMS is in `arms.js`. The window is `public/os.html` with its styles in
+  `public/ui/os.css` and its code in `public/ui/os/*.js` (core, processes, jobs, apps, arms, input, live, brainmap,
+  brain, away, shell; classic scripts sharing one scope, loaded in that order). The native wrapper is `app/agentos-window.py`.
 - **Check the server after every change**: `node scripts/api-check.js` (a few seconds, costs nothing) starts a throwaway copy with
   fake agents and an empty `data/`, and checks the token wall, jobs and follow-ups, taking back a queued message, commands and the
   block list, plans and automatic approval, handoffs, the Projects board, skills, libraries, mail, changes and undo, the timeline,
   settings, restart, scripts, and that a fresh clone starts from the example config.
 - **Check the agents after changing their instructions**: `node scripts/agent-eval.js` runs real agents on Haiku in a throwaway
   office (a few cents) and checks they read large files in parts, count with scripts, refuse to commit, propose a plan before a
-  team of three, and save a project handoff when you wrap up. `node scripts/prompt-size.js --detail` shows how many tokens each
+  team of three, and save a project handoff when you wrap up. The office also runs it by itself (`defaults.agentEvalDays`,
+  1 = daily, 0 = only by hand; Preferences → Agents & teams) once it has been idle for 20 minutes and both usage windows
+  are under half, keeps every run in `data/evals.jsonl`, and shows them in **Health** as a grid: one column per run,
+  ◆ where the agents' instructions (`roster.json`, `mcp-delegate.js`) changed since the run before. A behaviour that
+  passed last time and fails now is a notification. **Run now** in Health runs it straight away.
+  `node scripts/prompt-size.js --detail` shows how many tokens each
   role's fixed instructions and office tools take, by section.
 - **Check the window after every change**: `node scripts/ui-check.js` (about 45 s, costs nothing) clicks through every
   app, menu, Preferences section and job state in a throwaway copy with fake agents on a virtual screen, and lists
   JavaScript errors, buttons with no action, buttons pushed off screen and layouts that overflow, with a screenshot per
-  step. `--quick` for a shorter run, `--out <dir>` to keep the screenshots somewhere.
+  step. `--quick` for a shorter run, `--out <dir>` to keep the screenshots somewhere. It also drags, searches, steps through
+  time and waits on the Brain map (the map must stop drawing when idle), and shows the Brain in the light theme.
+- **Checks never leave offices running**: each throwaway office gets `AGENTOS_TEST_PARENT` (the check's PID) and shuts itself
+  down within 3 s once that process is gone, even if the check was killed before its own clean-up. The UI check also stops
+  its virtual screen on Ctrl-C or SIGTERM.
 - **Git**: `data/` (agents, jobs, conversations, logs, uploads, the app token), `teams/` (libraries, handoffs, team skills),
   `roster.json` and `projects.json` are local and ignored; a fresh clone starts from `roster.example.json` and
   `projects.example.json`. Anything about your day job is configured only in the local `roster.json` (`defaults.workArea`,
@@ -126,3 +139,18 @@ the answer (rework) and undoing its changes. The weekly report lists both.
 ## Housekeeping
 
 Backups in `data/backups` (copies saved before changes) older than `defaults.keepBackupsDays` (30) are pruned once a day.
+
+## Saving state and backups
+
+- **State files** (`data/agents.json`, `tickets.json`, `teams.json`) are saved at most half a second after a change, however
+  busy the office is. Each is written to a temporary file and renamed into place, so a crash never leaves half a file, and an
+  unchanged file is not rewritten. Every 10 minutes the previous version is kept as `<file>.bak`. A file that cannot be
+  read at start-up is moved aside as `<file>.corrupt-<time>` and its `.bak` is loaded instead (the log says so).
+- **Daily backups** (`lib/backups.js`): a minute after start-up and then hourly, if the newest backup is more than a day
+  old, all of `data/` is packed into `backups/agentos-data-<date>.tgz` (next to `data/`, ignored by git). The usage cache
+  and old code copies are left out because they rebuild or are disposable, and so is the app token. The newest
+  `defaults.keepDataBackups` (7) are kept.
+- **Back up now and Restore** are in Preferences → Data & backups. Restoring saves the request, restarts the office as
+  soon as nothing is running, and before loading anything packs the current data into `before-restore-<date>.tgz` (the last
+  3 are kept), then unpacks the chosen backup. The app token and server log stay, so the window reconnects by itself. To
+  undo a restore, restore the before-restore backup.

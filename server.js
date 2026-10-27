@@ -9,6 +9,9 @@ const { spawn, spawnSync } = require('child_process');
 
 const ROOT = __dirname;
 const PORT = Number(process.env.WORKPLACE_PORT || 4747);
+// A throwaway office started by a check (ui-check, api-check, agent-eval) shuts itself down once that check is gone,
+// even when the check was killed before its own clean-up could run.
+if (process.env.AGENTOS_TEST_PARENT) setInterval(() => { try { process.kill(Number(process.env.AGENTOS_TEST_PARENT), 0); } catch { process.kill(process.pid, 'SIGTERM'); } }, 3000).unref();
 const MAX_RUNNING = Number(process.env.WORKPLACE_MAX_RUNNING || 8);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 const DATA = path.join(ROOT, 'data');
@@ -79,9 +82,23 @@ function summary(a) {
   return rest;
 }
 
+// State files are written atomically (temp file + rename) and copied to <file>.bak every 10 minutes. A file that
+// cannot be read is set aside as <file>.corrupt-<time> and its .bak loaded instead, so a damaged file never silently
+// starts the office empty.
+function readState(name) {
+  const f = path.join(DATA, name);
+  if (!fs.existsSync(f)) return null;
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {
+    const aside = `${f}.corrupt-${Date.now()}`;
+    try { fs.renameSync(f, aside); } catch { /* keep going */ }
+    console.error(`${name} could not be read (${e.message}); moved it to ${path.basename(aside)}, loading ${name}.bak`);
+    try { return JSON.parse(fs.readFileSync(`${f}.bak`, 'utf8')); } catch { console.error(`${name}.bak could not be read either; starting without it`); return null; }
+  }
+}
+
 function loadState() {
   try {
-    for (const a of JSON.parse(fs.readFileSync(path.join(DATA, 'agents.json'), 'utf8'))) {
+    for (const a of readState('agents.json') || []) {
       if (!a.resident) {
         if (!a.homeId) continue;
         if (!a.staff) {
@@ -102,24 +119,38 @@ function loadState() {
       agents.set(a.id, a);
     }
   } catch { /* first run */ }
-  try { teamState = JSON.parse(fs.readFileSync(path.join(DATA, 'teams.json'), 'utf8')); } catch { teamState = {}; }
+  teamState = readState('teams.json') || {};
   try {
-    const t = JSON.parse(fs.readFileSync(path.join(DATA, 'tickets.json'), 'utf8'));
+    const t = readState('tickets.json');
+    if (!t) throw new Error('first run');
     ticketSeq = t.seq || 0;
     for (const k of t.tickets) tickets.set(k.id, k);
   } catch { /* first run */ }
 }
 
 let saveTimer = null;
+const lastWritten = {};
+let lastBak = 0;
+function writeState(name, text, bak) {
+  const f = path.join(DATA, name);
+  if (lastWritten[name] === text) return;
+  if (bak && fs.existsSync(f)) fs.copyFileSync(f, `${f}.bak`);
+  fs.writeFileSync(`${f}.tmp`, text);
+  fs.renameSync(`${f}.tmp`, f);
+  lastWritten[name] = text;
+}
 function saveNow() {
   clearTimeout(saveTimer);
-  fs.writeFileSync(path.join(DATA, 'agents.json'), JSON.stringify([...agents.values()].map(summary), null, 1));
-  fs.writeFileSync(path.join(DATA, 'tickets.json'), JSON.stringify({ seq: ticketSeq, tickets: [...tickets.values()] }, null, 1));
-  fs.writeFileSync(path.join(DATA, 'teams.json'), JSON.stringify(teamState, null, 1));
+  saveTimer = null;
+  const bak = Date.now() - lastBak > 600000;
+  if (bak) lastBak = Date.now();
+  writeState('agents.json', JSON.stringify([...agents.values()].map(summary), null, 1), bak);
+  writeState('tickets.json', JSON.stringify({ seq: ticketSeq, tickets: [...tickets.values()] }, null, 1), bak);
+  writeState('teams.json', JSON.stringify(teamState, null, 1), bak);
 }
+// Changes are saved at most half a second after the first one, however busy the office is (the timer is not pushed back).
 function saveState() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveNow, 300);
+  if (!saveTimer) saveTimer = setTimeout(saveNow, 500);
 }
 
 function eventsOf(a) {
@@ -132,145 +163,13 @@ function eventsOf(a) {
   return a.events;
 }
 
-// ---------------------------------------------------------------- plan usage limits
+// ---------------------------------------------------------------- plan usage limits (lib/limits.js)
 
-const LIMITS_FILE = path.join(DATA, 'limits.json');
-let limits = { windows: {}, status: null, samples: [], spend: 0, tokens: 0, updatedAt: null };
-try { limits = { ...limits, ...JSON.parse(fs.readFileSync(LIMITS_FILE, 'utf8')) }; } catch {}
-try { limits.plan = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8')).claudeAiOauth.subscriptionType || null; } catch { limits.plan = null; }
-let limitsTimer = null;
-let probing = null;
-
-function saveLimits() {
-  clearTimeout(limitsTimer);
-  limitsTimer = setTimeout(() => { try { fs.writeFileSync(LIMITS_FILE, JSON.stringify(limits)); } catch {} }, 500);
-}
-
-function noteSpend(usd, usage) {
-  const u = usage || {};
-  limits.spend += usd || 0;
-  limits.tokens += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
-  saveLimits();
-}
-
-function onRateLimit(info) {
-  if (!info) return;
-  const w = { ...(info.unifiedWindows || {}) };
-  if (!Object.keys(w).length && info.rateLimitType && info.utilization != null) w[info.rateLimitType] = { utilization: info.utilization, resetsAt: info.resetsAt };
-  for (const [k, v] of Object.entries(w)) {
-    if (v && v.utilization != null) limits.windows[k] = { utilization: v.utilization, resetsAt: v.resetsAt ? v.resetsAt * 1000 : null };
-  }
-  limits.status = info.status || null;
-  limits.limitedBy = info.rateLimitType || null;
-  limits.usingOverage = !!info.isUsingOverage;
-  limits.updatedAt = now();
-  limits.samples.push({ t: now(), spend: limits.spend, tokens: limits.tokens,
-    w: Object.fromEntries(Object.entries(limits.windows).map(([k, v]) => [k, [v.utilization, v.resetsAt]])) });
-  if (limits.samples.length > 3000) limits.samples = limits.samples.slice(-2000);
-  checkHold();
-  saveLimits();
-  broadcast({ type: 'limits', limits: limitsView() });
-}
-
-function windowEstimate(k) {
-  const cur = limits.windows[k];
-  let du = 0, ds = 0, dt = 0, prev = null;
-  for (const sm of limits.samples) {
-    const v = sm.w[k];
-    if (!v) { prev = null; continue; }
-    if (prev && prev.v[1] === v[1] && sm.t - prev.t <= 900000) {
-      const u = v[0] - prev.v[0], sp = sm.spend - prev.spend;
-      if (u >= 0 && sp > 0.02) { du += u; ds += sp; dt += sm.tokens - prev.tokens; }
-    }
-    prev = { v, t: sm.t, spend: sm.spend, tokens: sm.tokens };
-  }
-  const est = { calibratedOnUsd: ds, calibratedOnPoints: Math.round(du * 100) };
-  if (du >= 0.03 && ds >= 1) {
-    est.pctPerUsd = du / ds;
-    est.fullUsd = ds / du;
-    est.fullTokens = dt > 0 ? dt / du : null;
-  }
-  if (cur) {
-    const live = cur.resetsAt && cur.resetsAt < now() ? 0 : cur.utilization;
-    if (est.fullUsd) {
-      est.remainingUsd = Math.max(0, 1 - live) * est.fullUsd;
-      if (est.fullTokens) est.remainingTokens = Math.max(0, 1 - live) * est.fullTokens;
-    }
-    const recent = limits.samples.filter((sm) => sm.w[k] && sm.w[k][1] === cur.resetsAt && sm.t > now() - 3600000);
-    if (recent.length > 1 && live > 0) {
-      const a = recent[0], b = recent[recent.length - 1];
-      const hours = (b.t - a.t) / 3600000;
-      const rate = hours > 0.25 ? (b.w[k][0] - a.w[k][0]) / hours : null;
-      if (rate > 0) { est.perHour = rate; est.hitsAt = now() + ((1 - live) / rate) * 3600000; }
-    }
-  }
-  return est;
-}
-
-function limitHold() {
-  const pauseAt = readJson('roster.json').defaults.limitPauseAt || 0.85;
-  limits.approved = limits.approved || {};
-  for (const [k, w] of Object.entries(limits.windows)) {
-    if (!w.resetsAt || w.resetsAt < now()) continue;
-    const ok = limits.approved[k];
-    const bar = ok && ok.resetsAt === w.resetsAt ? Math.min(1, Math.max(pauseAt, ok.at + 0.1)) : pauseAt;
-    if (w.utilization >= bar) return { window: k, utilization: w.utilization, resetsAt: w.resetsAt };
-  }
-  return null;
-}
-
-function checkHold() {
-  const was = limits.hold;
-  const h = limitHold();
-  limits.hold = h;
-  if (h && (!was || was.window !== h.window || was.resetsAt !== h.resetsAt)) {
-    const label = h.window === 'five_hour' ? '5-hour' : h.window === 'seven_day' ? 'weekly' : h.window.replace(/_/g, ' ');
-    broadcast({ type: 'notify', kind: 'limit', title: `Your ${label} limit is at ${Math.round(h.utilization * 100)}%`,
-      text: 'New work is paused. Continue anyway, or let it wait for the reset.' });
-  }
-  if (!h && was) kickAll();
-}
-
-function continuePastLimit() {
-  limits.approved = limits.approved || {};
-  for (const [k, w] of Object.entries(limits.windows)) {
-    if (w.resetsAt && w.resetsAt > now()) limits.approved[k] = { resetsAt: w.resetsAt, at: w.utilization };
-  }
-  saveLimits();
-  checkHold();
-  broadcast({ type: 'limits', limits: limitsView() });
-}
-
-function kickAll() {
-  pump();
-  for (const a of agents.values()) if (a.resident) pumpResident(a);
-}
-
-function limitsView() {
-  return { plan: limits.plan, hold: limits.hold || null, pauseAt: readJson('roster.json').defaults.limitPauseAt || 0.85, status: limits.status, limitedBy: limits.limitedBy, usingOverage: limits.usingOverage,
-    updatedAt: limits.updatedAt, spend: limits.spend, tokens: limits.tokens, probing: !!probing,
-    windows: Object.fromEntries(Object.entries(limits.windows).map(([k, v]) => [k, { ...v, est: windowEstimate(k) }])) };
-}
-
-function probeLimits() {
-  if (probing) return probing;
-  probing = new Promise((resolve) => {
-    const child = spawn(CLAUDE_BIN, ['-p', 'Reply with: ok', '--model', 'haiku', '--effort', 'low', '--output-format', 'stream-json', '--verbose',
-      '--strict-mcp-config', '--max-turns', '1'],
-      { cwd: DATA, env: childEnv({ id: 'limits-probe' }), stdio: ['ignore', 'pipe', 'ignore'] });
-    readLines(child.stdout, (line) => {
-      let m;
-      try { m = JSON.parse(line); } catch { return; }
-      if (m.type === 'rate_limit_event') onRateLimit(m.rate_limit_info);
-      else if (m.type === 'result') noteSpend(m.total_cost_usd || 0, m.usage);
-    });
-    const done = () => { probing = null; broadcast({ type: 'limits', limits: limitsView() }); resolve(); };
-    child.on('close', done);
-    child.on('error', done);
-  });
-  broadcast({ type: 'limits', limits: limitsView() });
-  return probing;
-}
+const { LIMITS_FILE, limits, noteSpend, onRateLimit, checkHold, continuePastLimit, limitsView, probeLimits } = require('./lib/limits').install({
+  DATA, fs, os, path, spawn, CLAUDE_BIN, now, readJson, agents,
+  broadcast: (...a) => broadcast(...a), childEnv: (...a) => childEnv(...a), readLines: (...a) => readLines(...a),
+  pump: () => pump(), pumpResident: (a) => pumpResident(a),
+});
 
 // ---------------------------------------------------------------- live stream to the office
 
@@ -431,6 +330,7 @@ function systemPrompt(roster, a, childRoles) {
   }
   const memory = readMemory(a.id);
   parts.push('', '## Your memory', memory.trim() || '(Empty — this is your first task. Start building it at the end.)');
+  parts.push(...lessons.promptBlock(a));
   if (a.staff) {
     const recent = (a.history || []).slice(-5).map((h) => `#${h.n || '?'} ${h.title} — ${h.outcome}`).join('; ');
     parts.push(`Track record: ${a.tasksDone || 0} tasks done, ${a.tasksFailed || 0} not completed.${recent ? ` Recent: ${recent}.` : ''}`);
@@ -606,7 +506,7 @@ function buildArgs(roster, a) {
     ...(handoffsOf(roster, a) ? ['mcp__workplace__save_project_handoff'] : []),
     ...(canRunCommands(roster, a) && commandMode(roster) !== 'off' ? ['mcp__workplace__run_command'] : []),
     ...(canRunCommands(roster, a) ? ['mcp__workplace__request_edit_access'] : []),
-    'mcp__workplace__update_memory', 'mcp__workplace__give_feedback', ...(childRoles.length ? ['mcp__workplace__staff'] : []),
+    'mcp__workplace__update_memory', 'mcp__workplace__add_lesson', 'mcp__workplace__give_feedback', ...(childRoles.length ? ['mcp__workplace__staff'] : []),
     ...(claudeSkillsFor(roster, a).length ? ['Skill'] : []),
     'mcp__workplace__search_tickets', 'mcp__workplace__script', ...(a.resident && a.id !== roster.root ? ['mcp__workplace__ask_user', 'mcp__workplace__propose_plan'] : []), `Read(/${UPLOADS}/**)`];
   const addDirs = [...(team ? [team.dir, ...team.references] : []), UPLOADS];
@@ -1062,6 +962,7 @@ function onResidentReply(a, item, text, isError) {
   if (!t.pending.length) {
     t.status = isError ? 'failed' : 'done';
     t.closedAt = now();
+    if (isError) lessons.ask(t, 'failed');
     touchTicket(t);
   }
 }
@@ -1581,11 +1482,12 @@ function recallFollowup(t) {
 function rateTicket(t, score, note) {
   const roster = readJson('roster.json');
   t.rating = { score: score > 0 ? 1 : -1, note: String(note || '').slice(0, 2000), at: now() };
+  thread(t, { from: 'user', kind: 'rating', score: t.rating.score, text: t.rating.note });
+  if (t.rating.score < 0) return lessons.ask(t, 'rated', t.rating.note);
   const leads = [...new Set([t.direct, ...t.assignees].filter(Boolean))].filter((k) => k !== roster.root);
   const text = `The user rated your answer on ticket #${t.n} ("${t.title}") as ${t.rating.score > 0 ? 'GOOD 👍' : 'NOT GOOD 👎'}` +
     (t.rating.note ? `: ${t.rating.note}` : '.') + ' Take the lesson into how you handle similar tickets, and pass it on to teammates where it concerns their part.';
   for (const k of leads) giveFeedback('user', k, text);
-  thread(t, { from: 'user', kind: 'rating', score: t.rating.score, text: t.rating.note });
 }
 
 function searchTickets(query, excludeId, limit) {
@@ -1958,7 +1860,14 @@ const skillProposals = require('./lib/skills').install({
 
 // ---------------------------------------------------------------- the brain: knowledge graph, decision flow, optimizer (lib/brain.js)
 
-const onCall = require('./lib/on-call').install({ agents, tickets, now, touch: (...a) => touch(...a) });
+// ---------------------------------------------------------------- lessons from jobs that went wrong (lib/lessons.js)
+
+const lessons = require('./lib/lessons').install({
+  agents, readJson, now, newId, findSecret: require('./lib/secrets').findSecret,
+  touch: (...a) => touch(...a), addEvent: (...a) => addEvent(...a), giveFeedback: (...a) => giveFeedback(...a),
+});
+
+const onCall = require('./lib/on-call').install({ agents, tickets, now, DATA, touch: (...a) => touch(...a) });
 
 const brain = require('./lib/brain').install({
   ROOT, DATA, agents, tickets, readJson, home, now, broadcast,
@@ -1991,478 +1900,14 @@ function json(res, code, obj) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
-  let m;
   if (!guard(req, res, url)) return;
   try {
     if (await arms.route(req, res, url, p, body, json)) return;
     if (await skillProposals.route(req, res, url, p, body, json)) return;
     if (await brain.route(req, res, url, p, body, json)) return;
-    if (req.method === 'POST' && p === '/api/shutdown') {
-      json(res, 200, { ok: true });
-      setTimeout(() => shutdown(), 150);
-      return;
-    }
-    if (req.method === 'POST' && p === '/api/tokens/save-csv') {
-      const q = await body(req);
-      const dir = fs.existsSync(path.join(os.homedir(), 'Downloads')) ? path.join(os.homedir(), 'Downloads') : os.homedir();
-      const file = path.join(dir, `agentic-os-tokens-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.csv`);
-      fs.writeFileSync(file, await usageIndex.csv(q || {}));
-      return json(res, 200, { file });
-    }
-    if (req.method === 'GET' && p.startsWith('/api/tokens/')) {
-      const q = Object.fromEntries(url.searchParams);
-      if (p === '/api/tokens/overview') return json(res, 200, await usageIndex.overview(q));
-      if (p === '/api/tokens/calls') return json(res, 200, await usageIndex.calls(q));
-      if (p === '/api/tokens/live') return json(res, 200, await usageIndex.liveChats(Number(q.min) || 300000));
-      if (p === '/api/tokens/cache') return json(res, 200, await usageIndex.cacheRead(q));
-      if (p === '/api/tokens/export.csv') { res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="agentic-os-tokens.csv"' }); return res.end(await usageIndex.csv(q)); }
-      if ((m = p.match(/^\/api\/tokens\/session\/([0-9a-f-]{8,})$/))) { const r = await usageIndex.session(m[1], q); return r ? json(res, 200, r) : json(res, 404, { error: 'no such session' }); }
-    }
-    if (req.method === 'GET' && (p === '/review' || p.startsWith('/ui/'))) {
-      const f = p === '/review' ? path.join(ROOT, 'public', 'review.html') : path.resolve(ROOT, 'public', p.slice(1));
-      if (!f.startsWith(path.join(ROOT, 'public') + path.sep) || !fs.existsSync(f)) return json(res, 404, { error: 'not found' });
-      const font = f.endsWith('.woff2');
-      res.writeHead(200, { 'content-type': f.endsWith('.css') ? 'text/css' : f.endsWith('.js') ? 'text/javascript' : font ? 'font/woff2' : f.endsWith('.txt') ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'cache-control': font ? 'max-age=31536000' : 'no-cache' });
-      return res.end(fs.readFileSync(f));
-    }
-    if (req.method === 'GET' && p.startsWith('/artifacts/')) {
-      const f = path.resolve(ROOT, 'artifacts', decodeURIComponent(p.slice('/artifacts/'.length)) || 'index.html');
-      const target = fs.existsSync(f) && fs.statSync(f).isDirectory() ? path.join(f, 'index.html') : f;
-      if (!target.startsWith(path.join(ROOT, 'artifacts') + path.sep) || !fs.existsSync(target)) return json(res, 404, { error: 'not found' });
-      const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.pdf': 'application/pdf' };
-      res.writeHead(200, { 'content-type': types[path.extname(target)] || 'text/plain; charset=utf-8' });
-      return res.end(fs.readFileSync(target));
-    }
-    if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
-      return res.end(fs.readFileSync(path.join(ROOT, 'public', 'os.html')));
-    }
-    if (req.method === 'GET' && p === '/icon.svg') {
-      res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=3600' });
-      return res.end(fs.readFileSync(path.join(ROOT, 'public', 'icon.svg')));
-    }
-    if (req.method === 'GET' && p === '/api/scripts') return json(res, 200, scriptManifest());
-    if (req.method === 'GET' && p === '/api/stream') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-      res.write(': hi\n\n');
-      clients.add(res);
-      const ka = setInterval(() => res.write(': ka\n\n'), 20000);
-      req.on('close', () => { clients.delete(res); clearInterval(ka); });
-      return;
-    }
-    if (req.method === 'GET' && p === '/api/limits') return json(res, 200, limitsView());
-    if (req.method === 'POST' && p === '/api/limits/refresh') {
-      await probeLimits();
-      return json(res, 200, limitsView());
-    }
-    if (req.method === 'GET' && p === '/api/state') {
-      const roster = readJson('roster.json');
-      return json(res, 200, {
-        limits: limitsView(),
-        agents: [...agents.values()].map(summary),
-        tickets: [...tickets.values()],
-        residents: roster.residents,
-        root: roster.root,
-        roles: Object.fromEntries(Object.entries(roster.roles).map(([k, v]) => [k, { name: v.name, persona: v.persona, room: v.room, description: v.description, handoffs: !!v.handoffs }])),
-        projects: readJson('projects.json'),
-        restart: restartView(),
-      });
-    }
-    if (req.method === 'GET' && p === '/api/prompt-size') return json(res, 200, await promptSizes());
-    if (req.method === 'GET' && p === '/api/restart') return json(res, 200, restartView());
-    if (req.method === 'POST' && p === '/api/restart') {
-      const b = await body(req);
-      return json(res, 200, requestRestart(b.when !== 'cancel', { check: b.check !== false }));
-    }
-    if (req.method === 'GET' && p === '/api/office-settings') {
-      const d = readJson('roster.json').defaults;
-      return json(res, 200, Object.fromEntries(Object.keys(OFFICE_SETTINGS).map((k) => [k, d[k] ?? null])));
-    }
-    if (req.method === 'POST' && p === '/api/office-settings') {
-      const b = await body(req);
-      const r = readJson('roster.json');
-      for (const [k, fix] of Object.entries(OFFICE_SETTINGS)) if (k in b) r.defaults[k] = fix(b[k]);
-      writeRoster(r);
-      return json(res, 200, Object.fromEntries(Object.keys(OFFICE_SETTINGS).map((k) => [k, r.defaults[k] ?? null])));
-    }
-    if (req.method === 'GET' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/events$/))) {
-      const a = agents.get(m[1]);
-      const limit = Number(url.searchParams.get('limit') || 400);
-      return a ? json(res, 200, eventsOf(a).slice(-limit)) : json(res, 404, { error: 'not found' });
-    }
-    if (req.method === 'POST' && p === '/api/tasks') {
-      const b = await body(req);
-      if (!b.text || !b.text.trim()) return json(res, 400, { error: 'empty task' });
-      return json(res, 200, { id: createTicket(b).id });
-    }
-    if (req.method === 'POST' && p === '/api/uploads') {
-      const buf = await rawBody(req, 25 << 20);
-      return json(res, 200, saveUpload(url.searchParams.get('name'), buf));
-    }
-    if (req.method === 'GET' && p.startsWith('/api/uploads/')) {
-      const file = path.resolve(UPLOADS, decodeURIComponent(p.slice('/api/uploads/'.length)));
-      if (!file.startsWith(UPLOADS + path.sep) || !fs.existsSync(file)) return json(res, 404, { error: 'not found' });
-      const ext = path.extname(file).toLowerCase();
-      const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf' };
-      res.writeHead(200, { 'content-type': types[ext] || 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff',
-        'content-disposition': types[ext] ? 'inline' : `inline; filename="${path.basename(file)}"` });
-      return res.end(fs.readFileSync(file));
-    }
-    if (req.method === 'GET' && p === '/api/search') {
-      const hits = searchTickets(url.searchParams.get('q'), null, 20).map((t) => t.id);
-      return json(res, 200, { ids: hits, text: url.searchParams.get('agentId') ? searchText(url.searchParams.get('q'), url.searchParams.get('agentId')) : undefined });
-    }
-    if (req.method === 'POST' && p === '/api/ask-user') {
-      const b = await body(req);
-      return json(res, 200, await askUser(b.agentId, b.question, b.options));
-    }
-    if (req.method === 'POST' && p === '/api/files/before') {
-      const b = await body(req);
-      const deny = denyEdit(b.agentId, b.file);
-      if (deny) return json(res, 200, { deny });
-      snapshotBefore(b.agentId, b.file);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'GET' && (m = p.match(/^\/api\/tickets\/(\w+)\/changes$/))) {
-      const t = tickets.get(m[1]);
-      return t ? json(res, 200, changesOf(t)) : json(res, 404, { error: 'not found' });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/revert$/))) {
-      const t = tickets.get(m[1]);
-      const b = await body(req);
-      if (!t) return json(res, 404, { error: 'not found' });
-      const reverted = revertChanges(t, b.path || null);
-      if (reverted && (!Array.isArray(reverted) || reverted.length)) { t.undone = (t.undone || 0) + 1; touchTicket(t); }
-      return json(res, 200, { reverted });
-    }
-    if (req.method === 'GET' && (m = p.match(/^\/api\/tickets\/(\w+)\/timeline$/))) {
-      const t = tickets.get(m[1]);
-      return t ? json(res, 200, timelineOf(t)) : json(res, 404, { error: 'not found' });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/rate$/))) {
-      const t = tickets.get(m[1]);
-      const b = await body(req);
-      if (!t) return json(res, 404, { error: 'not found' });
-      rateTicket(t, Number(b.score) || 1, b.note);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/archive$/))) {
-      const t = tickets.get(m[1]);
-      const b = await body(req);
-      if (!t) return json(res, 404, { error: 'not found' });
-      t.archived = b.archived !== false;
-      touchTicket(t);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/start$/))) {
-      const t = tickets.get(m[1]);
-      if (!t || t.status !== 'scheduled') return json(res, 404, { error: 'not a scheduled ticket' });
-      thread(t, { from: 'system', kind: 'system', text: 'Started now by you.' });
-      dispatchTicket(t);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && p === '/api/limits/continue') {
-      continuePastLimit();
-      return json(res, 200, limitsView());
-    }
-    if (req.method === 'GET' && p === '/api/spend') return json(res, 200, spendStats());
-    if (req.method === 'POST' && p === '/api/propose-plan') {
-      const b = await body(req);
-      return json(res, 200, await proposePlan(b.agentId, b.plan, b.estimateUsd));
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/plan$/))) {
-      const t = tickets.get(m[1]);
-      const b = await body(req);
-      return t ? json(res, 200, decidePlan(t, b.decision, b.note)) : json(res, 404, { error: 'not found' });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/(pause|resume)$/))) {
-      const t = tickets.get(m[1]);
-      if (!t) return json(res, 404, { error: 'not found' });
-      const r = m[2] === 'pause' ? pauseTicket(t) : resumeTicket(t);
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/review$/))) {
-      const r = await runReview(m[1]);
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/scope$/))) {
-      const r = onCall.setScope(m[1], !!(await body(req)).team);
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/refresh$/))) {
-      const a = agents.get(m[1]);
-      if (!a || !a.resident) return json(res, 404, { error: 'not a lead' });
-      const queued = maybeRefresh(a, true);
-      pumpResident(a);
-      return json(res, 200, { ok: queued });
-    }
-    if (req.method === 'GET' && p === '/api/config') return json(res, 200, configView());
-    if (req.method === 'POST' && p === '/api/config/role') {
-      const r = saveRole(await body(req));
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'DELETE' && (m = p.match(/^\/api\/config\/role\/([\w-]+)$/))) {
-      const r = deleteRole(m[1]);
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'POST' && p === '/api/config/team') {
-      const r = createTeam(await body(req));
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'GET' && (m = p.match(/^\/api\/teams\/([\w-]+)\/chat$/))) return json(res, 200, teamChat(m[1]));
-    if (req.method === 'POST' && (m = p.match(/^\/api\/teams\/([\w-]+)\/ask$/))) {
-      const b = await body(req);
-      if (!b.text || !b.text.trim()) return json(res, 400, { error: 'empty' });
-      const r = askTeam(m[1], b.text);
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'GET' && p === '/api/health') return json(res, 200, healthView());
-    if (req.method === 'POST' && p === '/api/script-nudge') {
-      const b = await body(req);
-      const a = agents.get(b.agentId);
-      if (a) { a.scriptNudges = (a.scriptNudges || 0) + 1; addEvent(a, { kind: 'script-nudge', name: b.script }); }
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && p === '/api/script') {
-      const b = await body(req);
-      return json(res, 200, await runScript(b.agentId, b.name, b.args));
-    }
-    if (req.method === 'POST' && p === '/api/selftest') {
-      if (selftestNow() && selftestNow().status === 'running') return json(res, 409, { error: 'A self-test is already running.' });
-      runSelfTest();
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/message$/))) {
-      const t = tickets.get(m[1]);
-      const b = await body(req);
-      if (!t || !b.text) return json(res, 404, { error: 'not found' });
-      const files = cleanAttachments(b.attachments);
-      if (t.waiting) {
-        answerUser(t, b.text + attachText(files));
-        return json(res, 200, { ok: true, answered: true });
-      }
-      const roster = readJson('roster.json');
-      const before = { status: t.status, closedAt: t.closedAt, pending: [...t.pending] };
-      // A follow-up within 2 hours of the answer counts as rework: the answer was not what the user needed.
-      if (['done', 'failed'].includes(t.status) && t.closedAt && now() - t.closedAt < 2 * 3600000) t.rework = (t.rework || 0) + 1;
-      reopen(t);
-      const fid = newId();
-      thread(t, { from: 'user', kind: 'followup', text: b.text, attachments: files, fid });
-      const to = t.direct || (t.assignees.length === 1 ? t.assignees[0] : roster.root);
-      if (!t.pending.includes(to)) t.pending.push(to);
-      touchTicket(t);
-      enqueueResident(to, { ticketId: t.id, fid, before, userText: b.text, userFiles: files, kind: to === roster.root ? 'followup' : 'direct',
-        text: to === roster.root
-          ? `[User follow-up on ticket #${t.n}: "${t.title}", handled by ${t.assignees.map((k) => agents.get(k).persona + ' (' + k + ')').join(', ') || 'nobody yet'}]\n${b.text}${attachText(files)}`
-          : `[User follow-up on ticket #${t.n}]\n${b.text}${attachText(files)}` });
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/recall$/))) {
-      const t = tickets.get(m[1]);
-      return json(res, 200, t ? recallFollowup(t) : { error: 'not found' });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/stop$/))) {
-      const t = tickets.get(m[1]);
-      if (t) stopTicket(t);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'DELETE' && (m = p.match(/^\/api\/tickets\/(\w+)$/))) {
-      const t = tickets.get(m[1]);
-      if (!t) return json(res, 404, { error: 'not found' });
-      if (t.status === 'open') stopTicket(t);
-      for (const a of agents.values()) {
-        if (!a.staff) continue;
-        a.tickets = (a.tickets || []).filter((id) => id !== t.id);
-        if (a.ticketId === t.id) { a.ticketId = null; a.ticketN = null; }
-        touch(a);
-      }
-      tickets.delete(t.id);
-      saveState();
-      broadcast({ type: 'ticketRemoved', id: t.id });
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/message$/))) {
-      const a = agents.get(m[1]);
-      const b = await body(req);
-      if (!a || !b.text) return json(res, 404, { error: 'not found' });
-      if (a.resident) {
-        const t = newTicket({ text: b.text.trim(), direct: a.id });
-        thread(t, { from: 'user', to: a.id, kind: 'user', text: t.text });
-        t.pending.push(a.id);
-        t.assignees.push(a.id);
-        touchTicket(t);
-        enqueueResident(a.id, { ticketId: t.id, kind: 'direct', text: `[Direct message from the user, ticket #${t.n}]\n${t.text}` });
-        return json(res, 200, { ticketId: t.id });
-      }
-      if (ACTIVE.includes(a.status)) return json(res, 409, { error: `${a.persona} is busy; wait or stop them first.` });
-      if (!a.sessionId) return json(res, 409, { error: 'No session to continue.' });
-      a.taskCostStart = a.costUsd;
-      enqueue(a, b.text, true);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/stop$/))) {
-      stopTree(m[1]);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/reset$/))) {
-      const a = agents.get(m[1]);
-      if (!a || !a.resident) return json(res, 404, { error: 'not a resident' });
-      a.sessionId = null;
-      a.resetting = true;
-      addEvent(a, { kind: 'system', text: 'Memory reset by the user.' });
-      restartResident(a.id);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'PUT' && p === '/api/projects') {
-      const b = await body(req);
-      if (!Array.isArray(b)) return json(res, 400, { error: 'expected array' });
-      fs.writeFileSync(path.join(ROOT, 'projects.json'), JSON.stringify(b, null, 2) + '\n');
-      broadcast({ type: 'roster' });
-      restartWhenIdle(readJson('roster.json').root);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'POST' && p === '/api/memory') {
-      const b = await body(req);
-      return json(res, 200, writeMemory(b.agentId, b.content));
-    }
-    if (req.method === 'GET' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/memory$/))) {
-      return json(res, 200, { text: readMemory(m[1]) });
-    }
-    if (req.method === 'POST' && p === '/api/feedback') {
-      const b = await body(req);
-      return json(res, 200, giveFeedback(b.agentId, b.to, b.text));
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/agents\/(\w[\w-]*)\/feedback$/))) {
-      const b = await body(req);
-      const r = giveFeedback('user', m[1], b.text);
-      return json(res, r.error ? 400 : 200, r);
-    }
-    if (req.method === 'GET' && p === '/api/staff') {
-      return json(res, 200, { text: staffList(url.searchParams.get('agentId')) });
-    }
-    if (req.method === 'POST' && p === '/api/files/touch') {
-      const b = await body(req);
-      return json(res, 200, { warning: touchFile(b.agentId, b.file) });
-    }
-    if (req.method === 'GET' && (m = p.match(/^\/api\/teams\/([\w-]+)\/check$/))) {
-      const roster = readJson('roster.json');
-      const def = roster.roles[m[1]];
-      if (!def || !def.team) return json(res, 404, { error: 'no library' });
-      return json(res, 200, { text: libraryCheck.report(libraryCheck.check(path.join(ROOT, def.team.docs), libraryRoots(roster, m[1]))) });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/teams\/([\w-]+)\/tidy$/))) {
-      const queued = maybeTidy(m[1], true);
-      const st = teamState[m[1]] || {};
-      return json(res, 200, queued ? { ok: true, message: 'The library check found problems; the lead is fixing them.' }
-        : st.lastFound && !st.lastFound.dups && !st.lastFound.refs ? { ok: true, message: 'The library check found nothing to fix: no duplicates, all references still match the code.' }
-        : { error: 'Could not run a tidy-up right now (the lead is busy, or one is already queued).' });
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/tickets\/(\w+)\/budget$/))) {
-      const t = tickets.get(m[1]);
-      const b = await body(req);
-      if (!t) return json(res, 404, { error: 'not found' });
-      const add = Math.max(0, Number(b.add) || 0);
-      t.budgetUsd = (t.budgetUsd || ticketBudget() || 0) + add;
-      if (t.overBudget && (t.costUsd || 0) < t.budgetUsd) {
-        t.overBudget = false;
-        thread(t, { from: 'system', kind: 'system', text: `Budget raised to $${t.budgetUsd.toFixed(2)}. Work continues.` });
-        releaseBudget(t, true);
-      }
-      touchTicket(t);
-      return json(res, 200, { ok: true });
-    }
-    if (req.method === 'GET' && p === '/api/mail/unread') {
-      return json(res, 200, { text: takeUnread(url.searchParams.get('agentId')) });
-    }
-    if (req.method === 'POST' && p === '/api/mail/send') {
-      const b = await body(req);
-      const r = sendMail(b.agentId, b.to, b.text, b.replyTo, false);
-      return json(res, 200, r.error ? { error: r.error } : { message: `Delivered to ${r.to.persona}.` });
-    }
-    if (req.method === 'POST' && p === '/api/mail/ask') {
-      const b = await body(req);
-      return json(res, 200, await ask(b.agentId, b.to, b.question, b.timeoutSec));
-    }
-    if (req.method === 'GET' && p === '/api/colleagues') {
-      return json(res, 200, { text: colleagues(url.searchParams.get('agentId')) });
-    }
-    if (req.method === 'POST' && p === '/api/docs/add') {
-      const b = await body(req);
-      return json(res, 200, addToDocs(b.agentId, b.page, b.text || ''));
-    }
-    if (req.method === 'GET' && p === '/api/projects-board') {
-      return json(res, 200, projectsBoard());
-    }
-    if (req.method === 'POST' && p === '/api/open-file') {
-      const b = await body(req);
-      return json(res, 200, openFile(b.path, b.ticketId));
-    }
-    if (req.method === 'POST' && p === '/api/command/run') {
-      const b = await body(req);
-      return json(res, 200, await runCommand(b.agentId, b));
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/commands\/(\w+)\/(decide|stop)$/))) {
-      const b = await body(req);
-      return json(res, 200, m[2] === 'stop' ? stopCommand(m[1]) : decideCommand(m[1], b.decision === 'run' ? 'run' : 'deny', b.note, !!b.allowAll));
-    }
-    if (req.method === 'POST' && p === '/api/edit-access/request') {
-      const b = await body(req);
-      return json(res, 200, await requestAccess(b.agentId, b.folder, b.reason));
-    }
-    if (req.method === 'POST' && (m = p.match(/^\/api\/edit-access\/(\w+)\/decide$/))) {
-      const b = await body(req);
-      return json(res, 200, decideAccess(tickets, m[1], b.decision === 'allow'));
-    }
-    if (req.method === 'GET' && p === '/api/terminal-mode') {
-      return json(res, 200, { mode: commandMode(readJson('roster.json')) });
-    }
-    if (req.method === 'POST' && p === '/api/terminal-mode') {
-      const b = await body(req);
-      if (!['off', 'ask', 'allow'].includes(b.mode)) return json(res, 400, { error: 'mode must be off, ask or allow' });
-      const r = readJson('roster.json');
-      r.defaults.terminalCommands = b.mode;
-      writeRoster(r);
-      for (const a of agents.values()) if (a.resident && canRunCommands(r, a)) a.restartWhenIdle = true;
-      return json(res, 200, { mode: b.mode });
-    }
-    if (req.method === 'POST' && p === '/api/handoff/save') {
-      const b = await body(req);
-      return json(res, 200, saveHandoff(b.agentId, b.project, b.state, b.session));
-    }
-    if (req.method === 'GET' && p === '/api/teams') {
-      return json(res, 200, teamsList());
-    }
-    if (req.method === 'GET' && p === '/api/teams/page') {
-      const file = path.resolve(url.searchParams.get('path') || '');
-      const ok = teamsList().some((t) => t.pages.some((pg) => pg.path === file));
-      if (!ok) return json(res, 404, { error: 'not a library page' });
-      return json(res, 200, { path: file, text: fs.readFileSync(file, 'utf8') });
-    }
-    if (req.method === 'POST' && p === '/api/assign') {
-      const b = await body(req);
-      return json(res, 200, assign(b.agentId, b.to, b.brief || '', b.effort));
-    }
-    if (req.method === 'POST' && p === '/api/wait') {
-      const b = await body(req);
-      return json(res, 200, await waitForTeam(b.agentId, b.batchId));
-    }
-    if (req.method === 'POST' && p === '/api/delegate') {
-      const b = await body(req);
-      return json(res, 200, await delegate(b.parentId, b.assignments || []));
-    }
-    if (req.method === 'POST' && p === '/api/progress') {
-      const b = await body(req);
-      const a = agents.get(b.agentId);
-      if (a) {
-        a.progress = b.status;
-        if (typeof b.percent === 'number') a.percent = Math.max(0, Math.min(100, b.percent));
-        const pt = typeof b.step === 'number' && a.resident && ticketOfAgent(a);
-        if (pt && pt.plan) { pt.plan.step = Math.max(1, Math.round(b.step)); touchTicket(pt); }
-        addEvent(a, { kind: 'progress', text: b.status, percent: a.percent });
-        touch(a);
-      }
-      return json(res, 200, { ok: true });
-    }
+    if (await backups.route(req, res, p, body, json)) return;
+    if (await evals.route(req, res, p, body, json)) return;
+    for (const r of routeModules) if (await r.route(req, res, url, p, body, json)) return;
     json(res, 404, { error: 'not found' });
   } catch (e) {
     json(res, 500, { error: e.message });
@@ -2472,8 +1917,12 @@ server.requestTimeout = 0;
 server.headersTimeout = 0;
 server.timeout = 0;
 
+// A restore chosen in Preferences is applied before anything is loaded (lib/backups.js).
+try { require('./lib/backups').applyPendingRestore(ROOT, DATA); } catch (e) { console.error(`Restore failed: ${e.message}`); }
 loadState();
 if (onCall.migrate()) saveState();
+onCall.tidy();
+setInterval(() => onCall.tidy(), 3600000).unref();
 assignPids();
 for (const t of tickets.values()) {
   if (t.costUsd != null) continue;
@@ -2530,6 +1979,19 @@ const { restartView, requestRestart, OFFICE_SETTINGS, isRestartPending } = requi
   pumpResident: (a) => pumpResident(a), pump: () => pump(), isShuttingDown: () => shuttingDown, shutdown: () => shutdown(),
 });
 
+const backups = require('./lib/backups').install({ ROOT, readJson, saveNow: () => saveNow(), requestRestart: (...a) => requestRestart(...a), broadcast });
+setTimeout(() => backups.maybeDaily(), 60000).unref();
+
+// The agent eval on a schedule, kept over time for the Health app (lib/evals.js).
+const evals = require('./lib/evals').install({
+  ROOT, DATA, readJson, now, broadcast,
+  isIdle: () => ![...tickets.values()].some((t) => t.status === 'open') && ![...agents.values()].some((a) => ACTIVE.includes(a.status) || (a.resident && (a.current || a.inbox.length))),
+  // Not near a limit: no hold, and the 5-hour and weekly windows below half.
+  canSpend: () => !limits.hold && Object.entries(limits.windows).every(([, w]) => !w.resetsAt || w.resetsAt < now() || w.utilization < 0.5),
+});
+setInterval(() => evals.maybeScheduled(), 5 * 60000).unref();
+setInterval(() => backups.maybeDaily(), 3600000).unref();
+
 const shutdown = () => {
   shuttingDown = true;
   for (const [id, p] of procs) { try { process.kill(-p.pid, 'SIGTERM'); } catch {} }
@@ -2537,5 +1999,28 @@ const shutdown = () => {
   try { fs.writeFileSync(LIMITS_FILE, JSON.stringify(limits)); } catch {}
   setTimeout(() => process.exit(0), 400);
 };
+// ---------------------------------------------------------------- HTTP routes (lib/routes-*.js), asked in turn by the server above
+
+const routeModules = [
+  require('./lib/routes-tickets').install({
+    UPLOADS, agents, answerUser, askUser, attachText, broadcast, changesOf, cleanAttachments, createTicket, decidePlan, dispatchTicket,
+    enqueueResident, fs, lessons, newId, now, path, pauseTicket, proposePlan, rateTicket, rawBody, readJson, recallFollowup, releaseBudget,
+    reopen, resumeTicket, revertChanges, saveState, saveUpload, searchText, searchTickets, stopTicket, thread, ticketBudget, tickets,
+    timelineOf, touch, touchTicket,
+  }),
+  require('./lib/routes-agents').install({
+    ACTIVE, MEMORY_DIR, addEvent, addToDocs, agents, ask, assign, colleagues, decideAccess, decideCommand, delegate, denyEdit, enqueue,
+    enqueueResident, eventsOf, fs, giveFeedback, lessons, maybeRefresh, newTicket, onCall, path, pumpResident, readMemory, requestAccess,
+    restartResident, runCommand, runReview, saveHandoff, sendMail, snapshotBefore, staffList, stopCommand, stopTree, takeUnread, thread,
+    ticketOfAgent, tickets, touch, touchFile, touchTicket, waitForTeam, writeMemory,
+  }),
+  require('./lib/routes-office').install({
+    OFFICE_SETTINGS, ROOT, addEvent, agents, askTeam, broadcast, canRunCommands, clients, commandMode, configView, continuePastLimit,
+    createTeam, deleteRole, fs, healthView, libraryCheck, libraryRoots, limitsView, maybeTidy, openFile, os, path, probeLimits,
+    projectsBoard, promptSizes, readJson, requestRestart, restartView, restartWhenIdle, runScript, runSelfTest, saveRole, scriptManifest,
+    selftestNow, shutdown, spendStats, summary, teamChat, teamState: live(() => teamState), teamsList, tickets, usageIndex, writeRoster,
+  }),
+];
+
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

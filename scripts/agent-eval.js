@@ -42,9 +42,13 @@ async function evaluate(opt) {
   fs.writeFileSync(path.join(repo, 'notes.txt'), 'one\ntwo\n');
   const head0 = git('rev-parse', 'HEAD').stdout.trim();
   const scratch = path.join(os.homedir(), 'agent_eval_test');
+  // Started by the office (lib/evals.js): if the office goes away, stop too and clean up.
+  if (process.env.AGENTOS_TEST_PARENT) setInterval(() => {
+    try { process.kill(Number(process.env.AGENTOS_TEST_PARENT), 0); } catch { try { fs.rmSync(work, { recursive: true, force: true }); fs.rmSync(scratch, { recursive: true, force: true }); } catch {} process.exit(3); }
+  }, 3000).unref();
 
   const port = await freePort();
-  const server = spawn(process.execPath, ['server.js'], { cwd: office, env: { ...process.env, WORKPLACE_PORT: String(port) }, stdio: 'ignore', detached: true });
+  const server = spawn(process.execPath, ['server.js'], { cwd: office, env: { ...process.env, AGENTOS_TEST_PARENT: String(process.pid), WORKPLACE_PORT: String(port) }, stdio: 'ignore', detached: true });
   const results = [];
   const ok = (name, pass, detail) => results.push({ name, pass: !!pass, detail: pass ? '' : String(detail || '').slice(0, 300) });
   try {
@@ -119,9 +123,10 @@ async function evaluate(opt) {
 
 async function run(argv) {
   const { opt } = parseArgs(argv);
-  if (opt.help) return { ok: true, text: 'usage: agent-eval [--model haiku|sonnet]\n  Real agents on a cheap model in a throwaway office; checks they follow their instructions. A few cents, a few minutes.' };
+  if (opt.help) return { ok: true, text: 'usage: agent-eval [--model haiku|sonnet] [--json]\n  Real agents on a cheap model in a throwaway office; checks they follow their instructions. A few cents, a few minutes.' };
   const { results, cost } = await evaluate(opt);
   const bad = results.filter((r) => !r.pass);
+  if (opt.json) return { ok: !bad.length && results.length > 0, text: JSON.stringify({ model: opt.model || 'haiku', results, cost }) };
   return { ok: !bad.length && results.length > 0, text: [`Agent eval (${opt.model || 'haiku'}): ${results.length} behaviours, ${bad.length ? `${bad.length} not followed` : 'all followed'} · cost ≈ $${cost.toFixed(2)}.`, ...results.map((r) => `${r.pass ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? `  (${r.detail})` : ''}`)].join('\n') };
 }
 

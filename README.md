@@ -4,6 +4,22 @@ A permanent team of Claude agents, run like an operating system: every agent is 
 is a job. A desktop app for Ubuntu (GTK + WebKitGTK window over a local Node backend, no npm install), using your Claude
 Code login. Everything runs on this computer.
 
+![Today: what needs you, who is working, what finished](docs/screenshots/today.png)
+
+## Getting started
+
+You need Node.js, [Claude Code](https://claude.com/claude-code) logged in (`claude` on your `PATH`), and for the window
+`python3-gi` and `gir1.2-webkit2-4.0` (`sudo apt install python3-gi gir1.2-webkit2-4.0`).
+
+```
+git clone <this repo> ~/agent-workplace && cd ~/agent-workplace
+./agentos                      # first run creates roster.json and projects.json from the .example files
+```
+
+Then edit `projects.json` so it lists your own projects (name, folder, which lead owns it, a few keywords for routing),
+and `roster.json` if you want other teams or defaults. Both stay on your machine: git ignores them, along with `data/`
+(jobs, conversations, logs) and `teams/` (each team's library, skills and project handoffs).
+
 ```
 ./agentos                      # start the server if needed and open the window
 ./agentos status               # is it running, how many processes and jobs
@@ -27,6 +43,22 @@ Code login. Everything runs on this computer.
 - **In the background**: close the window while jobs run and it waits in the tray; `./agentos autostart on` starts it at login.
 - **Preferences**: Ctrl+, (theme, notifications, sending, terminal commands, plan approval, reminders…).
 - **What a job cost and why**: `node scripts/job-cost.js 28`.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![A job waiting for plan approval](docs/screenshots/job-plan.png) | ![The brain's knowledge map](docs/screenshots/brain.png) |
+| **A job that needs you.** The lead proposes a plan with a cost estimate; approve, change or reject it in place. | **Brain.** Agents, memories, library pages, skills, handoffs and projects as one graph you can drag, search and scrub through time. |
+| ![The process tree](docs/screenshots/processes.png) | ![Projects and their handoffs](docs/screenshots/projects.png) |
+| **Processes.** Every agent as a process: model and effort, state, current job, activity and cost. | **Projects.** Where each personal project stands, from its handoff; Continue starts a job that picks up there. |
+
+The light theme follows the system or can be picked in Preferences:
+
+![A finished job in the light theme](docs/screenshots/jobs-light.png)
+
+The screenshots come from a throwaway demo office (example roster, made-up projects, a stand-in for `claude` that
+spends nothing), captured in the same WebKitGTK engine as the window with `scripts/ui-check-driver.py`.
 
 ## Documentation
 

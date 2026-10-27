@@ -4,7 +4,9 @@
 // ring; a dashed gold outline means "carried in every call". Sprites pop in on open and grow when hovered.
 // Each team is a lobe around its lead. Links are springs and every node repels the others, so dragging one node pulls its
 // neighbours along and the rest make room; a released node keeps its momentum and settles. Drag empty space to pan,
-// scroll to zoom, double-click to fit.
+// scroll to zoom, double-click to fit. With the map focused, arrow keys move between nodes, Esc clears, + − 0 zoom.
+// The time filter (setUntil) shows only what existed at a date. When nothing moves and nobody touches the map it stops
+// drawing altogether (no physics, no pulses) and wakes on the next mouse move, key or change, so an idle map costs no CPU.
 
 const BrainMap = (() => {
   let st = null;
@@ -51,14 +53,15 @@ const BrainMap = (() => {
     }
     const now = performance.now();
     st = { canvas, ctx, nodes, edges, byId, colors, sprites, light, reduced, k: 1, px: 0, py: 0, lastTouch: 0,
-      hover: null, sel: opts && opts.sel, drag: null, pan: null, pulses: [], onSelect: opts && opts.onSelect, onHover: opts && opts.onHover, q: '', t0: now, raf: 0 };
+      hover: null, sel: opts && opts.sel, drag: null, pan: null, pulses: [], onSelect: opts && opts.onSelect, onHover: opts && opts.onHover, q: '', t0: now, raf: 0,
+      prevAll, until: (opts && opts.until) || 0, alpha: fresh ? 1 : 0.35, lastActive: now, sleeping: false, cam: null, matchI: -1 };
     // Sprites pop onto the plane one kind after another.
     const sorted = [...nodes].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type));
     sorted.forEach((n, i) => { n.born = reduced || !fresh ? 0 : now + 120 + i * 7; });
-    st.active = edges.filter((e) => ['read', 'wrote', 'taught', 'led', 'worked on', 'proposed'].includes(e.kind));
+    applyUntil(true);
     resize();
     // A new layout settles before it is shown, then the view fits it.
-    if (fresh > nodes.length / 3) for (let i = 0; i < 220; i++) step();
+    if (fresh > st.live.length / 3) for (let i = 0; i < 220; i++) step();
     fit();
     wire();
     loop();
@@ -66,15 +69,17 @@ const BrainMap = (() => {
   }
   function stop() {
     if (!st) return;
-    if (st.move) { window.removeEventListener('mousemove', st.move); window.removeEventListener('mouseup', st.up); }
+    if (st.move) { window.removeEventListener('mousemove', st.move); window.removeEventListener('mouseup', st.up); document.removeEventListener('visibilitychange', st.vis); }
     cancelAnimationFrame(st.raf);
-    const prev = st.nodes ? Object.fromEntries(st.nodes.map((n) => [n.id, [n.x, n.y]])) : st.prev;
+    // Positions survive a re-render, including nodes the time filter hid this time.
+    const prev = st.nodes ? { ...(st.prevAll || {}), ...Object.fromEntries(st.nodes.map((n) => [n.id, [n.x, n.y]])) } : st.prev;
     if (st.canvas) st.canvas.remove();
     window.removeEventListener('resize', resize);
     st = { prev };
   }
   function resize() {
     if (!st || !st.canvas || !st.canvas.parentElement) return;
+    wake();
     const r = st.canvas.parentElement.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
     st.w = r.width; st.h = r.height;
     st.canvas.width = r.width * dpr; st.canvas.height = r.height * dpr;
@@ -82,19 +87,54 @@ const BrainMap = (() => {
     st.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
   // Zoom and centre so every figure is in view.
-  function fit() {
-    if (!st.nodes.length) return;
+  function fit(animate) {
+    if (!st.live.length) return;
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const n of st.nodes) { x0 = Math.min(x0, n.x - n.r); x1 = Math.max(x1, n.x + n.r); y0 = Math.min(y0, n.y - n.r); y1 = Math.max(y1, n.y + n.r + 14); }
-    st.k = Math.max(0.35, Math.min(1.6, Math.min((st.w - 60) / (x1 - x0 || 1), (st.h - 60) / (y1 - y0 || 1))));
-    st.px = -((x0 + x1) / 2) * st.k; st.py = -((y0 + y1) / 2) * st.k;
+    for (const n of st.live) { x0 = Math.min(x0, n.x - n.r); x1 = Math.max(x1, n.x + n.r); y0 = Math.min(y0, n.y - n.r); y1 = Math.max(y1, n.y + n.r + 14); }
+    const k = Math.max(0.35, Math.min(1.6, Math.min((st.w - 60) / (x1 - x0 || 1), (st.h - 60) / (y1 - y0 || 1))));
+    camTo((x0 + x1) / 2, (y0 + y1) / 2, k, animate);
+  }
+  // Centre the view on a world point at zoom k, gliding there unless asked not to (or under reduced motion).
+  function camTo(wx, wy, k, animate) {
+    const to = { k, px: -wx * k, py: -wy * k };
+    if (!animate || st.reduced) { st.cam = null; Object.assign(st, to); return; }
+    st.cam = { from: { k: st.k, px: st.px, py: st.py }, to, t0: performance.now() };
+    wake();
+  }
+  // Which nodes exist at the time filter's date; nodes that come back pop in again.
+  function applyUntil(first) {
+    const now = performance.now();
+    for (const n of st.nodes) {
+      const off = !!st.until && (n.createdAt || 0) > st.until;
+      if (n.off && !off && !first && !st.reduced) n.born = now + Math.random() * 200;
+      n.off = off;
+    }
+    st.live = st.nodes.filter((n) => !n.off);
+    st.liveEdges = st.edges.filter((e) => !e.a.off && !e.b.off);
+    st.active = st.liveEdges.filter((e) => ['read', 'wrote', 'taught', 'led', 'worked on', 'proposed'].includes(e.kind));
+    if (!first) st.alpha = Math.max(st.alpha, 0.5);
+  }
+  function wake() {
+    if (!st || !st.canvas) return;
+    st.lastActive = performance.now();
+    if (st.sleeping && document.body.contains(st.canvas) && !document.hidden) { st.sleeping = false; st.raf = requestAnimationFrame(loop); }
   }
   const toScreen = (x, y) => [st.w / 2 + st.px + x * st.k, st.h / 2 + st.py + y * st.k];
   const toWorld = (sx, sy) => [(sx - st.w / 2 - st.px) / st.k, (sy - st.h / 2 - st.py) / st.k];
 
   // ---------------------------------------------------------------- physics
+  // One physics step. Forces are scaled by alpha, which cools towards zero after every change (as in d3-force), so the
+  // layout always comes to rest instead of circling in a tug-of-war; dragging and the time filter warm it up again.
+  // Returns the fastest node's speed.
   function step() {
-    const N = st.nodes;
+    const N = st.live;
+    if (st.drag) st.alpha = 1; // a held node pulls its neighbours at full strength
+    const alpha = st.alpha;
+    // Cooling follows the clock, not the frame rate: alpha halves every 0.6 s.
+    const t = performance.now(), dt = Math.min(250, t - (st.lastStep || t));
+    st.lastStep = t;
+    st.alpha = st.alpha < 0.003 ? 0 : st.alpha * Math.pow(0.5, dt / 600);
+    for (const n of N) { n.ox = n.vx; n.oy = n.vy; }
     for (let i = 0; i < N.length; i++) {
       const a = N[i];
       for (let j = i + 1; j < N.length; j++) {
@@ -106,22 +146,26 @@ const BrainMap = (() => {
         a.vx -= dx * f; a.vy -= dy * f; b.vx += dx * f; b.vy += dy * f;
       }
     }
-    for (const e of st.edges) {
+    for (const e of st.liveEdges) {
       const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
       const k = ((d - (REST[e.kind] || 100)) / d) * 0.018;
       e.a.vx += dx * k; e.a.vy += dy * k; e.b.vx -= dx * k; e.b.vy -= dy * k;
     }
+    let fastest = 0;
     for (const n of N) {
       // Each node is drawn softly to its ring around its lobe's centre: agents in the middle, knowledge further out.
       const dx = n.x - n.c[0], dy = n.y - n.c[1], d = Math.sqrt(dx * dx + dy * dy) || 1;
       const k = ((SHELL[n.type] - d) / d) * 0.004;
       n.vx += dx * k; n.vy += dy * k;
       if (st.drag && st.drag.n === n) continue;
+      n.vx = n.ox + (n.vx - n.ox) * alpha; n.vy = n.oy + (n.vy - n.oy) * alpha;
       n.vx *= 0.84; n.vy *= 0.84;
       const sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
       if (sp > 18) { n.vx *= 18 / sp; n.vy *= 18 / sp; }
       n.x += n.vx; n.y += n.vy;
+      if (sp > fastest) { fastest = sp; st.fastestNode = n.id; }
     }
+    return fastest;
   }
 
   // ---------------------------------------------------------------- drawing
@@ -136,7 +180,7 @@ const BrainMap = (() => {
       for (let gx = ox; gx < w; gx += sp) for (let gy = oy; gy < h; gy += sp) ctx.fillRect(gx - 0.6, gy - 0.6, 1.2, 1.2);
     }
     const lobes = {};
-    for (const n of st.nodes) if (n.team && n.type !== 'project' && n.type !== 'job') { const l = (lobes[n.team] = lobes[n.team] || [0, 0, 0]); l[0] += n.x; l[1] += n.y; l[2]++; }
+    for (const n of st.live) if (n.team && n.type !== 'project' && n.type !== 'job') { const l = (lobes[n.team] = lobes[n.team] || [0, 0, 0]); l[0] += n.x; l[1] += n.y; l[2]++; }
     for (const l of Object.values(lobes)) {
       const [sx, sy] = toScreen(l[0] / l[2], l[1] / l[2]), rad = 260 * k;
       const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad);
@@ -149,7 +193,7 @@ const BrainMap = (() => {
       n.lift += (target - n.lift) * (st.reduced ? 1 : 0.18);
       const grow = n.born ? Math.max(0, Math.min(1, (now - n.born) / 420)) : 1;
       const pop = grow >= 1 ? 1 : 1 + 2.2 * Math.pow(grow - 1, 3) + 1.2 * Math.pow(grow - 1, 2); // ease out with a small overshoot
-      n.p = { sx, sy, r: n.r * k * pop * (1 + 0.14 * n.lift), up: 0, show: grow > 0 };
+      n.p = { sx, sy, r: n.r * k * pop * (1 + 0.14 * n.lift), up: 0, show: grow > 0 && !n.off };
     }
     const focus = st.hover || st.sel;
     const near = new Set();
@@ -179,7 +223,7 @@ const BrainMap = (() => {
       ctx.globalCompositeOperation = 'source-over';
     }
     // Sprites, small ones first so leads and big pages sit on top; the hovered and selected ones last.
-    const front = (n) => (n.id === st.hover || n.id === st.sel ? 1e6 : 0) + n.r;
+    const front = frontOf;
     const order = st.nodes.filter((n) => n.p.show && n.p.r > 0.3).sort((a, b) => front(a) - front(b));
     const gold = (a) => `rgba(${colors.gold.join(',')},${a})`;
     for (const n of order) {
@@ -215,27 +259,82 @@ const BrainMap = (() => {
   }
   function loop() {
     if (!st || !st.canvas || !document.body.contains(st.canvas)) { if (st && st.canvas) stop(); return; }
-    step();
-    draw(performance.now());
-    st.raf = requestAnimationFrame(loop);
+    const now = performance.now();
+    if (st.cam) {
+      const t = Math.min(1, (now - st.cam.t0) / 450), e = 1 - Math.pow(1 - t, 3), { from, to } = st.cam;
+      st.k = from.k + (to.k - from.k) * e; st.px = from.px + (to.px - from.px) * e; st.py = from.py + (to.py - from.py) * e;
+      if (t >= 1) st.cam = null;
+    }
+    // Physics runs while the layout is warm (alpha) or anything still moves; dragging warms it again.
+    const moving = st.drag || st.alpha > 0 || st.fastest > 0.02;
+    if (moving) st.fastest = step();
+    draw(now);
+    const busy = st.drag || st.pan || st.cam || moving || now - st.lastActive < 8000 || st.nodes.some((n) => n.born > now - 600);
+    if (busy && !document.hidden) st.raf = requestAnimationFrame(loop);
+    else st.sleeping = true;
+  }
+  // Move the selection to the nearest node in a direction (keyboard), keeping it in view.
+  function stepSelection(dx, dy) {
+    const shown = st.live.filter((n) => n.p && n.p.show);
+    if (!shown.length) return;
+    const cx = st.w / 2, cy = st.h / 2;
+    const cur = st.byId.get(st.sel);
+    let next = null, best = Infinity;
+    if (!cur || cur.off) for (const n of shown) { const d = Math.hypot(n.p.sx - cx, n.p.sy - cy); if (d < best) { best = d; next = n; } }
+    else for (const n of shown) {
+      if (n === cur) continue;
+      const vx = n.p.sx - cur.p.sx, vy = n.p.sy - cur.p.sy, along = vx * dx + vy * dy;
+      if (along <= 0) continue;
+      const score = along + 2.5 * Math.abs(vx * dy - vy * dx);
+      if (score < best) { best = score; next = n; }
+    }
+    if (next) choose(next, false);
+  }
+  function choose(n, zoom) {
+    st.sel = n.id;
+    st.onSelect && st.onSelect(n.id);
+    const m = 70, out = n.p && (n.p.sx < m || n.p.sx > st.w - m || n.p.sy < m || n.p.sy > st.h - m);
+    if (zoom || out) camTo(n.x, n.y, zoom ? Math.max(st.k, 1.3) : st.k, true);
+    wake();
   }
 
   // ---------------------------------------------------------------- interaction
+  // Drawing order: small sprites first, the hovered and selected ones last (on top).
+  const frontOf = (n) => (n.id === st.hover || n.id === st.sel ? 1e6 : 0) + n.r;
+  // The sprite under the pointer: the one drawn on top where sprites overlap, so you grab what you see.
   function pick(mx, my) {
     let best = null;
     for (const n of st.nodes) {
       if (!n.p || !n.p.show) continue;
       const r = n.p.r + 5, dx = mx - n.p.sx, dy = my - (n.p.sy - n.p.up);
-      if (dx * dx + dy * dy <= r * r && (!best || n.p.sy > best.p.sy)) best = n;
+      if (dx * dx + dy * dy <= r * r && (!best || frontOf(n) > frontOf(best))) best = n;
     }
     return best;
   }
   function wire() {
     const c = st.canvas;
+    c.tabIndex = 0;
+    c.setAttribute('role', 'application');
+    c.setAttribute('aria-label', 'Knowledge map. Arrow keys move between nodes, Escape clears the selection, plus and minus zoom, 0 fits. The Table view lists everything.');
+    c.onkeydown = (ev) => {
+      const dirs = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      if (dirs[ev.key]) stepSelection(...dirs[ev.key]);
+      else if (ev.key === 'Escape' && st.sel) { st.sel = null; st.onSelect && st.onSelect(null); }
+      else if (ev.key === '+' || ev.key === '=') camTo(-st.px / st.k, -st.py / st.k, Math.min(4, st.k * 1.25), true);
+      else if (ev.key === '-') camTo(-st.px / st.k, -st.py / st.k, Math.max(0.3, st.k / 1.25), true);
+      else if (ev.key === '0') fit(true);
+      else return;
+      ev.preventDefault();
+      wake();
+    };
+    c.addEventListener('mousemove', wake);
+    st.vis = () => { if (!document.hidden) wake(); };
+    document.addEventListener('visibilitychange', st.vis);
     const pos = (ev) => { const r = c.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
     c.onmousedown = (ev) => {
       const [mx, my] = pos(ev);
       const n = pick(mx, my);
+      wake();
       if (n) { const [wx, wy] = toWorld(mx, my); st.drag = { n, moved: false, start: [mx, my], grab: [n.x - wx, n.y - wy], hist: [] }; c.style.cursor = 'grabbing'; }
       else st.pan = { x: ev.clientX, y: ev.clientY, px: st.px, py: st.py, moved: false };
       ev.preventDefault();
@@ -279,17 +378,32 @@ const BrainMap = (() => {
     c.onwheel = (ev) => {
       ev.preventDefault();
       const [mx, my] = pos(ev), [wx, wy] = toWorld(mx, my);
+      st.cam = null; wake();
       st.k = Math.max(0.3, Math.min(4, st.k * (ev.deltaY < 0 ? 1.12 : 0.89)));
       st.px = mx - st.w / 2 - wx * st.k; st.py = my - st.h / 2 - wy * st.k;
     };
-    c.ondblclick = () => fit();
+    c.ondblclick = () => fit(true);
   }
   return {
     start,
     stop,
-    select: (id) => { if (st) st.sel = id; },
-    search: (q) => { if (st) st.q = String(q || '').trim().toLowerCase(); },
+    select: (id) => { if (st) { st.sel = id; wake(); } },
+    search: (q) => { if (st) { st.q = String(q || '').trim().toLowerCase(); st.matchI = -1; wake(); } },
+    // Enter in the search box: select the best match and glide to it; pressing again moves to the next match.
+    findNext: () => {
+      if (!st || !st.q) return 0;
+      const q = st.q, rank = (n) => (n.label.toLowerCase().startsWith(q) ? 0 : n.label.toLowerCase().includes(q) ? 1 : 2);
+      const hits = st.live.filter((n) => `${n.label} ${n.sub || ''}`.toLowerCase().includes(q)).sort((a, b) => rank(a) - rank(b) || b.r - a.r);
+      if (!hits.length) return 0;
+      st.matchI = (st.matchI + 1) % hits.length;
+      choose(hits[st.matchI], true);
+      return hits.length;
+    },
+    // Show only what existed at time t (ms since epoch); 0 shows everything.
+    setUntil: (t) => { if (st && st.nodes) { st.until = t || 0; applyUntil(false); wake(); } },
     positions: () => (st && st.nodes ? Object.fromEntries(st.nodes.map((n) => [n.id, [n.x, n.y]])) : null),
+    // For scripts/ui-check.js: whether the map is resting, and how many nodes the time filter shows.
+    debug: () => (st && st.nodes ? { sleeping: st.sleeping, live: st.live.length, total: st.nodes.length, sel: st.sel, alpha: st.alpha, fastest: st.fastest, fastestNode: st.fastestNode, idleMs: Math.round(performance.now() - st.lastActive), cam: !!st.cam, drag: !!st.drag, pan: !!st.pan } : null),
     // Where a node is on the canvas and what it links to (used by scripts/ui-check.js to test dragging).
     screenOf: (id) => { const n = st && st.byId && st.byId.get(id); return n && n.p ? { x: n.p.sx, y: n.p.sy - n.p.up, links: st.edges.filter((e) => e.a === n || e.b === n).map((e) => (e.a === n ? e.b.id : e.a.id)) } : null; },
   };
