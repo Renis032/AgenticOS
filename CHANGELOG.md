@@ -37,6 +37,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Project memory: instructions, decisions, known failures and job outcomes per project; each job gets only what is
   relevant (`lib/project-memory.js`, tools `remember_for_project` and `recall_project`).
 - Cost per successful job in Usage, per lead and per project (`lib/outcomes.js`).
+- `npm run screenshots` regenerates the README screenshots from the demo office; the demo no longer reads your real
+  project folders or notes, and seeds handoffs and project memory.
 - Looks: Champagne (the default), Graphite (flat, neutral greys, system blue) and Midnight (navy, teal), each in
   light and dark (Preferences → Appearance → Look, `public/ui/themes.css`).
 - Agent answers render *italics*.

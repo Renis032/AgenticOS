@@ -34,7 +34,8 @@
     "check": "node scripts/check-syntax.js",
     "lint": "eslint .",
     "test": "node scripts/check-syntax.js && node scripts/api-check.js",
-    "test:ui": "node scripts/ui-check.js"
+    "test:ui": "node scripts/ui-check.js",
+    "screenshots": "node scripts/screenshots.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

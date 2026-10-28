@@ -21,23 +21,39 @@ it's doing or what it costs. Agentic OS gives you a standing team instead:
   team library, and picks up a project where its last session ended.
 - **Work goes to the right place.** A dispatcher (or plain routing rules, for free) hands each job to the lead who owns
   it; leads hire specialists for parallel or long work.
-- **You stay in control.** Big jobs start with a plan and a cost estimate you approve; terminal commands and edits
-  outside a job's project ask first; nothing is ever committed or pushed for you.
+- **"Done" means checked.** The office runs each project's checks itself after the lead answers; only real exit codes
+  close a job, and a failure goes back to the lead with the output.
+- **You stay in control.** Big jobs start with a plan and a cost estimate you approve; terminal commands, web access
+  and edits outside a job's project follow rules you set; nothing is ever committed or pushed for you.
 - **It gets cheaper and better on its own.** Mechanical work goes through exact, free scripts instead of the model;
   the model and effort for each task are chosen by expected value; failed or reworked jobs turn into lessons.
 
 ## Features
 
-- **Jobs** with live progress, per-job cost, follow-ups, plans, questions and terminal-command approvals, notifications
-  and reminders when something needs you
+- **Jobs** with live progress, per-job cost, follow-ups, plans, questions with one-click answers, terminal-command
+  approvals, and reminders when something needs you
+- **Checks before done**: a project's checks (`npm test`, `make`…) run by the office after the lead answers; real exit
+  codes decide, failures go back to the lead, and the evidence stays on the job
+- **Recovery**: a job interrupted by a restart or a crash resumes with what already happened, so nothing is done
+  twice; a stuck agent is flagged; stopping a job stops everything it started
+- **Separate workspaces**: two jobs on the same git project each work in their own git worktree; you review the diff
+  and apply it, nothing is committed
+- **Project memory**: your instructions, decisions and known failures per project; each job gets only what is
+  relevant to it, not the whole history
+- **New team leads from a description**: say what the lead should look after; the office drafts its routing,
+  instructions and specialists for you to review
 - **Processes**: every agent as a process with model, effort, state, current job, activity and cost
 - **Brain**: everything the agents know (memories, libraries, skills, handoffs, projects) as one searchable graph,
   plus how jobs flow and what to improve
 - **Projects**: where each personal project stands, with one-click *Continue*
 - **Ask the office** (Ctrl+J): "what did Renko do yesterday?", "why did #37 cost $22?", answered from your own jobs,
   memories and libraries for under a cent
-- **Usage limits** respected automatically: work is held, resumed or scheduled around your plan's windows
+- **Cost per successful job**, per lead and per project, next to your plan's usage windows; work is held, resumed or
+  scheduled around the limits, with an optional daily spending cap
+- **Access controls**: web access on or off, folders agents may always edit, commands that never run or run without
+  asking, and lessons you review before agents use them
 - **Undo** for every file an agent changed, per job
+- **Three looks** (Champagne, Graphite, Midnight), each light and dark
 - **Self-tests**: an API check and a window check that run on a throwaway office and spend nothing, and an agent eval
   that checks the agents still follow the rules after their instructions change
 
@@ -81,7 +97,11 @@ Run `./agentos setup` again any time.
 - **Talk to it** in the job: Enter sends; ↑ in the empty box takes back a message the agent hasn't picked up yet.
   The strip under the conversation shows who is working on what and what it has cost so far.
 - **When an agent needs you** (a question, a plan, a command to run) the job says *needs you*, you get a notification,
-  and reminders follow if it waits. Plans under an amount you choose can be approved automatically.
+  and reminders follow if it waits. Questions come with one-click answers (keys 1–5). Plans under an amount you choose
+  can be approved automatically. With a Telegram bot linked, all of it reaches your phone too.
+- **Give a project checks** in Teams & roles → Projects (e.g. `npm test ;; npm run lint`), or per job under *Checks and
+  workspace*: a job is done only when they pass.
+- **Add a team lead** in Teams & roles → *New team lead*: describe what it should look after, review the draft, create.
 - **Brain** (`B`), **Today** (`D`, the start page), **Projects** (`O`), **Skills**, and **Preferences** (Ctrl+,).
 - **In the background**: close the window while jobs run and it waits in the tray.
 - **What a job cost and why**: `node scripts/job-cost.js 28`.
@@ -110,14 +130,16 @@ undo), redirects mechanical shell commands to scripts, and delivers mail between
 
 | | |
 |---|---|
-| ![A job waiting for plan approval](docs/screenshots/job-plan.png) | ![The brain's knowledge map](docs/screenshots/brain.png) |
-| **A job that needs you.** The lead proposes a plan with a cost estimate; approve, change or reject it in place. | **Brain.** Agents, memories, library pages, skills, handoffs and projects as one graph you can drag, search and scrub through time. |
-| ![The process tree](docs/screenshots/processes.png) | ![Projects and their handoffs](docs/screenshots/projects.png) |
-| **Processes.** Every agent as a process: model and effort, state, current job, activity and cost. | **Projects.** Where each personal project stands, from its handoff; Continue starts a job that picks up there. |
+| ![A job waiting for plan approval](docs/screenshots/job-plan.png) | ![A finished job whose checks passed](docs/screenshots/job-checks.png) |
+| **A job that needs you.** The lead proposes a plan with a cost estimate; approve, change or reject it in place. | **Checked, not just claimed.** The office ran the project's checks after the answer; only exit codes close the job. |
+| ![Projects, their handoffs and what the office remembers](docs/screenshots/projects.png) | ![Cost per successful job](docs/screenshots/usage.png) |
+| **Projects.** Where each project stands, from its handoff, and what the office remembers about it. | **Cost per successful job**, per lead and per project, next to office spend. |
+| ![Drafting a new team lead](docs/screenshots/lead-wizard.png) | ![The brain's knowledge map](docs/screenshots/brain.png) |
+| **A new team lead** drafted from a plain description, shown here in the Graphite look. | **Brain.** Agents, memories, library pages, skills, handoffs and projects as one graph you can drag, search and scrub through time. |
+| ![The process tree](docs/screenshots/processes.png) | ![A finished job in the light theme](docs/screenshots/jobs-light.png) |
+| **Processes.** Every agent as a process: model and effort, state, current job, activity and cost. | **Light or dark**, following the system or picked in Preferences. |
 
-The light theme follows the system or can be picked in Preferences:
-
-![A finished job in the light theme](docs/screenshots/jobs-light.png)
+All screenshots come from the demo office (`npm run screenshots` regenerates them).
 
 ## Privacy and safety
 
@@ -125,8 +147,9 @@ The light theme follows the system or can be picked in Preferences:
   only by you).
 - Your jobs, conversations, memories and configuration never leave your computer except as prompts to Claude through
   your own Claude Code login.
-- Agents edit only inside the job's project (other folders ask first), run terminal commands only as you allow, and
-  never commit or push. Every change can be undone per job.
+- Agents edit only inside the job's project (other folders ask first), run terminal commands only as you allow, reach
+  the web only if you let them, and never commit or push. Every change can be undone per job, and stopping a job
+  stops every process it started.
 
 See [SECURITY.md](SECURITY.md) for the full picture and how to report a problem.
 
@@ -149,6 +172,7 @@ npm install        # development tools only (ESLint)
 npm test           # syntax of every file + the API check on a throwaway office (seconds, nothing spent)
 npm run lint
 npm run test:ui    # clicks through the whole window on a virtual screen (about 45 s, needs Xvfb)
+npm run screenshots  # regenerates docs/screenshots from the demo office (needs Xvfb)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout, conventions and how to send a change, and

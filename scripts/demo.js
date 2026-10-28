@@ -37,9 +37,9 @@ out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5-5'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const say = (content) => out({ type: 'assistant', message: { id: 'msg_' + Date.now() + Math.random(), model: 'claude-opus-5-5', content, usage } });
 const ANSWERS = [
-  [/summari[sz]e|what changed/i, '**What changed in Recipe Box this week**\\n\\n- Search now matches ingredients as well as titles.\\n- The shopping list groups items by aisle.\\n- Two bugs fixed: duplicate tags on import, and a crash on empty recipes.\\n\\nNothing is waiting on you. *(Demo office: no model was called and nothing was spent.)*'],
-  [/dark mode/i, '**Dark mode is in.** Recipe Box now follows the system theme, with a toggle in Settings.\\n\\n- Files: \`src/theme.css\`, \`src/settings.js\`, \`src/App.js\`\\n- Checked: both themes at phone and desktop width, contrast AA on every text colour.\\n\\n*(Demo office: no model was called and nothing was spent.)*'],
   [/release notes/i, '**Release notes for Recipe Box 1.4**\\n\\n- New: dark mode that follows your system.\\n- Better: ingredient search, aisle-grouped shopping list.\\n- Fixed: duplicate tags on import; crash on empty recipes.\\n\\n*(Demo office: no model was called and nothing was spent.)*'],
+  [/dark mode/i, '**Dark mode is in.** Recipe Box now follows the system theme, with a toggle in Settings.\\n\\n- Files: \`src/theme.css\`, \`src/settings.js\`, \`src/App.js\`\\n- Checked: both themes at phone and desktop width, contrast AA on every text colour.\\n\\n*(Demo office: no model was called and nothing was spent.)*'],
+  [/summari[sz]e|what changed/i, '**What changed in Recipe Box this week**\\n\\n- Search now matches ingredients as well as titles.\\n- The shopping list groups items by aisle.\\n- Two bugs fixed: duplicate tags on import, and a crash on empty recipes.\\n\\nNothing is waiting on you. *(Demo office: no model was called and nothing was spent.)*'],
 ];
 let queue = Promise.resolve(), buf = '';
 process.stdin.on('data', (d) => {
@@ -66,7 +66,7 @@ async function turn(text) {
   const hit = ANSWERS.find(([re]) => re.test(text));
   const answer = hit ? hit[1] : 'Done. *(Demo office: no model was called and nothing was spent.)*';
   say([{ type: 'text', text: answer }]);
-  out({ type: 'result', subtype: 'success', is_error: false, result: answer, session_id: sid, total_cost_usd: 0, num_turns: 3, duration_ms: 3200, usage });
+  out({ type: 'result', subtype: 'success', is_error: false, result: answer, session_id: sid, total_cost_usd: Number(process.env.AGENTOS_DEMO_COST) || 0, num_turns: 3, duration_ms: 3200, usage });
 }
 setInterval(() => {}, 1 << 30);
 }
@@ -104,7 +104,18 @@ async function main() {
     fs.mkdirSync(path.join(work, 'Projects', name), { recursive: true });
     fs.writeFileSync(path.join(work, 'Projects', name, 'README.md'), readme);
   }
-  fs.copyFileSync(path.join(office, 'roster.example.json'), path.join(office, 'roster.json'));
+  // The demo's lead looks only at the demo's own projects, never at the user's real folders or notes.
+  const roster = JSON.parse(fs.readFileSync(path.join(office, 'roster.example.json'), 'utf8'));
+  for (const d of Object.values(roster.roles)) {
+    if (d.handoffs) d.handoffs.projectsRoot = path.join(work, 'Projects');
+    if (d.team) delete d.team.router;
+  }
+  fs.writeFileSync(path.join(office, 'roster.json'), JSON.stringify(roster, null, 2));
+  // A handoff per project, as if earlier sessions had saved them.
+  fs.mkdirSync(path.join(office, 'teams', 'personal', 'projects'), { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  fs.writeFileSync(path.join(office, 'teams', 'personal', 'projects', 'recipe-box.md'), `# recipe-box — handoff\n\nUpdated ${today} by Renko.\n\n## Current state\n\nReact + SQLite recipe manager. Ingredient search and the aisle-grouped shopping list shipped this week; 42 tests pass.\n\n## Open / next\n1. A theme that follows the system setting.\n2. Import recipes from a URL.\n3. Prepare the 1.4 release.\n\n## Session log\n\n### ${today} · search and shopping list\nIngredient search, aisle grouping, two import bugs fixed.\n`);
+  fs.writeFileSync(path.join(office, 'teams', 'personal', 'projects', 'trail-log.md'), `# trail-log — handoff\n\nUpdated ${today} by Renko.\n\n## Current state\n\nGPS hikes on a Leaflet map with elevation charts. GPX import works; the chart lags on tracks over 10k points.\n\n## Open / next\n1. Downsample long tracks before charting.\n2. Offline map tiles.\n\n## Session log\n\n### ${today} · GPX import\nImport, map view, elevation chart.\n`);
   fs.writeFileSync(path.join(office, 'projects.json'), JSON.stringify([
     { name: 'Recipe Box', path: path.join(work, 'Projects', 'recipe-box'), department: 'personal-lead', description: 'A small recipe manager (React + SQLite).', keywords: ['recipe', 'recipes'], verify: ['test -f README.md'] },
     { name: 'Trail Log', path: path.join(work, 'Projects', 'trail-log'), department: 'personal-lead', description: 'GPS hikes on a map.', keywords: ['trail', 'hike'] },
@@ -144,6 +155,9 @@ async function main() {
   await sleep(3000);
   const plan = '1. Add theme variables for light and dark to `src/theme.css`.\n2. Follow the system theme with `prefers-color-scheme`, overridable in Settings.\n' +
     '3. Add the toggle to `src/settings.js` and remember the choice.\n4. Check both themes at phone and desktop width, and contrast on every text colour.';
+  // What the office remembers about Recipe Box.
+  await call(port, T, 'POST', '/api/projects/Recipe%20Box/memory', { kind: 'instruction', text: 'Use pnpm, never npm, in this repository.' });
+  await call(port, T, 'POST', '/api/projects/Recipe%20Box/memory', { kind: 'instruction', text: 'Keep the bundle under 200 kB; check with pnpm build before saying done.' });
   // A lesson waiting for review on Today, as if an earlier job had gone wrong.
   await call(port, T, 'POST', '/api/lessons', { agentId: 'personal-lead', text: 'Check layout changes at phone width before reporting them as done.' });
   // The plan call waits for your decision; once you approve (or reject) it, the stand-in finishes the dark-mode job.

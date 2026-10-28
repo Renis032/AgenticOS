@@ -103,7 +103,7 @@ sequenceDiagram
 | `lib/stop.sh` | `./agentos stop`: stops this office's server, refusing while agents work unless `-f` |
 | `public/os.html`, `public/ui/` | the window's page: styles in `os.css`, code in `os/*.js` (classic scripts sharing one scope, loaded in order) |
 | `app/agentos-window.py` | the native window, tray and notifications |
-| `scripts/` | office scripts agents call (`manifest.json`), plus development commands: `setup`, `demo`, `check-syntax`, `api-check`, `ui-check`, `agent-eval` |
+| `scripts/` | office scripts agents call (`manifest.json`), plus development commands: `setup`, `demo`, `screenshots`, `check-syntax`, `api-check`, `ui-check`, `agent-eval` |
 | `teams/<team>/` | per team, ignored by git: library pages, project handoffs, skills, and team-only scripts |
 | `data/` | runtime state, ignored by git: agents, jobs, events, memory, usage, backups, the app token |
 | `roster.json`, `projects.json` | your team and projects, ignored by git; created by `./agentos setup` from the `.example` files |
