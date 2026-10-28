@@ -35,7 +35,7 @@ APPS.brain = {
     root.innerHTML = `<div class="app brain"><div class="toolbar"><h1>Brain</h1>
         <div class="seg">${[['knowledge', 'Knowledge'], ['flow', 'Flow'], ['optimize', 'Optimize']].map(([k, l]) => `<button class="${B.tab === k ? 'on' : ''}" data-act="brainTab" data-tab="${k}">${l}<span class="bcount" id="bc-${k}"></span></button>`).join('')}</div>
         <span class="sp"></span><span id="brainTools"></span><button class="btn sm" data-act="brainRefresh" title="Rebuild from the latest data">${ic('reload')} Refresh</button></div>
-      <div class="brain-body"><div class="brain-main" id="brainMain"><div class="empty">Loading…</div></div><aside class="brain-side" id="brainSide"></aside></div></div>`;
+      <div class="brain-body"><div class="brain-main" id="brainMain">${skel(8)}</div><aside class="brain-side" id="brainSide"></aside></div></div>`;
     B.data = B.data || {};
     this.load();
   },
@@ -97,7 +97,7 @@ function sideSummary() {
 async function showNode(id) {
   const side = $('#brainSide');
   if (!side) return;
-  side.innerHTML = '<div class="hint">Loading…</div>';
+  side.innerHTML = skel(4);
   const d = await api('GET', `/api/brain/node?id=${encodeURIComponent(id)}`).catch((e) => ({ error: e.message }));
   if (S.brain.sel !== id || S.app !== 'brain') return;
   if (d.error) { side.innerHTML = `<div class="hint">${esc(d.error)}</div>`; return; }

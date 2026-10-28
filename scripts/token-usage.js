@@ -5,8 +5,6 @@ const readline = require('readline');
 const { parseArgs, fs, path } = require('./_util');
 
 const ROOT = path.join(os.homedir(), '.claude', 'projects');
-const BASE = { opus: 5, sonnet: 3, haiku: 1 };
-const tier = (m) => (/haiku/i.test(m) ? 'haiku' : /sonnet/i.test(m) ? 'sonnet' : 'opus');
 const est = (chars) => Math.round(chars / 4);
 const sizeOf = (c) => (typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((n, x) => n + (x.type === 'text' ? (x.text || '').length : x.type === 'image' ? 6000 : x.type === 'document' ? JSON.stringify(x).length / 10 : JSON.stringify(x).length), 0) : JSON.stringify(c || '').length);
 

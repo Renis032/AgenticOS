@@ -13,10 +13,13 @@ const pct = (x) => `${Math.round((x || 0) * 100)}%`;
 const pctFine = (x) => (x < 0.01 ? `${(x * 100).toFixed(1)}%` : `${Math.round(x * 100)}%`);
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(Math.round(n || 0)));
 const ACTIVE = ['running', 'delegating', 'queued'];
+// Placeholder shapes while something loads, instead of the word "Loading…": n grey lines of varied width.
+const skel = (n = 3, cls = '') => `<div class="skel ${cls}" aria-busy="true" aria-label="Loading">${Array.from({ length: n }, (_, i) => `<i style="width:${[92, 78, 85, 64, 88, 70][i % 6]}%"></i>`).join('')}</div>`;
 function md(src) {
   return String(src ?? '').split(/```[^\n]*\n?/).map((p, i) => {
     if (i % 2) return `<pre>${esc(p)}</pre>`;
     let h = esc(p).replace(/^#{1,4} (.*)$/gm, '<h4>$1</h4>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/(^|[\s(>])\*(\S(?:[^*\n]*?\S)?)\*(?=[\s).,;:!?<]|$)/gm, '$1<i>$2</i>')
       .replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/^\s*[-*] (.*)$/gm, '<li>$1</li>');
     h = h.replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
     return h.split(/\n{2,}/).map((x) => /^<(h4|ul|pre)/.test(x.trim()) ? x : `<p>${x.replace(/\n/g, '<br>')}</p>`).join('');
@@ -199,27 +202,30 @@ function tick() {
 }
 
 // ================================================================ chrome: top bar, dock, alert
+// The daily apps are always shown; Insights and Tools fold away (remembered per window) so the sidebar stays short.
 const APP_LIST = [
   { id: 'today', ic: 'home', name: 'Today', key: 'd', grp: 'Home' },
-  { id: 'brain', ic: 'brain', name: 'Brain', key: 'b' },
-  { id: 'processes', ic: 'processes', name: 'Processes', key: 'p', grp: 'System' },
   { id: 'jobs', ic: 'jobs', name: 'Jobs', key: 'j' },
   { id: 'newjob', ic: 'newjob', name: 'New job', key: 'n' },
-  { id: 'arms', ic: 'arms', name: 'ARMS', key: 'a', grp: 'ARMS' },
+  { id: 'projects', ic: 'projects', name: 'Projects', key: 'o' },
+  { id: 'brain', ic: 'brain', name: 'Brain', key: 'b' },
+  { id: 'processes', ic: 'processes', name: 'Processes', key: 'p' },
+  { id: 'usage', ic: 'usage', name: 'Usage', key: 'u', grp: 'Insights', fold: true },
+  { id: 'tokens', ic: 'tokens', name: 'Tokens', key: 'k' },
+  { id: 'health', ic: 'health', name: 'Health', key: 'h' },
+  { id: 'review', ic: 'review', name: 'Review', key: 'v', external: '/review' },
+  { id: 'recos', ic: 'recos', name: 'Recos', key: 'c' },
+  { id: 'arms', ic: 'arms', name: 'ARMS', key: 'a', grp: 'Tools', fold: true },
   { id: 'skills', ic: 'skills', name: 'Skills', key: 's' },
   { id: 'routines', ic: 'routines', name: 'Routines', key: 'r' },
-  { id: 'recos', ic: 'recos', name: 'Recos', key: 'c' },
-  { id: 'review', ic: 'review', name: 'Review', key: 'v', external: '/review' },
-  { id: 'projects', ic: 'projects', name: 'Projects', key: 'o', grp: 'Workspace' },
   { id: 'messages', ic: 'messages', name: 'Messages', key: 'm' },
   { id: 'memory', ic: 'memory', name: 'Memory', key: 'y' },
   { id: 'library', ic: 'library', name: 'Library', key: 'l' },
   { id: 'terminal', ic: 'terminal', name: 'Terminal', key: 't' },
-  { id: 'usage', ic: 'usage', name: 'Usage', key: 'u' },
-  { id: 'tokens', ic: 'tokens', name: 'Tokens', key: 'k' },
-  { id: 'health', ic: 'health', name: 'Health', key: 'h' },
   { id: 'settings', ic: 'teams', name: 'Teams & roles', key: 'e' },
 ];
+function groupOf(i) { for (let j = i; j >= 0; j--) if (APP_LIST[j].grp) return APP_LIST[j].grp; return null; }
+function navOpen() { return new Set(prefObj('navOpen') || []); }
 function windowOf(k) { return (S.limits && S.limits.windows && S.limits.windows[k]) || null; }
 const live = (w) => (w.resetsAt && w.resetsAt < Date.now() ? 0 : w.utilization || 0);
 const meterColor = (u) => (u >= 0.85 ? 'var(--fail)' : u >= 0.7 ? 'var(--stop)' : 'var(--done)');
@@ -229,8 +235,18 @@ function renderChrome() {
   const openJobs = Object.values(S.tickets).filter((t) => ['open', 'paused'].includes(t.status));
   const asks = Object.values(S.tickets).filter(needsYou).length;
   const unread = Object.values(S.tickets).filter(isUnread).length;
-  const badges = { skills: S.skPending ? [`${S.skPending} new`, 'ask'] : null, processes: running ? [running, 'run'] : null, jobs: asks ? [`${asks} ?`, 'ask'] : unread ? [`${unread} new`, 'run'] : openJobs.length ? [openJobs.length, 'run'] : null };
-  $('#nav').innerHTML = APP_LIST.map((x) => `${x.grp ? `<div class="dock-sec">${x.grp}</div>` : ''}<div class="app-link ${S.app === x.id ? 'on' : ''}" data-act="app" data-app="${x.id}" data-tip="${esc(x.name)} · ${esc(x.key)}"><span class="ic">${ic(x.ic)}</span><span class="lbl">${esc(x.name)}</span>${badges[x.id] ? `<span class="bd ${badges[x.id][1]}">${badges[x.id][0]}</span>` : ''}</div>`).join('');
+  const badges = { skills: S.skPending ? [`${S.skPending} new`, 'ask'] : null, processes: running ? [running, 'run'] : null, jobs: asks ? [`${asks}<span class="bdl"> need${asks === 1 ? 's' : ''} you</span>`, 'ask'] : unread ? [`${unread} new`, 'run'] : openJobs.length ? [openJobs.length, 'run'] : null };
+  const open = navOpen();
+  let grp = null;
+  const groupBadge = (g) => APP_LIST.some((x, i) => badges[x.id] && groupOf(i) === g);
+  $('#nav').innerHTML = APP_LIST.map((x, i) => {
+    if (x.grp) grp = x;
+    const folded = grp && grp.fold && !open.has(grp.grp) && S.app !== x.id;
+    const head = !x.grp ? '' : x.fold
+      ? `<button class="dock-sec fold ${open.has(x.grp) ? 'open' : ''}" data-act="navFold" data-grp="${esc(x.grp)}" aria-expanded="${open.has(x.grp)}">${esc(x.grp)}<span class="chev" aria-hidden="true">›</span>${!open.has(x.grp) && groupBadge(x.grp) ? '<span class="gdot" title="Something here needs a look"></span>' : ''}</button>`
+      : `<div class="dock-sec">${esc(x.grp)}</div>`;
+    return `${head}<div class="app-link ${S.app === x.id ? 'on' : ''} ${folded ? 'folded' : ''}" data-act="app" data-app="${x.id}" data-tip="${esc(x.name)} · ${esc(x.key)}" role="link" aria-label="${esc(x.name)}"><span class="ic">${ic(x.ic)}</span><span class="lbl">${esc(x.name)}</span>${badges[x.id] ? `<span class="bd ${badges[x.id][1]}">${badges[x.id][0]}</span>` : ''}</div>`;
+  }).join('');
   $('#meters').innerHTML = ['five_hour', 'seven_day'].map((k) => { const w = windowOf(k); if (!w) return ''; const u = live(w); return `<span class="meter" data-act="app" data-app="usage" title="${k === 'five_hour' ? '5-hour' : 'Weekly'} limit${w.resetsAt ? ', resets ' + whenAt(w.resetsAt) : ''}"><span class="lbl">${k === 'five_hour' ? '5h' : 'week'}</span><i><b style="width:${Math.min(100, u * 100)}%;background:${meterColor(u)}"></b></i><span>${pct(u)}</span></span>`; }).join('');
   $('#hdot').className = 'dot ' + (S.health ? S.health.level : '');
   renderTitlebar(running, openJobs.length);

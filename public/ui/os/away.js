@@ -35,7 +35,7 @@ function renderAway(d) {
   ];
   $('#awayBody').innerHTML = `<header><div><h2>While you were away</h2><div class="hint">Since ${esc(new Date(d.since).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }))} · ${dur(Date.now() - d.since)}</div></div><button class="btn sm" data-act="awayClose" title="Close (Esc)">${ic('close')}</button></header>
     <div class="awbody">
-      ${sec('bell', 'Waiting for you', d.need.length, d.need.slice(0, 6).map((t) => row(t, `<span class="pill s-paused">${why(t)}</span>`)).join('') + more(d.need, 6))}
+      ${sec('bell', 'Waiting for you', d.need.length, d.need.slice(0, 6).map((t) => row(t, `<span class="pill s-ask">${why(t)}</span>`)).join('') + more(d.need, 6))}
       ${sec('check', 'Finished', d.done.length, d.done.slice(0, 6).map((t) => row(t, `<span class="hint">${money(t.costUsd)} · ${ago(t.closedAt)}</span>`)).join('') + more(d.done, 6))}
       ${sec('stop', 'Not finished', d.failed.length, d.failed.slice(0, 6).map((t) => row(t, pill(t.status))).join('') + more(d.failed, 6))}
       ${sec('teams', 'Team changes', people.length, people.slice(0, 8).join('') + more(people, 8))}

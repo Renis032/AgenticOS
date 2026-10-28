@@ -1,48 +1,110 @@
 # Agentic OS
 
-A permanent team of Claude agents, run like an operating system: every agent is a process in one live tree, every task
-is a job. A desktop app for Ubuntu (GTK + WebKitGTK window over a local Node backend, no npm install), using your Claude
-Code login. Everything runs on this computer.
+[![CI](https://github.com/Renis032/AgenticOS/actions/workflows/ci.yml/badge.svg)](https://github.com/Renis032/AgenticOS/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node.js 18+](https://img.shields.io/badge/node-%3E%3D18-339933)
+![Platform: Ubuntu](https://img.shields.io/badge/platform-Ubuntu-E95420)
+![No runtime dependencies](https://img.shields.io/badge/runtime%20dependencies-0-brightgreen)
+
+**A permanent team of Claude agents, run like an operating system.** Every agent is a process in one live tree, every
+task is a job, and the team remembers what it learned. A desktop app for Ubuntu over a local Node backend, using your
+Claude Code login. Everything runs on your computer.
 
 ![Today: what needs you, who is working, what finished](docs/screenshots/today.png)
 
-## Getting started
+## Why
 
-You need Node.js, [Claude Code](https://claude.com/claude-code) logged in (`claude` on your `PATH`), and for the window
-`python3-gi` and `gir1.2-webkit2-4.0` (`sudo apt install python3-gi gir1.2-webkit2-4.0`).
+A single chat forgets everything when it ends, does all the work on the most expensive model, and you can't see what
+it's doing or what it costs. Agentic OS gives you a standing team instead:
 
+- **Leads that keep their memory.** Each lead owns an area (your day job, your personal projects…), keeps notes and a
+  team library, and picks up a project where its last session ended.
+- **Work goes to the right place.** A dispatcher (or plain routing rules, for free) hands each job to the lead who owns
+  it; leads hire specialists for parallel or long work.
+- **You stay in control.** Big jobs start with a plan and a cost estimate you approve; terminal commands and edits
+  outside a job's project ask first; nothing is ever committed or pushed for you.
+- **It gets cheaper and better on its own.** Mechanical work goes through exact, free scripts instead of the model;
+  the model and effort for each task are chosen by expected value; failed or reworked jobs turn into lessons.
+
+## Features
+
+- **Jobs** with live progress, per-job cost, follow-ups, plans, questions and terminal-command approvals, notifications
+  and reminders when something needs you
+- **Processes**: every agent as a process with model, effort, state, current job, activity and cost
+- **Brain**: everything the agents know (memories, libraries, skills, handoffs, projects) as one searchable graph,
+  plus how jobs flow and what to improve
+- **Projects**: where each personal project stands, with one-click *Continue*
+- **Ask the office** (Ctrl+J): "what did Renko do yesterday?", "why did #37 cost $22?", answered from your own jobs,
+  memories and libraries for under a cent
+- **Usage limits** respected automatically: work is held, resumed or scheduled around your plan's windows
+- **Undo** for every file an agent changed, per job
+- **Self-tests**: an API check and a window check that run on a throwaway office and spend nothing, and an agent eval
+  that checks the agents still follow the rules after their instructions change
+
+## Try it in 30 seconds
+
+```bash
+git clone https://github.com/Renis032/AgenticOS.git ~/agent-workplace && cd ~/agent-workplace
+./agentos demo
 ```
-git clone <this repo> ~/agent-workplace && cd ~/agent-workplace
-./agentos                      # first run creates roster.json and projects.json from the .example files
+
+The demo opens a throwaway office with made-up projects and stand-in agents. It needs no Claude account and spends
+nothing. Approve the plan on the waiting job to watch it finish, and see a second Renko desk take a job while Renko
+is busy. Close the window and the demo is gone.
+
+## Install
+
+You need Ubuntu (or another Linux with GTK), **Node.js 18+**, **[Claude Code](https://claude.com/claude-code)** logged
+in (`claude` on your `PATH`), and for the window `sudo apt install python3-gi gir1.2-webkit2-4.0`. Nothing to
+`npm install`: the app has no dependencies.
+
+```bash
+./agentos          # first run: a short setup (checks what's missing, asks where your projects live), then the window
 ```
 
-Then edit `projects.json` so it lists your own projects (name, folder, which lead owns it, a few keywords for routing),
-and `roster.json` if you want other teams or defaults. Both stay on your machine: git ignores them, along with `data/`
-(jobs, conversations, logs) and `teams/` (each team's library, skills and project handoffs).
+Setup writes `roster.json` (your team) and `projects.json` (your projects). Both stay on your machine: git ignores
+them, along with `data/` (jobs, conversations, logs) and `teams/` (each team's library, skills and project handoffs).
+Run `./agentos setup` again any time.
 
-```
-./agentos                      # start the server if needed and open the window
+```bash
 ./agentos status               # is it running, how many processes and jobs
 ./agentos restart --when-idle  # finish running work, check the new version, then restart; the window reloads
-./agentos restart              # restart now (interrupts running work)
 ./agentos stop [-f]            # stop; refuses while agents work unless -f
 ./agentos install              # add it to the applications menu (uninstall removes it)
+./agentos autostart on         # start at login, in the tray
 ```
 
 ## Day to day
 
 - **Start a job**: `N` (or Ctrl+N), write the task, pick a project or let routing decide. Name a personal project
-  (e.g. "continue DianisCommunication") and Renko starts from where its last chat ended.
+  (e.g. "continue recipe-box") and the lead starts from where its last chat ended.
 - **Talk to it** in the job: Enter sends; ↑ in the empty box takes back a message the agent hasn't picked up yet.
   The strip under the conversation shows who is working on what and what it has cost so far.
 - **When an agent needs you** (a question, a plan, a command to run) the job says *needs you*, you get a notification,
   and reminders follow if it waits. Plans under an amount you choose can be approved automatically.
-- **Brain** (`B`) shows everything the agents know as a graph, how jobs flow through the office, and what to improve.
-- **Today** (`D`, the start page) shows what needs you, what's running and what finished; **Projects** (`O`) where every
-  personal project stands; **Skills** the skills your agents propose.
-- **In the background**: close the window while jobs run and it waits in the tray; `./agentos autostart on` starts it at login.
-- **Preferences**: Ctrl+, (theme, notifications, sending, terminal commands, plan approval, reminders…).
+- **Brain** (`B`), **Today** (`D`, the start page), **Projects** (`O`), **Skills**, and **Preferences** (Ctrl+,).
+- **In the background**: close the window while jobs run and it waits in the tray.
 - **What a job cost and why**: `node scripts/job-cost.js 28`.
+
+## How it works
+
+```mermaid
+flowchart LR
+  you([You]) --> win[Window<br/>WebKitGTK]
+  win -- token-protected HTTP --> srv[Node server<br/>jobs · state · limits]
+  srv -- routing rules --> lead
+  srv -- no rule matched --> god[God<br/>dispatcher, Haiku]
+  god -- assign --> lead[Leads<br/>one long-running claude each]
+  lead -- delegate --> staff[Specialists<br/>started per task]
+  lead & staff -- office tools over MCP --> srv
+  lead & staff -- hook on every tool call --> srv
+  lead & staff --> files[(Your projects)]
+```
+
+Each agent is a real `claude` process speaking stream-json. The office gives them its own tools over MCP (delegate,
+plans, questions, scripts, memory, team library) and a hook on every tool call that saves files before edits (for
+undo), redirects mechanical shell commands to scripts, and delivers mail between agents. More in
+[docs/architecture.md](docs/architecture.md).
 
 ## Screenshots
 
@@ -57,16 +119,41 @@ The light theme follows the system or can be picked in Preferences:
 
 ![A finished job in the light theme](docs/screenshots/jobs-light.png)
 
-The screenshots come from a throwaway demo office (example roster, made-up projects, a stand-in for `claude` that
-spends nothing), captured in the same WebKitGTK engine as the window with `scripts/ui-check-driver.py`.
+## Privacy and safety
+
+- The backend listens only on `127.0.0.1` and answers only requests carrying the app token (`data/app-token`, readable
+  only by you).
+- Your jobs, conversations, memories and configuration never leave your computer except as prompts to Claude through
+  your own Claude Code login.
+- Agents edit only inside the job's project (other folders ask first), run terminal commands only as you allow, and
+  never commit or push. Every change can be undone per job.
+
+See [SECURITY.md](SECURITY.md) for the full picture and how to report a problem.
 
 ## Documentation
 
 | Page | What's in it |
 |---|---|
-| [The brain](docs/brain.md) | the knowledge graph, the decision flow and the optimizer, with every rule and number explained |
-| [The window and its apps](docs/window.md) | the title bar, menus, Preferences, and every app (Processes, Jobs, Projects…) |
+| [Architecture](docs/architecture.md) | the parts, how a job flows through them, and where each piece of code lives |
 | [Agents and jobs](docs/agents.md) | who works here, how jobs flow, models, plans, terminal commands, skills, handoffs, libraries |
+| [The window and its apps](docs/window.md) | the title bar, menus, Preferences, and every app (Processes, Jobs, Projects…) |
+| [The brain](docs/brain.md) | the knowledge graph, the decision flow and the optimizer, with every rule and number explained |
 | [Scripts](docs/scripts.md) | the scripts agents use instead of doing mechanical work by hand |
 | [ARMS](docs/arms.md) | apps, routines, memory and skills from the ARMS guide |
-| [Operations](docs/operations.md) | usage limits, costs, restarting and checks, tray and autostart, git and development |
+| [Operations](docs/operations.md) | usage limits, costs, restarting and checks, tray and autostart, backups |
+
+## Development
+
+```bash
+npm install        # development tools only (ESLint)
+npm test           # syntax of every file + the API check on a throwaway office (seconds, nothing spent)
+npm run lint
+npm run test:ui    # clicks through the whole window on a virtual screen (about 45 s, needs Xvfb)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout, conventions and how to send a change, and
+[CHANGELOG.md](CHANGELOG.md) for what changed in each version.
+
+## License
+
+[MIT](LICENSE) © 2026 Renis Myumyun

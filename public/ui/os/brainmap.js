@@ -1,4 +1,5 @@
 'use strict';
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
 // The brain map: the knowledge graph on a flat plane, each node drawn as a sprite (no libraries): a coloured badge with
 // the kind's icon, the same artwork as the legend (spriteSvg in brain.js), rasterised once per kind. Leads wear a gold
 // ring; a dashed gold outline means "carried in every call". Sprites pop in on open and grow when hovered.
@@ -130,10 +131,11 @@ const BrainMap = (() => {
     const N = st.live;
     if (st.drag) st.alpha = 1; // a held node pulls its neighbours at full strength
     const alpha = st.alpha;
-    // Cooling follows the clock, not the frame rate: alpha halves every 0.6 s.
+    // Cooling follows the clock, not the frame rate: alpha halves every 0.6 s (every 0.08 s with reduced motion, so the
+    // layout settles almost at once).
     const t = performance.now(), dt = Math.min(250, t - (st.lastStep || t));
     st.lastStep = t;
-    st.alpha = st.alpha < 0.003 ? 0 : st.alpha * Math.pow(0.5, dt / 600);
+    st.alpha = st.alpha < 0.003 ? 0 : st.alpha * Math.pow(0.5, dt / (REDUCED_MOTION.matches ? 80 : 600));
     for (const n of N) { n.ox = n.vx; n.oy = n.vy; }
     for (let i = 0; i < N.length; i++) {
       const a = N[i];
@@ -261,7 +263,7 @@ const BrainMap = (() => {
     if (!st || !st.canvas || !document.body.contains(st.canvas)) { if (st && st.canvas) stop(); return; }
     const now = performance.now();
     if (st.cam) {
-      const t = Math.min(1, (now - st.cam.t0) / 450), e = 1 - Math.pow(1 - t, 3), { from, to } = st.cam;
+      const t = REDUCED_MOTION.matches ? 1 : Math.min(1, (now - st.cam.t0) / 450), e = 1 - Math.pow(1 - t, 3), { from, to } = st.cam;
       st.k = from.k + (to.k - from.k) * e; st.px = from.px + (to.px - from.px) * e; st.py = from.py + (to.py - from.py) * e;
       if (t >= 1) st.cam = null;
     }

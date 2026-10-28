@@ -13,7 +13,7 @@ APPS.jobs = {
   },
   update() {
     const q = S.jq.toLowerCase().split(/\s+/).filter(Boolean);
-    const all = Object.values(S.tickets).sort((a, b) => needsYou(b) - needsYou(a) || b.createdAt - a.createdAt);
+    const all = Object.values(S.tickets).filter((t) => !(S.hiddenJobs && S.hiddenJobs.has(t.id))).sort((a, b) => needsYou(b) - needsYou(a) || b.createdAt - a.createdAt);
     const arch = all.filter((t) => t.archived).length;
     const list = all.filter((t) => (S.showArchived || !t.archived || t.id === S.job) && q.every((w) => [t.title, t.text, t.answer || '', '#' + t.n, t.project || ''].join(' ').toLowerCase().includes(w)));
     $('#jcount').textContent = `${list.length} job${list.length === 1 ? '' : 's'}`;
@@ -23,12 +23,21 @@ APPS.jobs = {
       const team = Object.values(S.agents).filter((a) => (a.tickets || []).includes(t.id)).length;
       const unread = isUnread(t);
       return `<div class="jl ${S.job === t.id ? 'on' : ''} ${unread ? 'unread' : ''}" data-act="openJob" data-id="${t.id}"><div class="t1">${unread ? '<span class="newdot" title="New reply"></span>' : ''}<span class="n">#${t.n}</span><span class="t">${esc(t.title)}</span>${jobPill(t)}</div>
-        <div class="meta">${t.waiting ? '<span class="pill s-paused">needs your answer</span>' : ''}${t.plan && t.plan.status === 'pending' ? '<span class="pill s-delegating">plan needs OK</span>' : ''}${t.overBudget && t.status === 'open' ? '<span class="pill s-paused">budget stop</span>' : ''}${t.status === 'scheduled' ? `starts ${whenAt(t.scheduledFor)} · ` : ''}${people.map((a) => esc(a.persona)).join(', ') || 'routing'}${team ? ` +${team}` : ''} · ${money(t.costUsd)}${(t.changes || []).length ? ` · ${t.changes.length} file${t.changes.length === 1 ? '' : 's'}` : ''} · ${ago(t.createdAt)}${t.rating ? (t.rating.score > 0 ? ' · 👍' : ' · 👎') : ''}</div>${t.answer && t.status !== 'open' && pref('previews', '1') === '1' ? `<div class="prev">${esc(short(plainText(t.answer), 140))}</div>` : ''}</div>`;
-    }).join('') || '<div class="empty">No jobs.</div>';
+        ${listProgress(t)}<div class="meta">${t.waiting ? '<span class="pill s-ask">needs your answer</span>' : ''}${t.plan && t.plan.status === 'pending' ? '<span class="pill s-delegating">plan needs OK</span>' : ''}${t.overBudget && t.status === 'open' ? '<span class="pill s-paused">budget stop</span>' : ''}${t.status === 'scheduled' ? `starts ${whenAt(t.scheduledFor)} · ` : ''}${people.map((a) => esc(a.persona)).join(', ') || 'routing'}${team ? ` +${team}` : ''} · ${money(t.costUsd)}${(t.changes || []).length ? ` · ${t.changes.length} file${t.changes.length === 1 ? '' : 's'}` : ''} · ${ago(t.createdAt)}${t.rating ? (t.rating.score > 0 ? ` · ${thumb(true)}` : ` · ${thumb(false)}`) : ''}</div>${t.answer && t.status !== 'open' && pref('previews', '1') === '1' ? `<div class="prev">${esc(short(plainText(t.answer), 140))}</div>` : ''}</div>`;
+    }).join('') || (q.length ? '<div class="empty">No jobs match your search.</div>'
+      : `<div class="empty welcome"><b>No jobs yet.</b><div>Ask your team for anything: a bug to fix, a feature, research, a summary.</div><div class="row" style="justify-content:center"><button class="btn pri sm" data-act="app" data-app="newjob">Start a job</button><button class="btn sm" data-act="tour">Take the 1-minute tour</button></div></div>`);
     $('#jobsWrap').classList.toggle('withjob', !!S.job);
     renderJob();
   },
 };
+// A thin bar and "step 3 of 5" under a job in the list while an approved plan is being worked through.
+function listProgress(t) {
+  if (t.status !== 'open' || !t.plan || !['approved', 'changed'].includes(t.plan.status)) return '';
+  const steps = planSteps(t.plan.text);
+  if (steps.length < 2) return '';
+  const cur = Math.min(steps.length, t.plan.step || 0);
+  return `<div class="lprog" title="${esc(cur ? `Step ${cur}: ${steps[cur - 1]}` : 'Plan approved, starting')}"><b class="trk"><i style="width:${Math.round(((cur ? cur - 0.5 : 0) / steps.length) * 100)}%"></i></b><span>${cur ? `step ${cur} of ${steps.length}` : `${steps.length}-step plan`}</span></div>`;
+}
 function jobTree(t) {
   const nodes = new Map();
   const add = (id, parent, why, at, choice) => { if (!S.agents[id] || nodes.has(id)) return; nodes.set(id, { id, parent, why, at, choice, kids: [] }); };
@@ -71,7 +80,7 @@ function jobTreeHtml(t, tl, at) {
 }
 function fileUrl(p) { return '/api/uploads/' + p.split('/uploads/')[1].split('/').map(encodeURIComponent).join('/'); }
 const isImg = (p) => /\.(png|jpe?g|gif|webp)$/i.test(p);
-function fileChip(p, removable) { return `<span class="file">${isImg(p) ? `<img src="${fileUrl(p)}" alt="">` : '📄'}<a href="${fileUrl(p)}" target="_blank" rel="noopener">${esc(p.split('/').pop())}</a>${removable ? `<span class="x" data-act="unfile" data-path="${esc(p)}">✕</span>` : ''}</span>`; }
+function fileChip(p, removable) { return `<span class="file">${isImg(p) ? `<img src="${fileUrl(p)}" alt="">` : ic('file')}<a href="${fileUrl(p)}" target="_blank" rel="noopener">${esc(p.split('/').pop())}</a>${removable ? `<span class="x" data-act="unfile" data-path="${esc(p)}">✕</span>` : ''}</span>`; }
 // What you and the leads say stays in view; the work between (assignments, reports, teammates talking, system notes) folds into one line.
 const FOREGROUND = ['user', 'followup', 'answer', 'question', 'reply', 'plan', 'plandecision', 'rating', 'command', 'access'];
 function threadHtml(t, upTo) {
@@ -82,7 +91,7 @@ function threadHtml(t, upTo) {
     const k = `${t.id}:${grp[0].t}`;
     const people = [...new Set(grp.map((e) => e.from).filter((f) => f && !['system', 'user', 'script'].includes(f)))].map(who);
     const span = grp[grp.length - 1].t - grp[0].t;
-    out.push(`<details class="bg" ${(pref('bgOpen', '0') === '1') !== S.openGroups.has(k) ? 'open' : ''}><summary data-act="bgGroup" data-k="${esc(k)}">Behind the scenes · ${grp.length} step${grp.length === 1 ? '' : 's'}${people.length ? ` · ${esc(people.join(', '))}` : ''}${span >= 1000 ? ` · ${dur(span)}` : ''}</summary>${entryHtml(grp, t)}</details>`);
+    out.push(`<details class="bg" ${(pref('bgOpen', '0') === '1') !== S.openGroups.has(k) ? 'open' : ''}><summary data-act="bgGroup" data-k="${esc(k)}"><b>${esc(people.length ? (people.length > 3 ? `${people.slice(0, 3).join(', ')} +${people.length - 3}` : people.join(', ')) : 'The office')}</b> worked${span >= 1000 ? ` ${dur(span)}` : ''} · ${grp.length} step${grp.length === 1 ? '' : 's'} <span class="hint">behind the scenes</span></summary>${entryHtml(grp, t)}</details>`);
     grp = [];
   };
   for (const e of t.thread.filter((x) => !upTo || x.t <= upTo)) {
@@ -99,7 +108,7 @@ function commandHtml(e, t) {
   return `<div class="ev cmd st-${esc(c.status.replace(' ', '-'))}"><div class="h">${esc(who(e.from))} · terminal · <span class="cst">${esc(CMD_STATE[c.status] || c.status)}${c.exitCode != null && c.status !== 'done' ? ` (exit ${c.exitCode})` : ''}${took}</span><span class="ts">${clock(e.t)}</span></div>
     <div class="cmdline"><span class="pr">$</span><code>${esc(c.command)}</code><button class="copy" data-act="copyCmd" data-cid="${esc(c.id || '')}" title="Copy the command">Copy</button></div>
     <div class="hint">in ${esc(String(c.cwd || '').replace(/^\/home\/[^/]+/, '~'))}${c.reason ? ` · ${esc(c.reason)}` : ''}${c.known ? ' · ran without asking: it worked before in this folder' : ''}${c.note ? ` · you said: “${esc(c.note)}”` : ''}</div>
-    ${c.status === 'pending' ? `<div class="row"><button class="btn pri sm" data-act="cmdRun" data-cid="${c.id}">Run</button><button class="btn sm" data-act="cmdAll" data-cid="${c.id}" title="Run this and every later command on this job without asking">Run all on this job</button><button class="btn sm danger" data-act="cmdDeny" data-cid="${c.id}">Don't run</button></div>` : ''}
+    ${c.status === 'pending' ? `<div class="hint wait-below">Waiting for your OK in <b>Needs you</b>, below.</div>` : ''}
     ${c.status === 'running' ? `<div class="row"><span class="dots"><i></i><i></i><i></i></span><button class="btn sm danger" data-act="cmdStop" data-cid="${c.id}">Stop</button></div>` : ''}
     ${out || c.status === 'running' ? `<pre class="cmdout" id="cmdo-${c.id}">${esc(out)}</pre>` : ''}</div>`;
 }
@@ -110,7 +119,7 @@ function entryHtml(list, t) {
     if (e.kind === 'access') {
       const r = ((t && t.access) || []).find((x) => x.id === e.aid) || { status: 'denied', folder: e.text };
       return `<div class="ev cmd st-${r.status === 'pending' ? 'pending' : r.status === 'allowed' ? 'done' : 'failed'}"><div class="h">${esc(who(e.from))} · edit access · <span class="cst">${r.status === 'pending' ? 'waiting for your OK' : r.status}</span>${ts}</div>
-        <div class="cmdline"><span class="pr">📁</span><code>${esc(String(r.folder).replace(/^\/home\/[^/]+/, '~'))}</code></div>${r.reason ? `<div class="hint">${esc(r.reason)}</div>` : ''}
+        <div class="cmdline"><span class="pr">${ic('projects')}</span><code>${esc(String(r.folder).replace(/^\/home\/[^/]+/, '~'))}</code></div>${r.reason ? `<div class="hint">${esc(r.reason)}</div>` : ''}
         ${r.status === 'pending' ? `<div class="row"><button class="btn pri sm" data-act="accessDecide" data-id="${r.id}" data-d="allow">Allow on this job</button><button class="btn sm danger" data-act="accessDecide" data-id="${r.id}" data-d="deny">Don't allow</button></div>` : ''}</div>`;
     }
     const files = (e.attachments || []).length ? `<div class="files">${e.attachments.map((p) => fileChip(p)).join('')}</div>` : '';
@@ -123,13 +132,13 @@ function entryHtml(list, t) {
       case 'report': return `<div class="ev report"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))} · report${ts}</div><details><summary>read</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
       case 'chat': return `<div class="ev chat"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))}${e.ask ? ' · question' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'note': return `<div class="ev"><div class="h">${esc(who(e.from))}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
-      case 'answer': return `<div class="ev answer"><div class="h">${esc(who(e.from))} · answer${t && !t.rating && ['done', 'failed', 'interrupted'].includes(t.status) && e === [...t.thread].reverse().find((x) => x.kind === 'answer') ? `<span class="quickrate"><button class="xbtn" data-act="rate" data-s="1" title="Good answer">👍</button><button class="xbtn" data-act="rate" data-s="-1" title="Not what I needed">👎</button></span>` : ''}${t && t.rework ? '<span class="hint"> · followed up</span>' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
+      case 'answer': return `<div class="ev answer"><div class="h">${esc(who(e.from))} · answer${t && !t.rating && ['done', 'failed', 'interrupted'].includes(t.status) && e === [...t.thread].reverse().find((x) => x.kind === 'answer') ? `<span class="quickrate"><button class="xbtn" data-act="rate" data-s="1" title="Good answer">${thumb(true)}</button><button class="xbtn" data-act="rate" data-s="-1" title="Not what I needed">${thumb(false)}</button></span>` : ''}${t && t.rework ? '<span class="hint"> · followed up</span>' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'question': return `<div class="ev question"><div class="h">${esc(who(e.from))} asks you${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'reply': return `<div class="ev reply"><div class="h">You → ${esc(who(e.to))}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'plan': return `<div class="ev plan"><div class="h">${esc(who(e.from))} · plan · est. ${money(e.estimateUsd)}${ts}</div><details><summary>read the plan</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
       case 'plandecision': if (e.auto) return `<div class="line-ev">Plan ${esc(e.auto)} · ${clock(e.t)}</div>`;
         return `<div class="line-ev">You ${e.decision === 'rejected' ? 'rejected' : e.decision === 'changed' ? 'approved with changes' : 'approved'} the plan${e.text ? `: “${esc(e.text)}”` : ''} · ${clock(e.t)}</div>`;
-      case 'rating': return `<div class="line-ev">You rated this ${e.score > 0 ? '👍' : '👎'}${e.text ? `: “${esc(e.text)}”` : ''} · ${clock(e.t)}</div>`;
+      case 'rating': return `<div class="line-ev">You rated this ${e.score > 0 ? thumb(true) : thumb(false)}${e.text ? `: “${esc(e.text)}”` : ''} · ${clock(e.t)}</div>`;
       default: return `<div class="line-ev">${esc(e.text || '')} · ${clock(e.t)}</div>`;
     }
   }).join('');
@@ -147,7 +156,7 @@ function jobLiveHtml(t) {
     const inbox = queuedOn(t);
     if (!inbox) return '';
     const on = agentJob(inbox);
-    return `<div class="r"><span class="dots wait"><i></i><i></i><i></i></span><b>${esc(inbox.persona)}</b><span class="act">${inbox.status === 'offline' ? 'is restarting, then picks this up' : on ? `finishes #${on.n} first, then picks this up` : 'picks this up next'}</span></div>`;
+    return `<div class="r"><span class="dots wait"><i></i><i></i><i></i></span><b>${esc(inbox.persona)}</b><span class="act">${inbox.status === 'offline' ? 'is restarting, then picks this up' : on ? `finishes <a data-act="openJob" data-id="${on.id}">#${on.n} “${esc(short(on.title, 50))}”</a> first${t.queue && t.queue.position > 1 ? ` (${t.queue.position - 1} more ahead)` : ''}, then picks this up. Your message is safe.` : 'picks this up next'}</span></div>`;
   }
   const asked = [...t.thread].reverse().find((e) => ['user', 'followup', 'reply'].includes(e.kind));
   const spent = (t.costUsd || 0) + busy.reduce((sum, a) => sum + (a.liveUsd || 0), 0);
@@ -191,7 +200,7 @@ const isUnread = (t) => !t.archived && lastReplyAt(t) > (S.seen[t.id] || 0) && !
 function markSeen(t) { if (lastReplyAt(t) > (S.seen[t.id] || 0)) { S.seen[t.id] = Date.now(); setPref('seen', JSON.stringify(S.seen)); } }
 function jobPill(t) {
   if (t.status !== 'open') return pill(t.status);
-  if (needsYou(t)) return pill('paused', 'needs you');
+  if (needsYou(t)) return pill('ask', 'needs you');
   if (busyOn(t).length) return pill('running', 'working');
   return pill('queued', queuedOn(t) ? 'queued' : 'waiting');
 }
@@ -223,6 +232,8 @@ async function getTimeline(t) {
   S.timeline[t.id] = { at: Date.now(), data: d };
   return d;
 }
+const diffHtml = (text) => esc(text || '').split('\n').map((l) => (l.startsWith('@@') ? `<span class="hh">${l}</span>` : l.startsWith('+') && !l.startsWith('+++') ? `<span class="a">${l}</span>` : l.startsWith('-') && !l.startsWith('---') ? `<span class="d">${l}</span>` : l + '\n')).join('');
+// What changed, right in the conversation: one line per file that opens to its diff.
 function changesCard(t) {
   const n = (t.changes || []).length;
   if (!n) return '';
@@ -239,7 +250,8 @@ function changesCard(t) {
   const names = files.slice(0, 4).map((x) => `<code class="fref" data-act="openFile" data-p="${esc(x.path)}" title="${esc(x.path)}">${esc(x.path.split('/').pop())}</code>`).join(' ');
   const more = files.length > 4 ? ` +${files.length - 4} more` : '';
   const nums = live ? ` · <span class="a">+${live.reduce((s2, x) => s2 + x.added, 0)}</span> <span class="d">−${live.reduce((s2, x) => s2 + x.removed, 0)}</span>` : '';
-  return `<div class="chgcard"><b>Changed ${files.length} file${files.length === 1 ? '' : 's'}</b>${nums} · ${names}${more}<span style="flex:1"></span><a data-act="jtab" data-tab="changes">view changes</a>${live && live.length ? ' · <a data-act="revert" data-path="">undo all</a>' : ''}</div>`;
+  const inline = live ? live.slice(0, 8).map((x) => `<details class="idiff"><summary><code title="${esc(x.path)}">${esc(x.path.replace(/^\/home\/[^/]+/, '~'))}</code> <span class="a">+${x.added}</span> <span class="d">−${x.removed}</span>${x.state === 'added' ? ' <span class="hint">new file</span>' : x.state === 'deleted' ? ' <span class="hint">deleted</span>' : ''}</summary>${x.diff ? `<pre class="diff">${diffHtml(x.diff)}</pre>` : '<div class="hint">No text diff (binary or too large).</div>'}</details>`).join('') + (live.length > 8 ? `<div class="hint">${live.length - 8} more in <a data-act="jtab" data-tab="changes">Changes</a></div>` : '') : '';
+  return `<div class="chgcard"><div class="row" style="margin:0;align-items:baseline"><b>Changed ${files.length} file${files.length === 1 ? '' : 's'}</b>${nums}${inline ? '' : ` · ${names}${more}`}<span style="flex:1"></span><a data-act="jtab" data-tab="changes">all changes</a>${live && live.length ? ' · <a data-act="revert" data-path="">undo all</a>' : ''}</div>${inline}</div>`;
 }
 // The user's latest follow-up while it still waits in an agent's inbox (it can be taken back and edited).
 function queuedFid(t) {
@@ -297,14 +309,47 @@ function handoffDoc(name) {
   }).catch(() => {});
   return null;
 }
+// Everything waiting on you for this job, in one compact panel above the reply box: a plan (first steps, then
+// "show all"), edit access, a command, a question. Each decision appears once; the thread only points here.
+const PLAN_PREVIEW = 5;
+const ticketIdByN = (n) => (Object.values(S.tickets).find((x) => x.n === n) || {}).id || '';
+function needYouHtml(t) {
+  const items = [];
+  if (t.plan && t.plan.status === 'pending') {
+    const lines = String(t.plan.text || '').split('\n').filter((l) => l.trim());
+    const steps = lines.filter((l) => /^\s*(\d+[.)]|[-*•])\s/.test(l)).length;
+    const full = (S.planFull || {})[t.id] || lines.length <= PLAN_PREVIEW + 1;
+    const shown = full ? t.plan.text : lines.slice(0, PLAN_PREVIEW).join('\n');
+    const noteOpen = (S.planNoteOpen || {})[t.id];
+    items.push(`<div class="need plan"><div class="nh"><span class="nt"><b>${esc(who(t.plan.from))} wants your OK on a plan</b> · estimated <b>${money(t.plan.estimateUsd)}</b>${ticketShare(t.plan.estimateUsd) ? ` <span class="hint">(${ticketShare(t.plan.estimateUsd)})</span>` : ''}${steps ? ` · ${steps} steps` : ''}</span>
+      <button class="btn pri sm" data-act="plan" data-d="approve">Approve</button><button class="btn sm" data-act="plan" data-d="always" title="Approve this one and every later plan on this job">Approve, don't ask again here</button><button class="btn sm danger" data-act="plan" data-d="reject">Reject</button></div>
+      <div class="md plantext ${full ? 'full' : ''}">${md(shown)}</div>
+      <div class="nfoot">${full || lines.length <= PLAN_PREVIEW ? '' : `<a data-act="planFull">Show all ${steps || lines.length} ${steps ? 'steps' : 'lines'}</a>`}${noteOpen ? '' : `<a data-act="planNoteOpen">Suggest changes…</a>`}</div>
+      ${noteOpen ? '<textarea id="planNote" placeholder="What should change? Then press Approve." style="min-height:40px;margin-top:6px"></textarea>' : ''}</div>`);
+  }
+  const acc = pendingAccess(t);
+  if (acc) items.push(`<div class="need"><div class="nh"><span class="nt"><b>${esc(acc.persona)} asks to edit outside this job's project:</b> <code>${esc(String(acc.folder).replace(/^\/home\/[^/]+/, '~'))}</code>${acc.reason ? ` <span class="hint">· ${esc(acc.reason)}</span>` : ''}</span><button class="btn pri sm" data-act="accessDecide" data-id="${acc.id}" data-d="allow">Allow on this job</button><button class="btn sm danger" data-act="accessDecide" data-id="${acc.id}" data-d="deny">Don't allow</button></div></div>`);
+  const cmd = pendingCmd(t);
+  if (cmd) items.push(`<div class="need"><div class="nh"><span class="nt"><b>${esc(cmd.persona)} wants to run a command</b>${cmd.reason ? ` <span class="hint">· ${esc(cmd.reason)}</span>` : ''}</span><button class="btn pri sm" data-act="cmdRun" data-cid="${cmd.id}">Run</button><button class="btn sm" data-act="cmdAll" data-cid="${cmd.id}" title="Run this and every later command on this job without asking">Run all on this job</button><button class="btn sm danger" data-act="cmdDeny" data-cid="${cmd.id}">Don't run</button></div><div class="cmdline"><span class="pr">$</span><code>${esc(cmd.command)}</code></div></div>`);
+  const q = t.waiting;
+  if (q) items.push(`<div class="need"><div class="nh"><span class="nt"><b>${esc(who(q.from))} is waiting for your answer</b> <span class="hint">· or type it below</span></span></div><div class="md">${md(q.text)}</div>${qoptsHtml(q)}</div>`);
+  return items.length ? `<div class="needs"><div class="nlabel">Needs you${items.length > 1 ? ` · ${items.length}` : ''}</div>${items.join('')}</div>` : '';
+}
+// One-click answers to a question: the agent's own choices, or ones suggested from its wording (lib/suggest-answers.js).
+// Keys 1-5 pick one on an open job. id: answer a job other than the open one (Today).
+function qoptsHtml(q, id) {
+  const o = (q.options || []).slice(0, 5);
+  if (!o.length) return '';
+  return `<div class="row qopts">${q.suggested ? '<span class="hint">Suggested:</span>' : ''}${o.map((v, i) => `<button class="btn sm" data-act="qopt" data-v="${esc(v)}"${id ? ` data-id="${id}"` : ''} title="${id ? 'Send this answer' : `Send this answer · key ${i + 1}`}">${id ? '' : `<kbd>${i + 1}</kbd>`}${esc(v)}</button>`).join('')}</div>`;
+}
 function renderJob() {
   const v = $('#jview');
   const t = S.tickets[S.job];
   if (!t) { if (S.jviewFor !== '') { S.jviewFor = ''; v.innerHTML = `<div class="empty">Select a job, or start one with <kbd>N</kbd>.</div>`; } return; }
   if (S.jviewFor !== t.id) {
     S.jviewFor = t.id; S.jbodyFor = null; S.jbodyKey = null; S.followFiles = []; S.rerate = false;
-    v.innerHTML = `<div class="jhead" id="jhead"></div><div id="jban"></div><div class="tabs" id="jtabs"></div><div class="jbody" id="jbody"></div><div class="jlive" id="jlive" aria-live="polite"></div>
-      <div class="composer"><textarea id="jtext"></textarea><div class="files" id="jfiles"></div><div class="row"><button class="btn sm" data-act="attachJob" title="Attach files">📎</button><span class="hint" id="jhint" style="flex:1"></span><span id="jsend" class="hint"></span><button class="btn pri sm" data-act="jobSend">Send</button></div></div>`;
+    v.innerHTML = `<div class="jhead" id="jhead"></div><div id="jban"></div><div class="tabs" id="jtabs"></div><div class="jbody" id="jbody"></div><div class="jlive" id="jlive" aria-live="polite"></div><div id="jneed" role="region" aria-label="Needs you"></div>
+      <div class="composer"><textarea id="jtext"></textarea><div class="files" id="jfiles"></div><div class="row"><button class="btn sm ibtn" data-act="attachJob" title="Attach files" aria-label="Attach files">${ic('clip')}</button><span class="hint" id="jhint" style="flex:1"></span><span id="jsend" class="hint"></span><button class="btn pri sm" data-act="jobSend">Send</button></div></div>`;
     wireDrop($('#jtext'), () => S.followFiles, () => { $('#jfiles').innerHTML = S.followFiles.map((p) => fileChip(p, true)).join(''); });
     const box = $('#jtext');
     box.value = S.compose[t.id] || '';
@@ -320,25 +365,24 @@ function renderJob() {
   const owner = t.direct || t.assignees.find((k) => k !== S.root);
   const canWrap = owner && S.roles[owner] && S.roles[owner].handoffs && t.status !== 'scheduled';
   const people = [...new Set([t.direct, ...t.assignees].filter((k) => k && k !== S.root))];
-  $('#jhead').innerHTML = `<h2><span class="hint mono">#${t.n}</span><span class="jt" title="${esc(t.title)}">${esc(t.title)}</span>${pill(t.status)}<span style="flex:1"></span>
+  $('#jhead').innerHTML = `<h2><button class="btn sm jback" data-act="jobBack" aria-label="Back to the job list">‹ Jobs</button><span class="hint mono">#${t.n}</span><span class="jt" title="${esc(t.title)}">${esc(t.title)}</span>${pill(t.status)}<span style="flex:1"></span>
       ${t.status === 'open' ? '<button class="btn sm" data-act="pause">Pause</button><button class="btn sm danger" data-act="stop">Stop</button>' : ''}${t.status === 'paused' ? '<button class="btn sm pri" data-act="resume">Resume</button><button class="btn sm danger" data-act="stop">Stop</button>' : ''}
       ${!['open', 'paused'].includes(t.status) ? `<button class="btn sm" data-act="archive">${t.archived ? 'Unarchive' : 'Archive'}</button>` : ''}${canWrap ? `<button class="btn sm" data-act="wrapUp" title="Ask ${esc(who(owner))} to save the project handoff and sum up">Wrap up</button>` : ''}<button class="btn sm" data-act="delJob">Delete</button></h2>
     <div class="kv"><span>cost <b>${money(t.costUsd)}</b>${t.budgetUsd != null ? ` of ${money(t.budgetUsd)}` : ''}</span>${t.costUsd && ticketShare(t.costUsd) ? `<span>limits <b>${ticketShare(t.costUsd)}</b></span>` : ''}<span>owner <b>${esc(people.map(who).join(', ') || 'routing')}</b></span>${t.project ? `<span>project <b>${esc(t.project)}</b></span>` : ''}<span>lead effort <b>${esc(t.leadEffort || 'high')}</b></span><span>opened <b>${ago(t.createdAt)}</b></span>${t.closedAt ? `<span>took <b>${dur(t.closedAt - t.createdAt)}</b></span>` : ''}</div>`;
   const q = t.waiting;
   const banHtml = failBanner(t) + handoffBanner(t) + (t.overBudget && t.status === 'open' ? `<div class="banner"><b>Paused at the budget.</b> ${money(t.costUsd)} of ${money(t.budgetUsd)} spent. <div class="row"><button class="btn pri sm" data-act="budget" data-add="5">+ $5</button><button class="btn sm" data-act="budget" data-add="10">+ $10</button><button class="btn sm danger" data-act="stop">Stop job</button></div></div>` : '')
     + (t.status === 'paused' ? '<div class="banner"><b>Paused.</b> Nothing runs on this job until you resume it.</div>' : '')
-    + (t.status === 'scheduled' ? `<div class="banner"><b>Scheduled.</b> Starts ${whenAt(t.scheduledFor)}, after the 5-hour limit resets. <div class="row"><button class="btn pri sm" data-act="startNow">Start now</button></div></div>` : '')
-    + (t.plan && t.plan.status === 'pending' ? `<div class="banner plan"><div class="row" style="margin:0;align-items:center"><span style="flex:1"><b>${esc(who(t.plan.from))} wants your OK on a plan</b> · estimated <b>${money(t.plan.estimateUsd)}</b></span><button class="btn pri sm" data-act="plan" data-d="approve">Approve</button><button class="btn sm" data-act="plan" data-d="always" title="Approve this one and every later plan on this job">Approve, don't ask again here</button><button class="btn sm danger" data-act="plan" data-d="reject">Reject</button></div><div class="md plantext">${md(t.plan.text)}</div><textarea id="planNote" placeholder="Optional: changes you want (then press Approve)" style="min-height:40px;margin-top:6px"></textarea></div>` : '')
-    + (pendingAccess(t) ? `<div class="banner"><b>${esc(pendingAccess(t).persona)} asks to edit files outside this job's project:</b> <code>${esc(String(pendingAccess(t).folder).replace(/^\/home\/[^/]+/, '~'))}</code>${pendingAccess(t).reason ? `<div class="hint">${esc(pendingAccess(t).reason)}</div>` : ''}<div class="row"><button class="btn pri sm" data-act="accessDecide" data-id="${pendingAccess(t).id}" data-d="allow">Allow on this job</button><button class="btn sm danger" data-act="accessDecide" data-id="${pendingAccess(t).id}" data-d="deny">Don't allow</button></div></div>` : '')
-    + (pendingCmd(t) ? `<div class="banner"><b>${esc(pendingCmd(t).persona)} wants to run a command.</b><div class="cmdline" style="margin-top:6px"><span class="pr">$</span><code>${esc(pendingCmd(t).command)}</code></div>${pendingCmd(t).reason ? `<div class="hint">${esc(pendingCmd(t).reason)}</div>` : ''}<div class="row"><button class="btn pri sm" data-act="cmdRun" data-cid="${pendingCmd(t).id}">Run</button><button class="btn sm" data-act="cmdAll" data-cid="${pendingCmd(t).id}">Run all on this job</button><button class="btn sm danger" data-act="cmdDeny" data-cid="${pendingCmd(t).id}">Don't run</button></div></div>` : '')
-    + (q ? `<div class="banner"><b>${esc(who(q.from))} is waiting for your answer.</b><div class="md" style="margin-top:4px">${md(q.text)}</div>${(q.options || []).length ? `<div class="row">${q.options.map((o) => `<button class="btn sm" data-act="qopt" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}<div class="hint" style="margin-top:6px">Or type your answer below.</div></div>` : '');
+    + (t.status === 'scheduled' ? `<div class="banner"><b>Scheduled.</b> Starts ${whenAt(t.scheduledFor)}, after the 5-hour limit resets. <div class="row"><button class="btn pri sm" data-act="startNow">Start now</button></div></div>` : '');
   const ban = $('#jban');
-  if (ban.dataset.h !== banHtml) {
+  if (ban.dataset.h !== banHtml) { ban.innerHTML = banHtml; ban.dataset.h = banHtml; }
+  const need = $('#jneed');
+  const needHtml = needYouHtml(t);
+  if (need.dataset.h !== needHtml) {
     const note = $('#planNote') && $('#planNote').value;
-    const scrolls = [...ban.querySelectorAll('.plantext, .md')].map((x) => x.scrollTop);
-    ban.innerHTML = banHtml; ban.dataset.h = banHtml;
+    const scrolls = [...need.querySelectorAll('.plantext, .md')].map((x) => x.scrollTop);
+    need.innerHTML = needHtml; need.dataset.h = needHtml;
     if (note && $('#planNote')) $('#planNote').value = note;
-    [...ban.querySelectorAll('.plantext, .md')].forEach((x, k) => { x.scrollTop = scrolls[k] || 0; });
+    [...need.querySelectorAll('.plantext, .md')].forEach((x, k) => { x.scrollTop = scrolls[k] || 0; });
   }
   const nCh = (t.changes || []).length;
   $('#jtabs').innerHTML = [['thread', 'Thread'], ['tree', 'Process tree'], ['changes', `Changes${nCh ? ` (${nCh})` : ''}`], ['timeline', 'Timeline']].map(([k, l]) => `<button class="${S.jtab === k ? 'on' : ''}" data-act="jtab" data-tab="${k}">${l}</button>`).join('');
@@ -350,8 +394,8 @@ function renderJob() {
   const body = $('#jbody');
   if (S.jtab === 'thread') {
     const closed = ['done', 'failed', 'interrupted', 'stopped'].includes(t.status) && t.answer;
-    const rate = closed ? (t.rating && !S.rerate ? `<div class="sec">You rated this ${t.rating.score > 0 ? '👍' : '👎'}${t.rating.note ? `: “${esc(t.rating.note)}”` : ''} <a class="hint" data-act="rerate">change</a></div>`
-      : `<div class="sec"><div class="label">How was this answer?</div><div class="row" style="margin-top:0"><input class="in" id="rateNote" placeholder="Optional: what was good or missing" style="flex:1;min-width:160px"><button class="btn sm" data-act="rate" data-s="1">👍</button><button class="btn sm" data-act="rate" data-s="-1">👎</button></div><div class="hint" style="margin-top:4px">Goes to the lead as feedback.</div></div>`) : '';
+    const rate = closed ? (t.rating && !S.rerate ? `<div class="sec">You rated this ${t.rating.score > 0 ? thumb(true) : thumb(false)}${t.rating.note ? `: “${esc(t.rating.note)}”` : ''} <a class="hint" data-act="rerate">change</a></div>`
+      : `<div class="sec"><div class="label">How was this answer?</div><div class="row" style="margin-top:0"><input class="in" id="rateNote" placeholder="Optional: what was good or missing" style="flex:1;min-width:160px"><button class="btn sm" data-act="rate" data-s="1">${thumb(true)}</button><button class="btn sm" data-act="rate" data-s="-1">${thumb(false)}</button></div><div class="hint" style="margin-top:4px">Goes to the lead as feedback.</div></div>`) : '';
     const same = S.jbodyFor === t.id;
     const prevLen = S.jbodyLen || 0;
     const fresh = same ? t.thread.slice(prevLen) : [];
@@ -373,7 +417,7 @@ async function renderChanges(t, body) {
   const live = list.filter((c) => c.state !== 'unchanged').length;
   body.innerHTML = `<div class="row"><span class="hint" style="flex:1">${live} of ${list.length} file${list.length === 1 ? '' : 's'} differ from before this job. Undo restores the copy saved before the first edit here (it never touches git).</span>${live ? '<button class="btn sm danger" data-act="revert" data-path="">Undo all</button>' : ''}</div>` +
     list.map((c) => {
-      const diff = esc(c.diff).split('\n').map((l) => (l.startsWith('@@') ? `<span class="hh">${l}</span>` : l.startsWith('+') && !l.startsWith('+++') ? `<span class="a">${l}</span>` : l.startsWith('-') && !l.startsWith('---') ? `<span class="d">${l}</span>` : l + '\n')).join('');
+      const diff = diffHtml(c.diff);
       return `<div class="diffhead">${pill(c.state === 'unchanged' ? 'queued' : c.state === 'deleted' ? 'failed' : 'done', c.state === 'unchanged' ? (c.revertedAt ? 'undone' : 'same') : c.state)}<span class="p" title="${esc(c.path)}"><bdi>${esc(c.path)}</bdi></span><span class="hint mono">+${c.added} −${c.removed}</span>${c.state !== 'unchanged' ? `<button class="btn sm" data-act="revert" data-path="${esc(c.path)}">Undo</button>` : ''}</div>
         <div class="hint">by ${esc(c.by.join(', '))}</div>${c.diff ? `<details ${list.length <= 3 ? 'open' : ''}><summary>diff</summary><pre class="diff">${diff}</pre></details>` : ''}`;
     }).join('');

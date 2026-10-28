@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 PORT="${WORKPLACE_PORT:-4747}"
 HERE="$(pwd)"
 
@@ -20,7 +20,7 @@ else
     } catch { console.log(""); }' 2>/dev/null)
   if [ -n "$busy" ] && [ "$1" != "-f" ]; then
     echo "Still working: $busy"
-    echo "Their tickets will be marked interrupted. Stop anyway? Run ./stop.sh -f"
+    echo "Their tickets will be marked interrupted. Stop anyway? Run ./agentos stop -f"
     exit 1
   fi
   kill -TERM "${pids[@]}"

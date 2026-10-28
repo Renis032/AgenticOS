@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Syntax, lint and API check (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run lint
+      # A throwaway office with a stand-in for `claude`: no account, nothing spent.
+      - run: node scripts/api-check.js
+
+  ui:
+    name: Window check (WebKitGTK, virtual screen)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: sudo apt-get update && sudo apt-get install -y xvfb rsync python3-gi gir1.2-webkit2-4.0
+      - run: node scripts/ui-check.js --out ui-shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-check-screenshots
+          path: ui-shots
+          if-no-files-found: ignore

@@ -10,3 +10,10 @@ __pycache__/
 teams/
 roster.json
 projects.json
+# Your reading inbox and generated artifacts: personal content, created at runtime (lib/arms.js).
+inbox/*
+artifacts/*
+!inbox/.gitkeep
+!artifacts/.gitkeep
+# Development tools (ESLint); the app itself has no dependencies.
+node_modules/

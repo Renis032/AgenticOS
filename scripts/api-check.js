@@ -37,9 +37,9 @@ function call(port, token, method, p, body, headers) {
 }
 const freePort = () => new Promise((resolve) => { const s = require('net').createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 
-async function startOffice(dir, claude) {
+async function startOffice(dir, claude, extraEnv) {
   const port = await freePort();
-  const proc = spawn(process.execPath, ['server.js'], { cwd: dir, env: { ...process.env, AGENTOS_TEST_PARENT: String(process.pid), WORKPLACE_PORT: String(port), CLAUDE_BIN: claude }, stdio: 'ignore', detached: true });
+  const proc = spawn(process.execPath, ['server.js'], { cwd: dir, env: { ...process.env, AGENTOS_TEST_PARENT: String(process.pid), WORKPLACE_PORT: String(port), CLAUDE_BIN: claude, ...(extraEnv || {}) }, stdio: 'ignore', detached: true });
   const token = () => { try { return fs.readFileSync(path.join(dir, 'data', 'app-token'), 'utf8').trim(); } catch { return ''; } };
   for (let i = 0; i < 60; i++) {
     await sleep(250);
@@ -47,6 +47,33 @@ async function startOffice(dir, claude) {
   }
   return { port, token: token(), proc, failed: true };
 }
+// A stand-in for the Telegram Bot API: records every call, and serves pushed updates to long polling.
+function fakeTelegram() {
+  const calls = [], updates = [], waiting = [];
+  let nextId = 1, nextMsg = 100;
+  const server = http.createServer((req, res) => {
+    let s = '';
+    req.on('data', (c) => (s += c));
+    req.on('end', () => {
+      let b = {};
+      try { b = JSON.parse(s || '{}'); } catch {}
+      const method = req.url.split('/').pop();
+      const reply = (result) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, result })); };
+      if (method !== 'getUpdates') calls.push({ method, body: b });
+      if (method === 'getMe') return reply({ id: 1, is_bot: true, username: 'agentos_check_bot', first_name: 'Check' });
+      if (method === 'sendMessage') return reply({ message_id: nextMsg++, chat: { id: b.chat_id }, text: b.text });
+      if (method !== 'getUpdates') return reply(true);
+      const pick = () => (b.offset === -1 ? updates.slice(-1) : updates.filter((u) => u.update_id >= (b.offset || 0)));
+      if (pick().length || !b.timeout) return reply(pick());
+      const w = { done: () => { clearTimeout(w.timer); reply(pick()); } };
+      w.timer = setTimeout(() => { waiting.splice(waiting.indexOf(w), 1); reply([]); }, Math.min(b.timeout, 25) * 1000);
+      waiting.push(w);
+    });
+  });
+  const push = (u) => { updates.push({ update_id: nextId++, ...u }); for (const w of waiting.splice(0)) w.done(); };
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ url: `http://127.0.0.1:${server.address().port}`, calls, push, close: () => server.close() })));
+}
+
 const stopOffice = (o) => { try { process.kill(-o.proc.pid, 'SIGTERM'); } catch {} };
 async function until(fn, ms) { for (let t = 0; t < ms; t += 250) { const v = await fn(); if (v) return v; await sleep(250); } return null; }
 
@@ -63,19 +90,19 @@ async function check() {
 
   // Who stays on a team (lib/on-call.js), checked directly: no agents needed.
   {
-    const agents = new Map(), tickets = new Map([['t1', { id: 't1', handoffs: ['FridgeOracle'] }], ['t2', { id: 't2', handoffs: ['news-aggregator'] }]]);
+    const agents = new Map(), tickets = new Map([['t1', { id: 't1', handoffs: ['RecipeBox'] }], ['t2', { id: 't2', handoffs: ['trail-log'] }]]);
     const oc = require(path.join(ROOT, 'lib', 'on-call')).install({ agents, tickets, now: () => 1, touch: () => {} });
     const curator = { id: 'c', staff: true, role: 'custom', tickets: ['t1'] }, researcher = { id: 'r', staff: true, role: 'researcher', tickets: ['t1'] };
     agents.set('c', curator); agents.set('r', researcher);
     oc.onHire(curator, {}, tickets.get('t1')); oc.onHire(researcher, {}, tickets.get('t1'));
-    ok('a custom hire is on call for its project; a roster role joins the team', curator.onCall && curator.onCall.project === 'FridgeOracle' && !researcher.onCall, JSON.stringify([curator.onCall, researcher.onCall]));
+    ok('a custom hire is on call for its project; a roster role joins the team', curator.onCall && curator.onCall.project === 'RecipeBox' && !researcher.onCall, JSON.stringify([curator.onCall, researcher.onCall]));
     ok('an on-call specialist is only picked for their own project', oc.available(curator, tickets.get('t1')) && !oc.available(curator, tickets.get('t2')) && oc.available(researcher, tickets.get('t2')));
     oc.onReuse(curator, {}, tickets.get('t2')); curator.tickets.push('t2');
     ok('used on a second project, an on-call specialist joins the team', !curator.onCall && curator.joinedTeam, JSON.stringify(curator));
     const kept = { id: 'k', staff: true, role: 'custom', tickets: [] };
     oc.onHire(kept, { stay: 'team' }, tickets.get('t1'));
     oc.setScope('c', false);
-    ok('`stay: "team"` keeps a custom hire; the user can switch someone back to project only', !kept.onCall && curator.onCall && curator.onCall.project === 'news-aggregator', JSON.stringify([kept.onCall, curator.onCall]));
+    ok('`stay: "team"` keeps a custom hire; the user can switch someone back to project only', !kept.onCall && curator.onCall && curator.onCall.project === 'trail-log', JSON.stringify([kept.onCall, curator.onCall]));
     // Parallel duplicates merge once their job closes; long-unused specialists retire; memory moves to the archive and back.
     const mem = fs.mkdtempSync(path.join(os.tmpdir(), 'agentos-oncall-'));
     fs.mkdirSync(path.join(mem, 'memory'));
@@ -96,7 +123,7 @@ async function check() {
   {
     const agents = new Map([['lead', { id: 'lead' }], ['god', { id: 'god' }]]);
     const fb = [];
-    const L = require(path.join(ROOT, 'lib', 'lessons')).install({ agents, readJson: () => ({ root: 'god' }), now: () => 1, newId: (() => { let i = 0; return () => 'l' + ++i; })(),
+    const L = require(path.join(ROOT, 'lib', 'lessons')).install({ agents, readJson: () => ({ root: 'god', defaults: { reviewLessons: 0 } }), now: () => 1, newId: (() => { let i = 0; return () => 'l' + ++i; })(),
       touch: () => {}, addEvent: () => {}, giveFeedback: (from, to, text) => fb.push({ to, text }), findSecret: require(path.join(ROOT, 'lib', 'secrets')).findSecret });
     const t = { n: 7, title: 'x', direct: 'lead', assignees: ['god', 'lead'] };
     L.ask(t, 'failed'); L.ask(t, 'failed'); L.ask(t, 'rated', 'wrong file');
@@ -108,6 +135,25 @@ async function check() {
     ok('a repeated lesson replaces the old one instead of adding a copy', agents.get('lead').lessons.filter((x) => /number 5/i.test(x.text)).length === 1, '');
     ok('a lesson must be one short line', /Too long/.test(L.add('lead', 'x'.repeat(300)).error || ''), 'accepted');
     ok('a lesson can be removed', L.remove('lead', ls[0].id).ok && !agents.get('lead').lessons.some((x) => x.id === ls[0].id), '');
+    // With review on (the default), a lesson waits as a draft until the user keeps (or edits) or drops it.
+    const ag = new Map([['lead', { id: 'lead', persona: 'Lead' }]]);
+    const R = require(path.join(ROOT, 'lib', 'lessons')).install({ agents: ag, readJson: () => ({ root: 'god', defaults: {} }), now: () => 1, newId: (() => { let i = 0; return () => 'd' + ++i; })(),
+      touch: () => {}, addEvent: () => {}, giveFeedback: () => {}, findSecret: () => null, broadcast: () => {} });
+    const sent = R.add('lead', 'Run the tests before saying done.'); R.add('lead', 'Ask before renaming files.');
+    const [d1, d2] = ag.get('lead').lessonDrafts;
+    ok('with review on, a new lesson waits for the user instead of reaching the prompt', /review/.test(sent.message) && ag.get('lead').lessonDrafts.length === 2 && !(ag.get('lead').lessons || []).length && !R.promptBlock(ag.get('lead')).length, JSON.stringify(ag.get('lead')));
+    const kept = R.approve('lead', d1.id, 'Run the tests before reporting a fix as done.');
+    const dropped = R.drop('lead', d2.id);
+    ok('the user keeps a lesson as edited, or drops one', kept.ok && kept.edited && dropped.ok && ag.get('lead').lessons.length === 1 && /reporting a fix/.test(R.promptBlock(ag.get('lead')).join('\n')) && !ag.get('lead').lessonDrafts.length, JSON.stringify(ag.get('lead')));
+  }
+  // Suggested answers for a question asked without choices (lib/suggest-answers.js).
+  {
+    const { suggest } = require(path.join(ROOT, 'lib', 'suggest-answers'));
+    const cases = [['Should I also update the tests?', 'Yes|No'], ['Which database: Postgres, MySQL or SQLite?', 'Postgres|MySQL|SQLite'],
+      ['Two ways:\n1. Patch the parser\n2. Rewrite the loader — slower\nWhich one?', 'Patch the parser|Rewrite the loader'],
+      ['Can you send the log?', ''], ['What is the path to the log?', ''], ['Should I keep the old API or remove it?', '']];
+    const bad = cases.filter(([q, want]) => suggest(q).join('|') !== want);
+    ok('questions without choices get suggested answers from their wording (yes/no, A or B, a list), and none when unsure', !bad.length, JSON.stringify(bad.map(([q]) => [q, suggest(q)])));
   }
   // The agent eval over time (lib/evals.js), with a stand-in eval script so nothing is spent.
   {
@@ -129,8 +175,9 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     fs.rmSync(root, { recursive: true, force: true });
   }
   const offices = [];
+  const tg = await fakeTelegram();
   try {
-    const O = await startOffice(office, claude);
+    const O = await startOffice(office, claude, { TELEGRAM_API: tg.url });
     offices.push(O);
     ok('server starts with an empty data folder', !O.failed, 'no answer on /api/limits');
     if (O.failed) return results;
@@ -172,6 +219,41 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     const cid2 = await until(async () => { const s = (await A('GET', '/api/state')).body; const c = s.tickets.flatMap((t) => t.commands || []).find((x) => x.status === 'pending'); return c && c.id; }, 4000);
     if (cid2) await A('POST', `/api/commands/${cid2}/decide`, { decision: 'deny' });
     ok('a denied command reports back as not run', /chose not to run/.test(((await denyP).body || {}).error || ''), 'no denial');
+
+    // Telegram (lib/telegram.js) against the stand-in Bot API: linking, a foreign chat, approving a plan, deciding in the window.
+    {
+      const sent = (re) => tg.calls.filter((c) => c.method === 'sendMessage' && re.test(c.body.text || ''));
+      const link = (await A('POST', '/api/telegram', { token: `123456:${'A'.repeat(32)}` })).body || {};
+      ok('a Telegram bot token is checked and gives a pair code', link.ok && link.botName === '@agentos_check_bot' && /^\d{6}$/.test(link.pairCode || ''), JSON.stringify(link));
+      tg.push({ message: { message_id: 1, chat: { id: 999, first_name: 'Stranger' }, text: '/start 000000' } });
+      tg.push({ message: { message_id: 2, chat: { id: 4242, first_name: 'Me' }, text: `/start ${link.pairCode}` } });
+      const linked = await until(async () => ((await A('GET', '/api/telegram')).body || {}).linked && (await A('GET', '/api/telegram')).body, 6000);
+      ok('sending the pair code links that chat, not one with a wrong code', linked && linked.chatName === 'Me' && !JSON.stringify(linked).includes('AAAA'), JSON.stringify(linked));
+      await A('POST', '/api/office-settings', { autoApprovePlansUsd: 0 });
+      const tp = A('POST', '/api/propose-plan', { agentId: lead, plan: '1. telegram step', estimateUsd: 3 });
+      const msg = await until(async () => sent(/telegram step/)[0], 6000);
+      const kb = msg && msg.body.reply_markup && msg.body.reply_markup.inline_keyboard;
+      const approve = kb && kb.flat().find((x) => /approve$/.test(x.callback_data));
+      ok('a plan that needs you arrives in Telegram with Approve / Reject buttons', msg && msg.body.chat_id === 4242 && approve && kb.flat().some((x) => /reject$/.test(x.callback_data)), JSON.stringify(msg ? msg.body : tg.calls.map((c) => c.method + ':' + String(c.body.text || '').slice(0, 40))).slice(0, 400));
+      if (approve) {
+        tg.push({ callback_query: { id: 'cq1', data: approve.callback_data, message: { message_id: 7, chat: { id: 999 } } } });
+        await sleep(1500);
+        const still = (await A('GET', '/api/state')).body.tickets.find((x) => x.id === t1.id).plan.status;
+        ok('a button press from another chat is ignored', still === 'pending', still);
+        tg.push({ callback_query: { id: 'cq2', data: approve.callback_data, message: { message_id: 7, chat: { id: 4242 } } } });
+        const res = await Promise.race([tp, sleep(6000).then(() => ({ body: {} }))]);
+        const ed = await until(async () => tg.calls.some((c) => c.method === 'editMessageText' && /Approved in Telegram/.test(c.body.text)), 4000);
+        ok('Approve in Telegram approves the plan and updates the message', /approved/.test((res.body || {}).message || '') && ed, JSON.stringify(res.body));
+      }
+      const wp = A('POST', '/api/propose-plan', { agentId: lead, plan: '1. window step', estimateUsd: 3 });
+      await until(async () => sent(/window step/)[0], 6000);
+      await A('POST', `/api/tickets/${t1.id}/plan`, { decision: 'reject' });
+      await wp;
+      const edited = await until(async () => tg.calls.find((c) => c.method === 'editMessageText' && /Decided in the window: plan rejected/.test(c.body.text)), 6000);
+      ok('deciding in the window updates the Telegram message', edited, 'no edit');
+      const off = (await A('DELETE', '/api/telegram')).body || {};
+      ok('Telegram can be disconnected', off.configured === false && off.linked === false, JSON.stringify(off));
+    }
 
     await A('POST', '/api/office-settings', { autoApprovePlansUsd: 0 });
     const planP = A('POST', '/api/propose-plan', { agentId: lead, plan: '1. one\n2. two', estimateUsd: 9 });
@@ -225,9 +307,11 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     const fbLead = ((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).feedback || [];
     ok('undoing a job\'s changes asks its lead for a lesson', fbLead.some((f) => /add_lesson/.test(f.text)), JSON.stringify(fbLead).slice(0, 200));
     const les = (await A('POST', '/api/lessons', { agentId: lead, text: 'Check the target file is the one the user meant before editing.' })).body || {};
+    const draft = (((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).lessonDrafts || [])[0];
+    const keepL = draft ? (await A('POST', `/api/agents/${lead}/lesson-drafts/${draft.id}`, {})).code : 0;
     const withLesson = ((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).lessons || [];
     const delL = withLesson[0] ? (await A('DELETE', `/api/agents/${lead}/lessons/${withLesson[0].id}`)).code : 0;
-    ok('agents save lessons through the API, and the user can remove one', /Lesson saved/.test(les.message || '') && withLesson.length === 1 && delL === 200, JSON.stringify({ les, withLesson, delL }));
+    ok('an agent\'s lesson waits for review; the user keeps it through the API, and can remove it later', /review/.test(les.message || '') && keepL === 200 && withLesson.length === 1 && delL === 200, JSON.stringify({ les, draft, keepL, withLesson, delL }));
     ok('undoing a job\'s changes is recorded as a signal for model choice', ((await A('GET', '/api/state')).body.tickets.find((t) => t.id === t1.id) || {}).undone >= 1, 'not recorded');
     const tl = (await A('GET', `/api/tickets/${t1.id}/timeline`)).body || {};
     ok('the job timeline lists who worked on it', Array.isArray(tl.rows) && tl.rows.length > 0, JSON.stringify(tl).slice(0, 200));
@@ -252,6 +336,11 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     ok('the team room takes questions and lists them', !chatAsk.error && Array.isArray(chat), JSON.stringify(chatAsk).slice(0, 200));
     const cfg = (await A('GET', '/api/config')).body || {};
     ok('Teams & roles loads the configuration', Array.isArray(cfg.roles) && cfg.roles.length > 0, JSON.stringify(Object.keys(cfg)));
+    const asked = (await A('POST', '/api/ask-office', { question: 'What did Renko do today?' })).body || {};
+    const askedEmpty = (await A('POST', '/api/ask-office', { question: '  ' })).body || {};
+    ok('Ask the office answers from gathered facts, and refuses an empty question', asked.answer === 'ok' && Array.isArray(asked.sources) && asked.factsChars > 100 && askedEmpty.error, JSON.stringify({ asked, askedEmpty }).slice(0, 300));
+    const team = (await A('POST', '/api/config/team', { persona: 'Vera', room: 'Research Desk', description: 'Owns research questions.' })).body || {};
+    ok('a new team can be created from Teams & roles', team.ok && !team.error, JSON.stringify(team).slice(0, 200));
     const ev = (await A('GET', '/api/evals')).body || {};
     const evSet = (await A('POST', '/api/office-settings', { agentEvalDays: 3 })).body || {};
     ok('the agent eval history loads, and how often it runs can be set', Array.isArray(ev.runs) && evSet.agentEvalDays === 3, JSON.stringify({ ev, evSet: evSet.agentEvalDays }));
@@ -305,6 +394,34 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     const stop = (await A('POST', `/api/tickets/${t1stop}/stop`)).code === 200;
     const stopped = await until(async () => ((await A('GET', '/api/state')).body.tickets.find((t) => t.id === t1stop) || {}).status === 'stopped', 4000);
     ok('a job can be stopped', stop && stopped, 'not stopped');
+
+    // Twins: a busy lead hands a job for another ticket to a second desk; with leadTwins 0 the job queues instead.
+    {
+      await A('POST', '/api/office-settings', { leadTwins: 1 });
+      await until(async () => { const s = (await A('GET', '/api/state')).body; const a = s.agents.find((x) => x.id === lead); return a && !a.current; }, 6000);
+      const j1 = (await A('POST', '/api/tasks', { text: 'Twin check one', project: personal && personal.name })).body || {};
+      await until(async () => { const s = (await A('GET', '/api/state')).body; const a = s.agents.find((x) => x.id === lead); return a && a.current && a.current.ticketId === j1.id; }, 8000);
+      const j2 = (await A('POST', '/api/tasks', { text: 'Twin check two', project: personal && personal.name })).body || {};
+      const twin = await until(async () => {
+        const s = (await A('GET', '/api/state')).body;
+        const tw = s.agents.find((x) => x.twinOf === lead && !x.retired && ((x.current && x.current.ticketId === j2.id) || (x.inbox || []).some((i) => i.ticketId === j2.id)));
+        return tw && (s.tickets.find((t) => t.id === j2.id) || {}).twin === tw.id ? tw : null;
+      }, 8000);
+      ok('a busy lead hands a job for another ticket to a second desk (twin)', twin && / ·2$/.test(twin.persona), twin ? twin.persona : 'no twin');
+      await A('POST', `/api/tickets/${j2.id}/message`, { text: 'twin follow-up' });
+      const reached = twin && await until(async () => { const s = (await A('GET', '/api/state')).body; const tw = s.agents.find((x) => x.id === twin.id); return tw && (tw.inbox || []).some((i) => i.ticketId === j2.id && i.fid); }, 3000);
+      ok('a follow-up on the twin\'s ticket goes to the twin, not the lead', reached, 'not in the twin\'s inbox');
+      const mem = twin ? (await A('POST', '/api/memory', { agentId: twin.id, content: 'overwrite' })).body || {} : {};
+      ok('a twin cannot overwrite its lead\'s memory', /read-only/.test(mem.error || ''), JSON.stringify(mem));
+      const set0 = (await A('POST', '/api/office-settings', { leadTwins: 0 })).body || {};
+      const j3 = (await A('POST', '/api/tasks', { text: 'Twin check three', project: personal && personal.name })).body || {};
+      const q = await until(async () => { const s = (await A('GET', '/api/state')).body; const t = s.tickets.find((x) => x.id === j3.id); return t && t.queue ? { q: t.queue, n1: (s.tickets.find((x) => x.id === j1.id) || {}).n, n3: t.n, lead: s.agents.find((x) => x.id === lead) } : null; }, 4000);
+      ok('with leadTwins 0 a job waits in the lead\'s inbox and shows what it is queued behind',
+        set0.leadTwins === 0 && q && q.q.position === 1 && q.q.behindTicketN === q.n1 && q.q.agentPersona === q.lead.persona && q.lead.inboxTickets.includes(q.n3),
+        JSON.stringify(q && { q: q.q, n1: q.n1, n3: q.n3, inbox: q.lead.inboxTickets, set0: set0.leadTwins }));
+      await A('POST', '/api/office-settings', { leadTwins: 1 });
+      for (const j of [j1, j2, j3]) if (j.id) await A('POST', `/api/tickets/${j.id}/stop`);
+    }
     ok('a lead can be given a fresh session', (await A('POST', `/api/agents/${lead}/refresh`)).code === 200, 'refused');
 
     // A fresh clone: no local config, no team libraries, no data.
@@ -345,6 +462,7 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     }
   } finally {
     for (const o of offices) stopOffice(o);
+    tg.close();
     await sleep(600);
     spawnSync('pkill', ['-f', claude]);
     fs.rmSync(work, { recursive: true, force: true });

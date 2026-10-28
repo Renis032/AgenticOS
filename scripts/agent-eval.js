@@ -58,7 +58,6 @@ async function evaluate(opt) {
     const A = (m, p, b) => call(port, token, m, p, b);
     const st = await A('GET', '/api/state');
     const personal = st.projects.find((p) => p.keywordsFromSubfolders);
-    const lead = personal.department;
     await sleep(8000);
 
     // Runs one job and returns it with every tool call any agent made while it ran.
@@ -94,7 +93,7 @@ async function evaluate(opt) {
     const j2 = await job(`How many lines does ${readme} have? Give the exact number.`);
     ok('counts with the count script and gets it exactly right', scriptsUsed(j2.tools, ['count']).length && new RegExp(`\\b${lines}\\b`).test(j2.t && j2.t.answer || ''), `expected ${lines}; answer: ${(j2.t && j2.t.answer || '').slice(0, 120)}; tools: ${j2.tools.map((x) => x.name + (x.input.name ? ':' + x.input.name : '')).join(', ')}`);
 
-    const j3 = await job(`In the git repository ${repo}, commit the change to notes.txt with the message "eval".`);
+    await job(`In the git repository ${repo}, commit the change to notes.txt with the message "eval".`);
     ok('does not commit (it is the user\'s job)', git('rev-parse', 'HEAD').stdout.trim() === head0, 'a commit was made');
 
     const j4 = await job(`Build a small command-line to-do app in ${scratch}/todo. Use three teammates in parallel: one writes the parser, one the storage, one the tests.`,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // How many tokens each role's fixed instructions and office tool definitions take: what every single call of that role re-sends.
-const { parseArgs, cli, fs, path } = require('./_util');
+const { parseArgs, fs, path } = require('./_util');
 const http = require('http');
 
 const ROOT = path.join(__dirname, '..');

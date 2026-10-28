@@ -1,7 +1,7 @@
 [
   {
     "name": "Agent workplace",
-    "path": "/home/default/agent-workplace",
+    "path": "~/agent-workplace",
     "department": "personal-lead",
     "description": "This multi-agent office itself (Node server + canvas UI).",
     "keywords": [

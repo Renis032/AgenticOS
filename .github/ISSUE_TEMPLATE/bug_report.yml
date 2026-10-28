@@ -1,0 +1,27 @@
+name: Bug report
+description: Something in Agentic OS does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Start a job with …\n2. …"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: The relevant lines from data/server.log. Remove anything private (job text, paths, names) first.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Ubuntu 24.04, Node 20.11, Claude Code 2.x, Agentic OS 0.1.0"

@@ -13,7 +13,6 @@ const DATA = path.join(ROOT, 'data');
 const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const CACHE = path.join(DATA, 'usage', 'cache');
 const VERSION = 7;
-const BASE = { opus: 5, sonnet: 3, haiku: 1 };
 // API list prices per million tokens by model (input, output, cache read); cache writes cost 1.25× input (5 min) or 2× (1 hour).
 // From the Claude API model table, 2026-10. Older models fall back to their tier's earlier prices.
 const PRICES = [
@@ -35,7 +34,6 @@ const CAT_LABEL = {
   reminders: 'Reminders & environment', skills: 'Skill instructions (loaded when a skill runs)', you: 'Your messages', summary: 'Compaction summaries', 'claude:text': 'Claude: replies',
   'claude:thinking': 'Claude: thinking', 'claude:input': 'Claude: tool inputs (Write/Edit text, commands)',
 };
-const tier = (m) => (/haiku/i.test(m) ? 'haiku' : /sonnet/i.test(m) ? 'sonnet' : 'opus');
 const est = (chars) => Math.round(chars / 4);
 const catLabel = (c) => CAT_LABEL[c] || (c.startsWith('tool:') ? `Tool result: ${c.slice(5)}` : c);
 

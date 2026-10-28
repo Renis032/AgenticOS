@@ -25,6 +25,7 @@ function procRows() {
     let self = true;
     if (!S.showIdle && !a.resident && !busy) self = false;
     if (!S.showOnCall && (a.onCall || a.retired) && !busy) self = false; // hired for one project, or retired: off the team list
+    if (a.twinOf && a.retired && !busy) self = false; // a parallel lead that went home: its jobs are back with the lead
     if (q && !(`${a.persona} ${a.name} ${a.role} ${a.no}`.toLowerCase().includes(q))) self = false;
     if (jobIds && !jobIds.has(a.id)) self = false;
     const k = self || childKeep || a.id === S.root || (a.resident && !q && !jobIds);
@@ -89,7 +90,7 @@ APPS.processes = {
       const busy = ACTIVE.includes(st) || (a.resident && a.current);
       return `<tr class="${S.sel === a.id ? 'on' : ''} ${!busy && !a.resident ? 'dim' : ''}" data-act="sel" data-id="${a.id}">
         <td class="pid">${a.no || ''}</td>
-        <td class="nm"><span class="tree">${esc(glyph)}</span>${has ? `<span class="tw" data-act="fold" data-id="${a.id}">${S.collapsed.has(a.id) ? '▸' : '▾'}</span>` : '<span class="tw"></span>'}<b>${esc(a.persona)}</b><span class="r">${esc(a.id === S.root ? 'router' : a.name)}</span>${a.retired ? ` <span class="hint" title="${esc(a.retired.why)}">retired</span>` : a.onCall ? ` <span class="hint" title="Hired for one project; comes back when it does">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}${a.staff && starOf(a.homeId) === a.id ? ' <span class="lv" title="most reliable on the team">★</span>' : ''}</td>
+        <td class="nm"><span class="tree">${esc(glyph)}</span>${has ? `<span class="tw" data-act="fold" data-id="${a.id}">${S.collapsed.has(a.id) ? '▸' : '▾'}</span>` : '<span class="tw"></span>'}<b>${esc(a.persona)}</b><span class="r">${esc(a.id === S.root ? 'router' : a.name)}</span>${a.twinOf ? ' <span class="hint" title="A parallel desk for this lead while it was busy">parallel</span>' : ''}${a.retired ? ` <span class="hint" title="${esc(a.retired.why || '')}">retired</span>` : a.onCall ? ` <span class="hint" title="Hired for one project; comes back when it does">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}${a.staff && starOf(a.homeId) === a.id ? ' <span class="lv" title="most reliable on the team">★</span>' : ''}</td>
         <td>${modelChip(a)}</td><td>${pill(st)}</td>
         <td>${j ? `<a data-act="openJob" data-id="${j.id}">#${j.n}</a>` : '<span class="hint">—</span>'}</td>
         <td class="act ${act.think ? 'th' : ''}" title="${esc(act.text)}">${esc(short(act.text, 160))}</td>
@@ -140,7 +141,7 @@ function renderInspector() {
     const body = $('#inspBody');
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 60;
     if (S.itab === 'mind') { body.innerHTML = feedHtml(evs) || '<div class="empty">Nothing yet.</div>'; if (atBottom || !body.dataset.k || body.dataset.k !== a.id) body.scrollTop = body.scrollHeight; body.dataset.k = a.id; }
-    else if (S.itab === 'memory') { body.innerHTML = '<div class="hint" style="padding:10px 0">Loading…</div>'; api('GET', `/api/agents/${a.id}/memory`).then((r) => { if (S.sel === a.id && S.itab === 'memory') body.innerHTML = r.text ? `<div class="hint" style="margin:8px 0">Shown to ${esc(a.persona)} at the start of every task${a.memoryUpdatedAt ? ` · updated ${ago(a.memoryUpdatedAt)}` : ''}.</div><div class="md">${md(r.text)}</div>` : '<div class="empty">No lessons written yet.</div>'; }); }
+    else if (S.itab === 'memory') { body.innerHTML = skel(5); api('GET', `/api/agents/${a.id}/memory`).then((r) => { if (S.sel === a.id && S.itab === 'memory') body.innerHTML = r.text ? `<div class="hint" style="margin:8px 0">Shown to ${esc(a.persona)} at the start of every task${a.memoryUpdatedAt ? ` · updated ${ago(a.memoryUpdatedAt)}` : ''}.</div><div class="md">${md(r.text)}</div>` : '<div class="empty">No lessons written yet.</div>'; }); }
     else if (S.itab === 'report') body.innerHTML = a.result ? `<div class="md" style="padding-top:8px">${md(a.result)}</div>` : '<div class="empty">No report yet.</div>';
     else body.innerHTML = historyHtml(a);
   }

@@ -67,15 +67,12 @@ says **Update ready** when the server code changed since it started (restart) or
 
 ## Development
 
-- **Layout**: `server.js` holds the state, the agent processes (leads, staff, delegation) and the jobs' life cycle; the
-  rest is in `lib/`, each part an `install(ctx)` that gets what it uses from server.js. The HTTP routes are
-  `lib/routes-tickets.js` (jobs), `lib/routes-agents.js` (agents and the tools they call) and `lib/routes-office.js`
-  (the window, settings, teams, health); usage limits are `lib/limits.js`; other parts include `commands.js` terminal
-  commands, `projects.js` handoffs and the Projects board, `skills.js` skill proposals, `upkeep.js` reminders, restart
-  and office settings, `on-call.js` who stays on a team, `lessons.js` lessons from jobs that went wrong, `evals.js` the
-  agent eval over time, `backups.js`. ARMS is in `arms.js`. The window is `public/os.html` with its styles in
-  `public/ui/os.css` and its code in `public/ui/os/*.js` (core, processes, jobs, apps, arms, input, live, brainmap,
-  brain, away, shell; classic scripts sharing one scope, loaded in that order). The native wrapper is `app/agentos-window.py`.
+- **Layout**: `server.js` only wires things together; every part of the server is a module in `lib/` (an `install(ctx)`
+  that gets what it uses from server.js). [Architecture](architecture.md) lists every module and what it owns. The window
+  is `public/os.html` with its styles in `public/ui/os.css` and its code in `public/ui/os/*.js` (classic scripts sharing
+  one scope, loaded in order); the native wrapper is `app/agentos-window.py`.
+- **The usual checks**: `npm test` (every file parses, then the API check), `npm run lint`, and `npm run test:ui` when
+  the window changed. CI runs them on every push and pull request.
 - **Check the server after every change**: `node scripts/api-check.js` (a few seconds, costs nothing) starts a throwaway copy with
   fake agents and an empty `data/`, and checks the token wall, jobs and follow-ups, taking back a queued message, commands and the
   block list, plans and automatic approval, handoffs, the Projects board, skills, libraries, mail, changes and undo, the timeline,
@@ -85,7 +82,7 @@ says **Update ready** when the server code changed since it started (restart) or
   team of three, and save a project handoff when you wrap up. The office also runs it by itself (`defaults.agentEvalDays`,
   1 = daily, 0 = only by hand; Preferences → Agents & teams) once it has been idle for 20 minutes and both usage windows
   are under half, keeps every run in `data/evals.jsonl`, and shows them in **Health** as a grid: one column per run,
-  ◆ where the agents' instructions (`roster.json`, `mcp-delegate.js`) changed since the run before. A behaviour that
+  ◆ where the agents' instructions (`roster.json`, `lib/mcp-delegate.js`) changed since the run before. A behaviour that
   passed last time and fails now is a notification. **Run now** in Health runs it straight away.
   `node scripts/prompt-size.js --detail` shows how many tokens each
   role's fixed instructions and office tools take, by section.
@@ -116,6 +113,25 @@ size, what filled it, and where to save.
 **Compacting long sessions**: agents run with `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set to `defaults.autoCompactTokens` (150k by
 default; Preferences → Agents & teams), so a long job summarises its history instead of re-reading an ever longer context on
 every call. `job-cost`'s "avg context" shows the effect.
+
+## Telegram: approve from your phone
+
+Plans, questions, terminal commands and edit-access requests that need you can also arrive in Telegram, with the same
+buttons as the window (Approve / Reject, Run / Run all on this job / Don't run, the question's options, Allow / Deny).
+For a question without options, reply to its message with your answer. Optionally you also get a short note when a job
+finishes.
+
+1. In Telegram, open **@BotFather**, send `/newbot`, pick a name, and copy the token it gives you (`123456789:ABC…`).
+2. In Agentic OS: **Preferences → Notifications → Telegram**, paste the token. The office checks it and shows a 6-digit code.
+3. Send that code to your new bot (or `/start <code>`). That chat is now linked; **Send a test** to check.
+
+- Only the linked chat is listened to; messages and button presses from anyone else are ignored.
+- The office polls Telegram (no webhook, nothing exposed to the internet), only while a token is set. Whatever piled up
+  while the office was off is skipped at start, so old button presses never act later.
+- When you decide something in the window, its Telegram message is updated ("Decided in the window: …") and its
+  buttons disappear; a decision in Telegram shows up in the job like one made in the window.
+- The token, the linked chat and the settings are kept in `data/telegram.json` (readable only by you, ignored by git).
+  The API never returns the token. **Disconnect** forgets all of it.
 
 ## Background, tray and start at login
 

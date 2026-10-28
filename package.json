@@ -1,0 +1,44 @@
+{
+  "name": "agentic-os",
+  "version": "0.1.0",
+  "description": "A permanent team of Claude agents, run like an operating system: every agent is a process, every task is a job. Desktop app for Ubuntu.",
+  "license": "MIT",
+  "author": "Renis Myumyun",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Renis032/AgenticOS.git"
+  },
+  "homepage": "https://github.com/Renis032/AgenticOS#readme",
+  "bugs": {
+    "url": "https://github.com/Renis032/AgenticOS/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ai-agents",
+    "multi-agent",
+    "agent-orchestration",
+    "desktop-app",
+    "ubuntu"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "./agentos",
+    "stop": "./agentos stop",
+    "status": "./agentos status",
+    "demo": "./agentos demo",
+    "setup": "./agentos setup",
+    "check": "node scripts/check-syntax.js",
+    "lint": "eslint .",
+    "test": "node scripts/check-syntax.js && node scripts/api-check.js",
+    "test:ui": "node scripts/ui-check.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0"
+  }
+}

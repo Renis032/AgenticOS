@@ -23,7 +23,7 @@ function nextSteps(state) {
 APPS.projects = {
   mount(root) {
     root.innerHTML = `<div class="app"><div class="toolbar"><h1>Projects</h1><input class="in" id="boardQ" placeholder="Filter projects…" value="${esc(S.boardQ)}" style="width:220px"><span class="hint" style="flex:1">Where each personal project stands, from its handoff. Continue starts a job that picks up there.</span><button class="btn sm" data-act="boardRefresh">Refresh</button></div>
-      <div class="page" id="board"><div class="empty">Loading…</div></div></div>`;
+      <div class="page" id="board">${skel(6, "cards")}</div></div>`;
     $('#boardQ').oninput = (e) => { S.boardQ = e.target.value; APPS.projects.update(); };
     loadBoard(true).then(() => APPS.projects.update());
   },
@@ -56,17 +56,20 @@ APPS.newjob = {
   mount(root) {
     root.innerHTML = `<div class="app"><div class="toolbar"><h1>New job</h1><span class="hint">Describe the task or paste the bug report. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> sends.</span></div>
       <div class="page"><div style="max-width:820px">
+        <div class="chips" id="njTpl"></div>
         <div class="chips" id="njChips"></div>
         <textarea id="njText" style="min-height:200px" placeholder="What should the agents do?"></textarea>
         <div class="files" id="njFiles"></div>
         <div class="row"><select id="njProject"></select><select id="njEffort" title="How hard the lead thinks on this job"><option value="">lead effort: auto</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>
-          <button class="btn" data-act="attachNew">📎 Attach</button><label class="chk"><input type="checkbox" id="njAfter"> start after the 5-hour limit resets</label><span style="flex:1"></span><button class="btn pri" data-act="sendJob">Start job</button></div>
-        <div class="hint" id="njRoute" style="margin-top:10px"></div><div class="hint" id="njEst" style="margin-top:4px"></div>
+          <button class="btn ibtn" data-act="attachNew">${ic('clip')} Attach files</button><label class="chk"><input type="checkbox" id="njAfter"> start after the 5-hour limit resets</label><span style="flex:1"></span><button class="btn pri" data-act="sendJob">Start job</button></div>
+        <div id="njRoute" class="routecard" aria-live="polite"></div><div class="hint" id="njEst" style="margin-top:4px"></div>
       </div></div></div>`;
     const sel = $('#njProject');
-    sel.innerHTML = '<option value="">Route automatically (rules, then God)</option>' + S.projects.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} → ${esc(who(p.department))}${p.leadEffort ? ` (${esc(p.leadEffort)})` : ''}</option>`).join('');
+    sel.innerHTML = '<option value="">Let the office decide</option>' + S.projects.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} → ${esc(who(p.department))}${p.leadEffort ? ` (${esc(p.leadEffort)})` : ''}</option>`).join('');
     sel.value = pref('project', '');
     $('#njEffort').value = pref('defaultEffort', '');
+    $('#njEffort').onchange = () => routePreview();
+    renderTemplates();
     const txt = $('#njText');
     if (S.quickText) { txt.value = S.quickText; S.quickText = ''; }
     txt.oninput = () => routePreview();
@@ -94,13 +97,46 @@ function routePreview() {
   clearTimeout(routeTimer);
   routeTimer = setTimeout(async () => {
     const el = $('#njRoute'); if (!el) return;
-    const proj = $('#njProject').value;
     const text = $('#njText').value.trim();
-    if (proj) { const p = S.projects.find((x) => x.name === proj); el.textContent = p ? `Goes straight to ${who(p.department)}.` : ''; return; }
-    if (!text) { el.textContent = ''; return; }
-    const r = await api('POST', '/api/script', { name: 'route', args: [text] }).catch(() => null);
-    if (r && r.message && $('#njRoute')) $('#njRoute').textContent = 'Routing: ' + r.message.replace(/\n/g, ' — ');
-  }, 400);
+    const project = $('#njProject').value;
+    if (!text && !project) { el.innerHTML = ''; return; }
+    const r = await api('POST', '/api/route-preview', { text, project: project || undefined, effort: $('#njEffort').value || undefined, attachments: S.newFiles }).catch(() => null);
+    if (!r || !$('#njRoute')) return;
+    const to = r.via === 'god' ? 'The office will pick the lead' : `Goes to <b>${esc(r.persona || '?')}</b>`;
+    const why = r.via === 'god' ? `(${esc(r.reason || 'nothing matched')}; God reads it and assigns it)` : r.via === 'rules' ? `(${esc(r.reason)})` : '';
+    const busy = r.busyWith && r.via !== 'god' ? `<div class="hint">${esc(r.persona)} is busy with #${r.busyWith.n}; ${r.twins > 0 ? `a second ${esc(r.persona)} will take this one` : 'this one waits until they finish'}.</div>` : '';
+    $('#njRoute').innerHTML = `<div class="rc"><span class="arrow">→</span><span>${to}${r.project ? ` · <b>${esc(r.project)}</b>` : ''} ${why}</span></div>
+      <div class="rc2">${r.effort ? `<span class="tag">${esc(r.effort)} effort</span> <span class="hint">${esc(r.effortWhy)}</span>` : `<span class="hint">effort: ${esc(r.effortWhy)}</span>`}${r.estimateUsd != null ? ` <span class="tag">≈ ${money(r.estimateUsd)}</span> <span class="hint">${ticketShare(r.estimateUsd) ? `${ticketShare(r.estimateUsd).replace(/^≈ /, '')} · ` : ''}typical for ${r.basedOn} similar job${r.basedOn === 1 ? '' : 's'}</span>` : ''}</div>${busy}`;
+  }, 300);
+}
+// Templates: a head start for the usual kinds of job. Built-in ones plus your own (saved in this window).
+const BUILTIN_TEMPLATES = [
+  { name: 'Bug report', effort: 'xhigh', text: 'Bug: <what happens>\n\nExpected: <what should happen>\n\nSteps to reproduce:\n1. <first step>\n\nError or log:\n<paste it here>' },
+  { name: 'New feature', effort: 'high', text: 'Add <the feature> to <the project>.\n\nWhat it should do:\n- <behaviour>\n\nDone when:\n- <how we know it works>' },
+  { name: 'Code review', effort: 'high', text: 'Review <the files, branch or change> for bugs, risks and missing tests. List findings by severity with file:line. Don\'t change anything.' },
+  { name: 'Research', effort: 'high', text: 'Research <the topic>: compare the main options with sources, and recommend one for <my situation>.' },
+  { name: 'Quick question', effort: 'medium', text: '<your question>' },
+];
+const userTemplates = () => prefObj('templates') || [];
+function renderTemplates() {
+  const el = $('#njTpl'); if (!el) return;
+  const mine = userTemplates();
+  el.innerHTML = `<span class="hint">Start from:</span>${BUILTIN_TEMPLATES.map((t, i) => `<button class="chip" data-act="useTpl" data-k="b${i}" title="${esc(t.text.slice(0, 120))}">${esc(t.name)}</button>`).join('')}`
+    + mine.map((t, i) => `<span class="chip mine"><button class="lnk" data-act="useTpl" data-k="u${i}" title="${esc(t.text.slice(0, 120))}">${esc(t.name)}</button><button class="x" data-act="delTpl" data-i="${i}" title="Remove this template" aria-label="Remove template ${esc(t.name)}">×</button></span>`).join('')
+    + '<button class="chip ghost" data-act="saveTpl" title="Save what you typed as a template">+ Save as template</button>';
+}
+function useTemplate(k) {
+  const t = k[0] === 'b' ? BUILTIN_TEMPLATES[+k.slice(1)] : userTemplates()[+k.slice(1)];
+  if (!t) return;
+  const box = $('#njText');
+  if (box.value.trim() && !confirm('Replace what you typed with this template?')) return;
+  box.value = t.text;
+  if (t.effort) $('#njEffort').value = t.effort;
+  if (t.project !== undefined && [...$('#njProject').options].some((o) => o.value === t.project)) $('#njProject').value = t.project;
+  box.focus();
+  const m = box.value.match(/<[^<>\n]+>/);
+  if (m) box.setSelectionRange(m.index, m.index + m[0].length);
+  routePreview();
 }
 async function sendNewJob() {
   const text = $('#njText').value.trim();
@@ -143,7 +179,7 @@ APPS.messages = {
     const mineChat = grew && list.slice(S.chatLen || 0).every((m) => m.fromId === 'user');
     const atEndChat = b.scrollHeight - b.scrollTop - b.clientHeight < 60;
     const topChat = b.scrollTop;
-    b.innerHTML = list === null ? '<div class="empty">Loading…</div>' : list.length ? list.map((m) => `<div class="chatmsg ${m.fromId === 'user' ? 'me' : ''}"><div class="h"><b ${m.fromId !== 'user' ? `data-act="sel2" data-id="${m.fromId}" style="cursor:pointer"` : ''}>${esc(m.from)}</b> → ${esc(m.to || '')}${m.ask ? ' · question' : ''}<span class="ts">${ago(m.t)}</span></div><div class="md">${md(m.text)}</div>${m.ticketId ? `<a class="hint" data-act="openJob" data-id="${m.ticketId}">open job</a>` : ''}</div>`).join('') : '<div class="empty">Quiet so far.</div>';
+    b.innerHTML = list === null ? skel(5) : list.length ? list.map((m) => `<div class="chatmsg ${m.fromId === 'user' ? 'me' : ''}"><div class="h"><b ${m.fromId !== 'user' ? `data-act="sel2" data-id="${m.fromId}" style="cursor:pointer"` : ''}>${esc(m.from)}</b> → ${esc(m.to || '')}${m.ask ? ' · question' : ''}<span class="ts">${ago(m.t)}</span></div><div class="md">${md(m.text)}</div>${m.ticketId ? `<a class="hint" data-act="openJob" data-id="${m.ticketId}">open job</a>` : ''}</div>`).join('') : '<div class="empty">Quiet so far.</div>';
     if (!sameRoom || atEndChat || mineChat) b.scrollTop = b.scrollHeight;
     else { b.scrollTop = topChat; if (grew) newPill(b, list.length - (S.chatLen || 0)); }
     S.chatRoomFor = k; S.chatLen = list ? list.length : 0;
@@ -162,14 +198,16 @@ APPS.memory = {
     const a = S.agents[S.memAgent];
     if (!a) { $('#memBody').innerHTML = '<div class="empty">Pick an agent to read what they have learned. Each agent rewrites its memory at the end of a task, and sees it at the start of the next.</div>'; return; }
     const L = a.lessons || [];
-    const key = a.id + '|' + a.memoryVersion + '|' + L.map((l) => l.id).join();
+    const drafts = lessonDrafts().filter((x) => x.a.id === a.id);
+    const key = a.id + '|' + a.memoryVersion + '|' + L.map((l) => l.id).join() + '|' + drafts.map((x) => x.l.id).join() + '|' + S.lessonEdit;
     if (key === S.memKey) return;
+    if (document.activeElement && document.activeElement.classList.contains('lrin') && S.lessonEdit) return;
     S.memKey = key;
     $('#memTitle').textContent = `${a.persona} · memory`;
     $('#memSub').textContent = a.memoryVersion ? `version ${a.memoryVersion}${a.memoryUpdatedAt ? ' · updated ' + ago(a.memoryUpdatedAt) : ''}` : '';
     // Lessons: one line each, written after a job failed, was rated 👎, needed rework or was undone (lib/lessons.js).
     const lessonsHtml = L.length ? `<div class="card lessons" style="max-width:820px;margin-bottom:14px"><h3>${ic('bell')} Lessons from jobs that went wrong <span class="hint">${L.length} of 8</span></h3>${L.slice().reverse().map((l) => `<div class="li"><span style="flex:1;min-width:0">${esc(l.text)}</span><span class="hint">${l.ticketN ? '#' + l.ticketN + ' · ' : ''}${ago(l.t)}</span><button class="btn sm" data-act="lessonDel" data-id="${a.id}" data-lid="${l.id}" title="Remove this lesson">Remove</button></div>`).join('')}</div>` : '';
-    api('GET', `/api/agents/${a.id}/memory`).then((r) => { if (S.memAgent === a.id) $('#memBody').innerHTML = lessonsHtml + (r.text ? `<div class="md" style="max-width:820px">${md(r.text)}</div>` : '<div class="empty">Nothing written yet.</div>'); });
+    api('GET', `/api/agents/${a.id}/memory`).then((r) => { if (S.memAgent === a.id) $('#memBody').innerHTML = `<div style="max-width:820px;margin-bottom:14px">${lessonReviewHtml(drafts)}</div>` + lessonsHtml + (r.text ? `<div class="md" style="max-width:820px">${md(r.text)}</div>` : '<div class="empty">Nothing written yet.</div>'); });
   },
 };
 
@@ -304,7 +342,7 @@ APPS.health = {
 // The agent eval over time (lib/evals.js): one column per run, one row per behaviour. ✓/✗ carry the result, so the
 // colour is never the only signal; ◆ marks a run whose agent instructions changed since the run before.
 function evalCard(ev) {
-  if (!ev) return '<div class="card" style="margin-top:12px"><h3>Agent eval</h3><div class="hint">Loading…</div></div>';
+  if (!ev) return `<div class="card" style="margin-top:12px"><h3>Agent eval</h3>${skel(3)}</div>`;
   const runs = ev.runs.slice(-14);
   const every = ev.everyDays ? (ev.everyDays === 1 ? 'every day' : `every ${ev.everyDays} days`) + ' when the office has been idle for 20 minutes' : 'only when you run it';
   const head = `<h3>${ic('check')} Agent eval</h3><div class="evtop"><span class="hint">Real agents on ${esc((runs[runs.length - 1] || ev.running || {}).model || 'haiku')} in a throwaway office · runs ${every}.</span>${ev.running ? `<span class="hint"><span class="dots"><i></i><i></i><i></i></span> Running since ${ago(ev.running.startedAt)}…</span>` : '<button class="btn sm" data-act="evalRun">Run now</button>'}</div>`;
@@ -353,10 +391,82 @@ APPS.settings = {
 };
 
 // ================================================================ app: Today (what needs you, what is running, what finished, where projects stand)
+// Today's extras: what happened lately, what jobs cost day by day, and what is worth doing next.
+function activityFeed(tickets) {
+  const since = Date.now() - 2 * 86400000;
+  const rows = [];
+  for (const t of tickets) for (const e of t.thread) {
+    if (e.t < since) continue;
+    const by = e.from && e.from !== 'user' && e.from !== 'system' && e.from !== 'script' ? who(e.from) : null;
+    let text = null;
+    if (e.kind === 'user') text = `You started <b>#${t.n}</b>`;
+    else if (e.kind === 'followup' || e.kind === 'reply') text = `You replied on <b>#${t.n}</b>`;
+    else if (e.kind === 'answer' && by) text = `${esc(by)} answered <b>#${t.n}</b>${t.changes && t.changes.length ? ` · ${t.changes.length} file${t.changes.length === 1 ? '' : 's'} changed` : ''}${t.costUsd ? ` · ${money(t.costUsd)}` : ''}`;
+    else if (e.kind === 'plan' && by) text = `${esc(by)} proposed a plan on <b>#${t.n}</b> · ${money(e.estimateUsd)}`;
+    else if (e.kind === 'plandecision') text = `Plan ${/reject/i.test(e.text || '') ? 'rejected' : 'approved'} on <b>#${t.n}</b>`;
+    else if (e.kind === 'question' && by) text = `${esc(by)} asked you something on <b>#${t.n}</b>`;
+    if (text) rows.push({ t: e.t, id: t.id, text, title: t.title });
+  }
+  rows.sort((a, b) => b.t - a.t);
+  if (!rows.length) return '<div class="hint">Nothing in the last two days. Start a job and it shows up here.</div>';
+  return rows.slice(0, 10).map((r) => `<div class="li" data-act="openJob" data-id="${r.id}"><span class="hint mono" style="width:92px;flex:none">${new Date(r.t).toDateString() === new Date().toDateString() ? clock(r.t) : `${new Date(r.t).toLocaleDateString(undefined, { weekday: 'short' })} ${clock(r.t)}`}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.title)}">${r.text} <span class="hint">${esc(short(r.title, 60))}</span></span></div>`).join('');
+}
+function spendChart(tickets) {
+  const days = 14, dayMs = 86400000, start = new Date(); start.setHours(0, 0, 0, 0);
+  const sums = Array(days).fill(0);
+  for (const t of tickets) {
+    const at = t.closedAt || t.createdAt; const k = days - 1 - Math.floor((start.getTime() + dayMs - at) / dayMs);
+    if (k >= 0 && k < days) sums[k] += t.costUsd || 0;
+  }
+  const max = Math.max(...sums), week = sums.slice(-7).reduce((a, b) => a + b, 0);
+  if (!max) return '';
+  const bars = sums.map((v, i) => { const h = Math.max(v ? 2 : 0, Math.round((v / max) * 36)); const d = new Date(start.getTime() - (days - 1 - i) * dayMs); return `<rect x="${i * 14}" y="${38 - h}" width="10" height="${h}" rx="2" class="${i === days - 1 ? 'today' : ''}"><title>${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}: ${money(v)}</title></rect>`; }).join('');
+  return `<div class="spark"><svg viewBox="0 0 ${days * 14} 40" width="${days * 14}" height="40" role="img" aria-label="Job costs over the last 14 days">${bars}</svg><span class="hint">last 14 days · <b>${money(week)}</b> this week</span></div>`;
+}
+function suggestions(tickets, finished) {
+  const out = [];
+  const stale = (S.board || []).filter((c) => c.handoff && c.handoff.updated && Date.now() - new Date(c.handoff.updated).getTime() > 7 * 86400000).slice(0, 2);
+  for (const c of stale) out.push(`<div class="li" data-act="boardContinue" data-name="${esc(c.name)}" data-lead="${esc(c.lead)}">${ic('projects')}<span style="flex:1"><b>${esc(c.name)}</b> hasn't moved since ${esc(c.handoff.updated)}</span><span class="hint">continue</span></div>`);
+  const failed = tickets.filter((t) => ['failed', 'interrupted'].includes(t.status) && t.closedAt > Date.now() - 3 * 86400000).slice(0, 2);
+  for (const t of failed) out.push(`<div class="li" data-act="openJob" data-id="${t.id}">${ic('reload')}<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Retry <b>#${t.n}</b> ${esc(short(t.title, 50))}</span><span class="hint">${esc(t.status)}</span></div>`);
+  const unrated = tickets.filter((t) => t.status === 'done' && t.answer && !t.rating && t.closedAt > Date.now() - 7 * 86400000);
+  if (unrated.length) out.push(`<div class="li" data-act="openJob" data-id="${unrated[0].id}">${ic('check')}<span style="flex:1">Rate ${unrated.length} recent answer${unrated.length === 1 ? '' : 's'}: it teaches your team what you like</span><span class="hint">rate</span></div>`);
+  if (!tickets.length) out.push(`<div class="li" data-act="tour">${ic('info')}<span style="flex:1">New here? Take the 1-minute tour</span><span class="hint">start</span></div>`);
+  return out.length ? out.join('') : '<div class="hint">Nothing to suggest. You\'re all caught up.</div>';
+}
+// Getting set up: a short checklist on Today that ticks itself off and goes away once done (or dismissed).
+function setupChecklist(tickets) {
+  if (pref('setupHidden', '0') === '1') return '';
+  const steps = [
+    { done: S.projects.some((p) => p.department && p.department !== S.root), label: 'Tell the office about your projects', hint: 'so jobs go straight to the right lead', act: 'data-act="app" data-app="settings"', cta: 'Teams & roles' },
+    { done: tickets.length > 0, label: 'Start your first job', hint: 'anything: a bug, a feature, a question', act: 'data-act="app" data-app="newjob"', cta: 'New job' },
+    { done: tickets.some((t) => t.rating), label: 'Rate an answer', hint: 'it teaches your team what you like', act: (() => { const t = tickets.find((x) => x.status === 'done' && x.answer); return t ? `data-act="openJob" data-id="${t.id}"` : 'data-act="app" data-app="jobs"'; })(), cta: 'Rate' },
+    { done: !!(S.tg && S.tg.linked), label: 'Connect Telegram', hint: 'approve plans from your phone', act: 'data-act="prefs" data-sec="notifications"', cta: 'Connect', skip: S.tg && S.tg.unavailable },
+    { done: pref('toured', '0') === '1', label: 'Take the 1-minute tour', hint: 'where everything is', act: 'data-act="tour"', cta: 'Start' },
+  ].filter((x) => !x.skip);
+  const left = steps.filter((x) => !x.done).length;
+  if (!left) return '';
+  return `<div class="card wide setup"><h3>${ic('check')} Getting set up <span class="hint">${steps.length - left} of ${steps.length} done</span><span style="flex:1"></span><a class="hint" data-act="setupHide">hide</a></h3>
+    <div class="sbar"><i style="width:${Math.round(((steps.length - left) / steps.length) * 100)}%"></i></div>
+    ${steps.map((x) => `<div class="li ${x.done ? 'done' : ''}" ${x.done ? '' : x.act}><span class="ck">${x.done ? '✓' : ''}</span><span style="flex:1"><b>${esc(x.label)}</b> <span class="hint">${esc(x.hint)}</span></span>${x.done ? '' : `<span class="hint">${esc(x.cta)}</span>`}</div>`).join('')}</div>`;
+}
+// Lessons the agents wrote after a job went wrong, waiting for the user (lib/lessons.js): keep, edit or drop each.
+function lessonDrafts() {
+  const hid = S.hiddenDrafts || new Set();
+  return Object.values(S.agents).flatMap((a) => (a.lessonDrafts || []).filter((l) => !hid.has(l.id)).map((l) => ({ a, l }))).sort((x, y) => y.l.t - x.l.t);
+}
+function lessonReviewHtml(list, wide) {
+  if (!list.length) return '';
+  return `<div class="card ${wide ? 'wide' : ''} lreview"><h3>${ic('memory')} Lessons to review <span class="pill s-ask">${list.length}</span></h3><div class="hint">Written by the leads after a job went wrong. They reach the agents only once you keep them.</div>
+    ${list.map(({ a, l }) => `<div class="lr"><div class="lh"><b>${esc(a.persona)}</b> <span class="hint">${l.ticketN ? `after <a data-act="openJobN" data-n="${l.ticketN}">#${l.ticketN}</a> · ` : ''}${ago(l.t)}</span></div>
+      ${S.lessonEdit === l.id ? `<input id="lr-${l.id}" class="in lrin" maxlength="220" value="${esc(l.text)}" data-id="${a.id}" data-lid="${l.id}" aria-label="Lesson text">` : `<div class="lt">${esc(l.text)}</div>`}
+      <div class="row"><button class="btn sm pri" data-act="lessonKeep" data-id="${a.id}" data-lid="${l.id}">${S.lessonEdit === l.id ? 'Keep as edited' : 'Keep'}</button>${S.lessonEdit === l.id ? '' : `<button class="btn sm" data-act="lessonEdit" data-lid="${l.id}">Edit</button>`}<button class="btn sm danger" data-act="lessonDrop" data-id="${a.id}" data-lid="${l.id}">Drop</button></div></div>`).join('')}</div>`;
+}
 APPS.today = {
   mount(root) {
     root.innerHTML = `<div class="app"><div class="toolbar"><h1>Today</h1><span class="hint" id="tdHint"></span><span class="sp"></span><button class="btn sm" data-act="app" data-app="newjob">${ic('newjob')} New job</button></div><div class="page" id="tdBody"></div></div>`;
     loadBoard().then(() => { if (S.app === 'today') { S.tdKey = null; APPS.today.update(); } });
+    if (!S.tg) api('GET', '/api/telegram').then((r) => { S.tg = r; S.tdKey = null; if (S.app === 'today') APPS.today.update(); }).catch(() => { S.tg = { unavailable: true }; });
     api('GET', '/api/skill-proposals').then((l) => { S.tdProps = l.filter((x) => x.status === 'pending'); S.tdKey = null; if (S.app === 'today') APPS.today.update(); }).catch(() => {});
     S.tdKey = null;
   },
@@ -370,22 +480,25 @@ APPS.today = {
     const projects = (S.board || []).filter((c) => c.handoff).slice(0, 4);
     const props = S.tdProps || [];
     const R = S.restart || {};
-    const key = JSON.stringify([need.map((t) => t.id + t.thread.length), busy.map((a) => a.id + (S.live[a.id] || {}).t), finished.map((t) => t.id), projects.length, props.length, R.codeChanged, Math.floor(Date.now() / 30000)]);
+    const key = JSON.stringify([need.map((t) => t.id + t.thread.length), busy.map((a) => a.id + (S.live[a.id] || {}).t), finished.map((t) => t.id), projects.length, props.length, R.codeChanged, Math.floor(Date.now() / 30000), tickets.length, tickets.filter((t) => t.rating).length, !!(S.tg && S.tg.linked), pref('toured', '0'), pref('setupHidden', '0'), lessonDrafts().map((x) => x.l.id), S.lessonEdit]);
     if (key === S.tdKey) return;
+    if (document.activeElement && document.activeElement.classList.contains('lrin') && S.lessonEdit) return; // don't wipe an edit in progress
     S.tdKey = key;
     const h = new Date().getHours();
     $('#tdHint').textContent = `${h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'} · ${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}`;
     const jobLink = (t, extra) => `<div class="li" data-act="openJob" data-id="${t.id}"><span class="hint mono">#${t.n}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>${extra || ''}</div>`;
-    const why = (t) => (t.waiting ? 'a question' : t.plan && t.plan.status === 'pending' ? `a plan · ${money(t.plan.estimateUsd)}` : pendingCmd(t) ? 'a command to run' : 'budget stop');
+    const why = (t) => (t.waiting ? 'a question' : t.plan && t.plan.status === 'pending' ? `a plan · ${money(t.plan.estimateUsd)}${ticketShare(t.plan.estimateUsd) ? ` · ${ticketShare(t.plan.estimateUsd).replace(/^≈ /, '').split(' · ')[0]}` : ''}` : pendingCmd(t) ? 'a command to run' : 'budget stop');
     const meters = ['five_hour', 'seven_day'].map((k) => { const w = windowOf(k); if (!w) return ''; const u = live(w); return `<div class="hbar"><span class="n">${k === 'five_hour' ? '5-hour window' : 'This week'}</span><span class="t"><i style="width:${Math.min(100, u * 100)}%;background:${meterColor(u)}"></i></span><span class="v">${pct(u)}</span></div>`; }).join('');
-    $('#tdBody').innerHTML = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">
-      <div class="card"><h3>${ic('bell')} Needs you ${need.length ? `<span class="pill s-paused">${need.length}</span>` : ''}</h3>${need.length ? need.map((t) => jobLink(t, `<span class="hint">${why(t)}</span>`)).join('') : '<div class="hint">Nothing is waiting for you.</div>'}
+    $('#tdBody').innerHTML = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">${setupChecklist(tickets)}${lessonReviewHtml(lessonDrafts(), true)}
+      <div class="card"><h3>${ic('bell')} Needs you ${need.length ? `<span class="pill s-ask">${need.length}</span>` : ''}</h3>${need.length ? need.map((t) => jobLink(t, `<span class="hint">${why(t)}</span>`) + (t.waiting ? qoptsHtml(t.waiting, t.id) : '')).join('') : '<div class="hint">Nothing is waiting for you.</div>'}
         ${props.length ? `<div class="li" data-act="app" data-app="skills">${ic('skills')}<span style="flex:1">${props.length} skill proposal${props.length === 1 ? '' : 's'} from your agents</span><span class="hint">review</span></div>` : ''}
         ${R.codeChanged ? `<div class="li" data-act="restartIdle">${ic('reload')}<span style="flex:1">An update is ready</span><span class="hint">restart when idle</span></div>` : ''}</div>
       <div class="card"><h3>${ic('processes')} Working now</h3>${busy.length ? busy.map((a) => { const t = agentJob(a); const L = S.live[a.id] || {}; return `<div class="li" data-act="openJob" data-id="${t.id}"><span class="dots"><i></i><i></i><i></i></span><b>${esc(a.persona)}</b><span class="hint" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">#${t.n} · ${esc(L.thought || a.progress || 'working')}</span></div>`; }).join('') : '<div class="hint">Nobody is working right now.</div>'}</div>
       <div class="card"><h3>${ic('check')} Finished in the last 24 hours</h3>${finished.length ? finished.slice(0, 8).map((t) => jobLink(t, `${pill(t.status)}<span class="hint">${ago(t.closedAt)}</span>`) + (t.answer ? `<div class="hint" style="margin:-4px 0 6px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(short(plainText(t.answer), 140))}</div>` : '')).join('') : '<div class="hint">No jobs finished today.</div>'}</div>
       <div class="card"><h3>${ic('projects')} Projects</h3>${projects.length ? projects.map((c) => { const next = nextSteps(c.handoff.state); return `<div class="li" data-act="boardContinue" data-name="${esc(c.name)}" data-lead="${esc(c.lead)}" title="Continue ${esc(c.name)}"><b>${esc(c.name)}</b><span class="hint" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${next.length ? 'next: ' + esc(next[0]) : 'updated ' + esc(c.handoff.updated || '?')}</span><span class="hint">continue</span></div>`; }).join('') + '<div class="hint" style="margin-top:6px"><a data-act="app" data-app="projects">All projects</a></div>' : '<div class="hint">No project handoffs yet. They appear after a job on a personal project.</div>'}</div>
-      <div class="card"><h3>${ic('usage')} Usage</h3>${meters || '<div class="hint">No usage data yet.</div>'}<div class="hint" style="margin-top:6px">Jobs in the last 24 hours: <b>${money(spentToday)}</b> at API prices · <a data-act="app" data-app="usage">details</a></div></div>
+      <div class="card"><h3>${ic('usage')} Usage</h3>${meters || '<div class="hint">No usage data yet.</div>'}<div class="hint" style="margin-top:6px">Jobs in the last 24 hours: <b>${money(spentToday)}</b> at API prices · <a data-act="app" data-app="usage">details</a></div>${spendChart(tickets)}</div>
+      <div class="card"><h3>${ic('recos')} Suggested next</h3>${suggestions(tickets, finished)}</div>
+      <div class="card wide"><h3>${ic('processes')} Activity</h3>${activityFeed(tickets)}</div>
     </div>`;
   },
 };

@@ -26,6 +26,11 @@ hours (rework) or you undo its changes, each lead on it (never God) is asked onc
 (the oldest drops off, a repeat replaces the old one), each under 220 characters, and shown at the start of every
 session. The Memory app lists them above the memory, with **Remove** on each.
 
+**You review lessons first** (on by default; Preferences → Agents & teams → *Review lessons before agents use them*).
+A new lesson waits as a draft on Today (and in that agent's Memory page) until you **Keep** it, **Edit** it and keep
+your wording, or **Drop** it. Only kept lessons reach the agents' prompts, so a wrong conclusion from a bad day doesn't
+steer every later job. With review off, lessons apply straight away as before.
+
 **Who stays on the team** (`lib/on-call.js`). Only generally useful people are permanent:
 
 - **Roster roles** (the researcher, the analysts and reviewers defined in the roster) join the team for good.
@@ -57,6 +62,22 @@ went on call for their project.
 2. The lead works it, hiring sub-agents with `delegate` if they want.
 3. **The lead answers you directly** on the ticket. God never rewrites answers.
 4. Reply on the ticket to follow up; it goes to the lead who owns it. Or message a lead directly from their sheet.
+
+## Second desks (twins)
+
+A lead works one message at a time, so a new job used to wait while the lead was busy with a long one. Now, when a
+lead is busy and a job for **another** ticket arrives, a **second desk** of that lead (shown as "Renko ·2") takes it:
+same role, instructions, tools and memory, its own fresh session. It owns that ticket end to end — answer, plans,
+questions, commands — and follow-ups on it go to the twin while it is alive.
+
+- Follow-ups on the lead's **current** ticket still wait for the lead; mail and library tidying stay with the lead.
+- The memory is the lead's and **read-only** for a twin; lessons a twin sends with `add_lesson` go to the lead.
+- A twin **retires** after `twinIdleMinutes` (default 20) idle. Later follow-ups on its tickets go back to the lead,
+  who gets the earlier answer as context.
+- At most `leadTwins` twins per lead (default 1, up to 3; 0 turns the feature off and jobs queue as before), set in
+  Preferences. God is never twinned.
+- A restart retires twins; anything they had queued or were working on goes back to the lead.
+- While a job waits in someone's inbox, the window shows what it is queued behind and its place in line.
 
 ## Models, effort and budgets
 
@@ -90,7 +111,11 @@ went on call for their project.
 - **Attach files**: 📎, drag them into the ticket box or paste a screenshot. Agents get read access to them
   (`data/uploads/`), and images are shown to them. Follow-ups can carry files too.
 - **Questions to you**: a lead can call `ask_user` when the answer changes what it would do. The ticket shows
-  "❓ needs your answer" with clickable options; your next reply on the ticket answers it.
+  "needs your answer" with clickable options; your next reply on the ticket answers it. When the agent gives no
+  options, the office suggests some from the question's wording (`lib/suggest-answers.js`, exact and free): *Yes / No*
+  for a yes/no question, the items of a short list in the question, or the choices in "Which one: A, B or C?". They are
+  marked *Suggested*; nothing is suggested when the wording is unclear. Keys 1–5 pick one on the open job, and the
+  same buttons appear on Today and in Telegram.
 - **Changes tab**: every file an agent edits with Edit/Write/MultiEdit is saved before its first edit on that ticket.
   The tab shows the diff per file, with **Undo** (per file or all), which restores the saved copy. It never
   touches git. Agents are told not to edit with sed or shell redirection, because those edits can't be tracked.
@@ -146,7 +171,7 @@ decide together who changes what. `colleagues` shows who is editing which files.
 ## Agents talking to each other
 
 Every agent has `colleagues` (who is here), `send_message` (a note) and `ask` (a question that waits
-for the answer). Mail reaches a busy agent through a PostToolUse hook (`mail-hook.js`) right after its
+for the answer). Mail reaches a busy agent through a PostToolUse hook (`lib/mail-hook.js`) right after its
 next tool call; an idle lead gets it as a new turn. A lead who is waiting on its sub-agents is woken by
 a question: `delegate` returns early, they answer, then `wait_for_team` resumes waiting. Conversations show in the
 Mind feed, the Messages app and the job thread.
@@ -160,7 +185,7 @@ Each team has documentation its agents read before deciding, and add to with `ad
 - `teams/personal/`, `teams/front-desk/`
 - `teams/personal/projects/<Folder>.md` — **project handoffs** (Personal Projects only): when Renko finishes work on a
   project, or you wrap up, it saves the project's current state and a summary of the chat with `save_project_handoff`.
-  Any later ticket that names the project (`DianisCommunication`, `dianis communication`…) starts with that handoff,
+  Any later ticket that names the project (`RecipeBox`, `recipe box`…) starts with that handoff,
   so the work continues where it stopped. Shown in the Library under "Project handoffs"; the last 12 sessions are kept
   (`defaults.handoffSessions`).
 

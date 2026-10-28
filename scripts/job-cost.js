@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // Where a job's usage went: per agent and model, cache reads vs writes vs output, context size, and what filled the context.
-const { parseArgs, cli, fs, path } = require('./_util');
+const { parseArgs, fs, path } = require('./_util');
 const usage = require('./usage-index');
 
 const ROOT = path.join(__dirname, '..');

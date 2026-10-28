@@ -2,7 +2,7 @@
 'use strict';
 const https = require('https');
 const http = require('http');
-const { parseArgs, cli, fs, path } = require('./_util');
+const { parseArgs, fs, path } = require('./_util');
 const os = require('os');
 
 const KEY_FILES = [path.join(os.homedir(), '.config', 'agentos', 'openrouter.key'), path.join(os.homedir(), '.config', 'openrouter', 'key')];

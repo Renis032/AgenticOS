@@ -15,6 +15,27 @@ function wireDrop(box, getTarget, done) {
   box.addEventListener('drop', (e) => { e.preventDefault(); box.classList.remove('drop'); if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files], getTarget, done); });
   box.addEventListener('paste', (e) => { const fl = [...((e.clipboardData || {}).files || [])]; if (fl.length) { e.preventDefault(); addFiles(fl, getTarget, done); } });
 }
+// Files dropped anywhere on the window: on an open job they join your reply; anywhere else they start a new job.
+// Drops on a message box are handled by wireDrop above (it marks the event as handled).
+document.body.insertAdjacentHTML('beforeend', '<div id="dropAll" aria-hidden="true"><div><b></b><span>Drop the files anywhere</span></div></div>');
+let dropDepth = 0;
+const draggingFiles = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes('Files');
+document.addEventListener('dragenter', (e) => {
+  if (!draggingFiles(e)) return;
+  dropDepth++;
+  $('#dropAll b').textContent = S.app === 'jobs' && S.tickets[S.job] ? `Attach to #${S.tickets[S.job].n}` : 'Start a new job with these files';
+  $('#dropAll').classList.add('on');
+});
+document.addEventListener('dragleave', (e) => { if (draggingFiles(e) && --dropDepth <= 0) { dropDepth = 0; $('#dropAll').classList.remove('on'); } });
+document.addEventListener('dragover', (e) => { if (draggingFiles(e)) e.preventDefault(); });
+document.addEventListener('drop', (e) => {
+  dropDepth = 0; $('#dropAll').classList.remove('on');
+  if (e.defaultPrevented || !e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  const files = [...e.dataTransfer.files];
+  if (S.app === 'jobs' && S.tickets[S.job]) return addFiles(files, () => S.followFiles, () => { $('#jfiles').innerHTML = S.followFiles.map((p) => fileChip(p, true)).join(''); $('#jtext').focus(); });
+  addFiles(files, () => S.newFiles, () => { openApp('newjob'); });
+});
 $('#filePick').addEventListener('change', (e) => { const files = [...e.target.files]; e.target.value = ''; if (pickTarget) addFiles(files, pickTarget, pickDone); });
 function chime(kind) {
   if (pref('sound', '0') !== '1' || pref('dnd', '0') === '1') return;
@@ -35,8 +56,16 @@ function notify(kind, title, text, ticketId) {
   if (NATIVE && pref('notify', '1') === '1') native('notify', { kind, title, body: short(text || '', 280), ticket: ticketId || null });
   const el = document.createElement('div');
   el.className = 'toast';
-  el.innerHTML = `<span class="tic k-${esc(kind)}">${ic(NOTE_ICON[kind] || 'info')}</span><div><b>${esc(title)}</b><span class="hint">${esc(short(text || '', 150))}</span></div>`;
-  el.onclick = () => { if (ticketId && S.tickets[ticketId]) { S.job = ticketId; openApp('jobs'); } else if (kind === 'limit') openApp('usage'); else if (/proposes a skill/.test(title)) openApp('skills'); el.remove(); };
+  el.innerHTML = `<span class="tic k-${esc(kind)}">${ic(NOTE_ICON[kind] || 'info')}</span><div><b>${esc(title)}</b><span class="hint">${esc(short(text || '', 150))}</span>${kind === 'answer' && ticketId && S.tickets[ticketId] ? `<div class="tacts"><button class="btn sm pri" data-t="open">Open</button><button class="btn sm" data-t="1" title="Good answer">${thumb(true)}</button><button class="btn sm" data-t="-1" title="Not good">${thumb(false)}</button></div>` : ''}</div>`;
+  // A finished job's toast rates it in one click (the lead gets it as feedback); Open or anywhere else opens the job.
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-t]');
+    if (!b || b.dataset.t === 'open') return;
+    e.stopPropagation();
+    api('POST', `/api/tickets/${ticketId}/rate`, { score: Number(b.dataset.t), note: '' }).then(() => notifyQuiet(Number(b.dataset.t) > 0 ? 'Thanks for rating it good.' : 'Rated not good. Open the job to say what was missing.')).catch((er) => alert(er.message));
+    el.classList.add('out'); setTimeout(() => el.remove(), 200);
+  }, true);
+  el.onclick = () => { if (ticketId && S.tickets[ticketId]) { S.job = ticketId; openApp('jobs'); } else if (kind === 'limit') openApp('usage'); else if (kind === 'lesson') openApp('today'); else if (/proposes a skill/.test(title)) openApp('skills'); el.remove(); };
   $('#toasts').appendChild(el);
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 200); }, Number(pref('toastSecs', '8')) * 1000);
   if (!NATIVE && pref('notify', '0') === '1' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
@@ -86,6 +115,8 @@ const palRecent = () => { try { return JSON.parse(pref('palRecent', '[]')); } ca
 function palRemember(it) { setPref('palRecent', JSON.stringify([it.k + '|' + it.label, ...palRecent().filter((x) => x !== it.k + '|' + it.label)].slice(0, 8))); }
 function palItems(q) {
   const items = APP_LIST.map((x) => ({ k: 'app', label: x.name, hint: `key ${x.key}`, run: () => openApp(x.id) }));
+  items.push({ k: 'app', label: 'Take the tour', hint: '1 minute', run: () => startTour() });
+  items.push({ k: 'app', label: 'Ask the office', hint: 'Ctrl+J', run: () => openAsk() });
   const jobs = Object.values(S.tickets).sort((a, b) => needsYou(b) - needsYou(a) || b.createdAt - a.createdAt);
   for (const t of jobs) items.push({ k: 'job', id: t.id, label: `#${t.n} ${t.title}`, hint: (needsYou(t) ? 'needs you · ' : '') + stateLabel(t.status) + (t.archived ? ' · archived' : ''), needs: needsYou(t), run: () => { S.job = t.id; openApp('jobs'); } });
   for (const a of Object.values(S.agents)) {
@@ -136,6 +167,7 @@ function palItems(q) {
   if (palFound.q === query) for (const id of palFound.ids.filter((x) => S.tickets[x] && !hits.some((h) => h.id === x)).slice(0, 6)) { const t = S.tickets[id]; hits.push({ k: 'in job', id, label: `#${t.n} ${t.title}`, hint: 'text matches', run: () => { S.job = id; openApp('jobs'); } }); }
   hits.push({ k: 'new job', label: query, hint: 'Enter on this row starts a new job with this text', run: () => { S.quickText = query; openApp('newjob'); } });
   hits.push({ k: 'brain', label: `Find "${query}" in the Brain`, hint: '', run: () => { S.brain.q = query; openApp('brain'); } });
+  hits.push({ k: 'ask', label: `Ask the office: “${query}”`, hint: 'answered from your jobs, memories and libraries', run: () => openAsk(query) });
   return hits;
 }
 function renderPal() {
@@ -148,7 +180,7 @@ function renderPal() {
   clearTimeout(palTimer);
   if (query.length >= 3 && palFound.q !== query) palTimer = setTimeout(() => api('GET', '/api/search?q=' + encodeURIComponent(query)).then((r) => { palFound = { q: query, ids: r.ids || [] }; if ($('#pal').classList.contains('on') && $('#palIn').value.trim() === query) renderPal(); }).catch(() => {}), 220);
 }
-function palRun(it) { closePal(); if (!it) return; if (it.k !== 'new job' && it.k !== 'brain' && it.k !== 'in job') palRemember(it); it.run(); }
+function palRun(it) { closePal(); if (!it) return; if (!['new job', 'brain', 'in job', 'ask'].includes(it.k)) palRemember(it); it.run(); }
 function openPal() { $('#pal').classList.add('on'); $('#palIn').value = ''; palSel = 0; loadBoard().then(() => { if ($('#pal').classList.contains('on')) renderPal(); }); renderPal(); setTimeout(() => $('#palIn').focus(), 0); }
 function closePal() { $('#pal').classList.remove('on'); }
 function showKeys() {
@@ -167,13 +199,54 @@ $('#pal').addEventListener('click', (e) => { const it = e.target.closest('[data-
 $('#quickIn').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.value.trim()) { S.quickText = e.target.value.trim(); e.target.value = ''; openApp('newjob'); } });
 
 // ================================================================ keyboard
+// Keys on an open job: g approves / runs / allows the first thing in Needs you, x refuses it, i jumps to the reply box,
+// Alt+↑/↓ move between messages. (Letters that open apps stay as they are.)
+function jobKeys(e) {
+  const need = document.querySelector('#jneed .need');
+  if ((e.key === 'g' || e.key === 'x') && need) {
+    const b = e.key === 'g' ? need.querySelector('.btn.pri') : need.querySelector('.btn.danger');
+    if (!b) return false;
+    e.preventDefault();
+    b.click();
+    notifyQuiet(`${b.textContent.trim()} · from the keyboard`);
+    return true;
+  }
+  if (e.key === 'i') { e.preventDefault(); $('#jtext').focus(); return true; }
+  if (/^[1-5]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    const b = document.querySelectorAll('#jneed .qopts .btn')[Number(e.key) - 1];
+    if (!b) return false;
+    e.preventDefault();
+    b.click();
+    notifyQuiet(`Answered "${short(b.dataset.v, 40)}" · from the keyboard`);
+    return true;
+  }
+  return false;
+}
+// Editing a lesson draft: Enter keeps it, Escape cancels the edit.
 document.addEventListener('keydown', (e) => {
+  const el = e.target.closest && e.target.closest('.lrin');
+  if (!el) return;
+  if (e.key === 'Enter') { e.preventDefault(); ACT.lessonKeep(el.dataset); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); S.lessonEdit = null; S.tdKey = null; S.memKey = null; dirty(); }
+}, true);
+function stepMessages(dir) {
+  const body = $('#jbody');
+  if (!body) return;
+  const evs = [...body.querySelectorAll('.ev, details.bg')];
+  const top = body.getBoundingClientRect().top + 8;
+  const cur = evs.findIndex((x) => x.getBoundingClientRect().bottom > top);
+  const next = evs[Math.max(0, Math.min(evs.length - 1, (cur < 0 ? 0 : cur) + dir))];
+  if (next) { next.scrollIntoView({ block: 'start', behavior: 'smooth' }); next.classList.add('flash'); setTimeout(() => next.classList.remove('flash'), 700); }
+}
+document.addEventListener('keydown', (e) => {
+  if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && S.app === 'jobs' && S.job && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { e.preventDefault(); stepMessages(e.key === 'ArrowUp' ? -1 : 1); return; }
   if (shellKeys(e)) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#pal').classList.contains('on') ? closePal() : openPal(); return; }
   if (e.key === 'Escape') { if ($('#pal').classList.contains('on')) return closePal(); if (S.app === 'processes' && S.sel) { S.sel = null; writeHash(); return dirty(); } if (S.app === 'jobs' && S.job) { S.job = null; S.replay = null; writeHash(); return dirty(); } }
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === '?') { e.preventDefault(); return openPrefs('keys'); }
+  if (S.app === 'jobs' && S.tickets[S.job] && jobKeys(e)) return;
   const app = APP_LIST.find((x) => x.key === e.key.toLowerCase());
   if (app) { e.preventDefault(); return openApp(app.id); }
   if (S.app === 'processes' && ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) {
@@ -274,18 +347,23 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   message: async () => { const text = $('#inspText').value.trim(); if (!text) return; const r = await api('POST', `/api/agents/${S.sel}/message`, { text }); $('#inspText').value = ''; if (r.ticketId) { S.job = r.ticketId; const w = () => (S.tickets[r.ticketId] ? openApp('jobs') : setTimeout(w, 150)); w(); } },
   feedback: async () => { const text = $('#inspText').value.trim(); if (!text) return; await api('POST', `/api/agents/${S.sel}/feedback`, { text }); $('#inspText').value = ''; notify('answer', 'Feedback saved', `${who(S.sel)} gets it at the start of their next task.`); },
   followup: async () => { const text = $('#inspText').value.trim(); if (!text) return; await api('POST', `/api/agents/${S.sel}/message`, { text }); $('#inspText').value = ''; },
+  setupHide: () => { setPref('setupHidden', '1'); S.tdKey = null; dirty(); },
+  jobBack: () => { S.job = null; S.jviewFor = null; writeHash(); dirty(); },
   openJob: (d) => { S.job = d.id; S.jtab = S.jtab || 'thread'; S.replay = null; openApp('jobs'); },
   toggleArch: () => { S.showArchived = !S.showArchived; APPS.jobs.update(); },
   jtab: (d) => { S.jtab = d.tab; S.jbodyKey = null; writeHash(); renderJob(); },
   pause: () => api('POST', `/api/tickets/${S.job}/pause`),
   resume: () => api('POST', `/api/tickets/${S.job}/resume`),
-  stop: () => { if (confirm('Stop this job and everything running for it?')) api('POST', `/api/tickets/${S.job}/stop`); },
-  archive: () => api('POST', `/api/tickets/${S.job}/archive`, { archived: !S.tickets[S.job].archived }),
-  delJob: () => { if (confirm('Delete this job? Staff stay; its history goes.')) api('DELETE', `/api/tickets/${S.job}`); },
+  stop: () => { const id = S.job, t = S.tickets[id]; undoable(`Stopping #${t.n}…`, () => api('POST', `/api/tickets/${id}/stop`)); },
+  archive: () => { const id = S.job, to = !S.tickets[id].archived; api('POST', `/api/tickets/${id}/archive`, { archived: to }).then(() => undoable(to ? `Archived #${S.tickets[id].n}` : `Unarchived #${S.tickets[id].n}`, () => {}, () => api('POST', `/api/tickets/${id}/archive`, { archived: !to }))); },
+  delJob: () => { const id = S.job, t = S.tickets[id]; S.hiddenJobs = S.hiddenJobs || new Set(); S.hiddenJobs.add(id); if (S.job === id) S.job = null; dirty(); undoable(`Deleted #${t.n} ${short(t.title, 40)}`, () => api('DELETE', `/api/tickets/${id}`), () => { S.hiddenJobs.delete(id); S.job = id; dirty(); }); },
   budget: (d) => api('POST', `/api/tickets/${S.job}/budget`, { add: Number(d.add) }),
   startNow: () => api('POST', `/api/tickets/${S.job}/start`),
-  plan: (d) => api('POST', `/api/tickets/${S.job}/plan`, { decision: d.d, note: ($('#planNote') || {}).value || '' }),
-  qopt: (d) => api('POST', `/api/tickets/${S.job}/message`, { text: d.v }),
+  plan: (d) => { const id = S.job, note = ($('#planNote') || {}).value || ''; const send = () => api('POST', `/api/tickets/${id}/plan`, { decision: d.d, note }); if (d.d !== 'reject') return send(); undoable(`Rejecting the plan on #${S.tickets[id].n}…`, send); },
+  qopt: (d) => api('POST', `/api/tickets/${d.id || S.job}/message`, { text: d.v }).then(() => { if (d.id) notifyQuiet(`Answered #${S.tickets[d.id].n}: ${short(d.v, 40)}`); }).catch((e) => alert(e.message)),
+  lessonKeep: (d) => { const inp = $(`#lr-${d.lid}`); api('POST', `/api/agents/${d.id}/lesson-drafts/${d.lid}`, inp ? { text: inp.value } : {}).then(() => { S.lessonEdit = null; notifyQuiet('Lesson kept. The agent applies it from its next session.'); }).catch((e) => alert(e.message)); },
+  lessonEdit: (d) => { S.lessonEdit = d.lid; S.tdKey = null; S.memKey = null; dirty(); setTimeout(() => { const i = $(`#lr-${d.lid}`); if (i) { i.focus(); i.select(); } }, 0); },
+  lessonDrop: (d) => { S.hiddenDrafts = S.hiddenDrafts || new Set(); S.hiddenDrafts.add(d.lid); S.tdKey = null; dirty(); undoable('Lesson dropped', () => api('DELETE', `/api/agents/${d.id}/lesson-drafts/${d.lid}`), () => { S.hiddenDrafts.delete(d.lid); S.tdKey = null; dirty(); }); },
   rate: (d) => { S.rerate = false; api('POST', `/api/tickets/${S.job}/rate`, { score: Number(d.s), note: ($('#rateNote') || {}).value || '' }); },
   rerate: () => { S.rerate = true; S.jbodyKey = null; renderJob(); },
   revert: (d) => { const one = d.path; if (confirm(one ? `Undo the agents' changes to\n${one}?` : 'Undo every file change made on this job?')) api('POST', `/api/tickets/${S.job}/revert`, { path: one || undefined }).then(() => { S.jbodyKey = null; dirty(); }); },
@@ -331,6 +409,8 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   },
   openFile: (d) => api('POST', '/api/open-file', { path: d.p, ticketId: S.app === 'jobs' ? S.job || undefined : undefined }).then((r) => { if (r.error) notify('warn', 'Could not open the file', r.error); }),
   planOpen: () => { S.planOpen = !S.planOpen; updateJobLive(); },
+  planFull: () => { S.planFull = { ...(S.planFull || {}), [S.job]: true }; dirty(); },
+  planNoteOpen: () => { S.planNoteOpen = { ...(S.planNoteOpen || {}), [S.job]: true }; dirty(); setTimeout(() => $('#planNote') && $('#planNote').focus(), 0); },
   boardRefresh: () => loadBoard(true).then(() => APPS.projects.update()),
   boardOpen: (d) => { S.boardOpen = S.boardOpen === d.name ? null : d.name; APPS.projects.update(); },
   boardContinue: async (d) => {
@@ -356,6 +436,18 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   attachNew: () => { pickTarget = () => S.newFiles; pickDone = () => { $('#njFiles').innerHTML = S.newFiles.map((p) => fileChip(p, true)).join(''); }; $('#filePick').click(); },
   unfile: (d) => { S.newFiles = S.newFiles.filter((x) => x !== d.path); S.followFiles = S.followFiles.filter((x) => x !== d.path); if ($('#njFiles')) $('#njFiles').innerHTML = S.newFiles.map((p) => fileChip(p, true)).join(''); if ($('#jfiles')) $('#jfiles').innerHTML = S.followFiles.map((p) => fileChip(p, true)).join(''); },
   sendJob: () => sendNewJob(),
+  useTpl: (d) => useTemplate(d.k),
+  saveTpl: () => {
+    const text = $('#njText').value.trim();
+    if (!text) return notifyQuiet('Type the job first, then save it as a template.');
+    const name = prompt('Name for this template:', text.split('\n')[0].slice(0, 30));
+    if (!name) return;
+    const list = userTemplates().filter((t) => t.name !== name);
+    list.push({ name: name.slice(0, 40), text, effort: $('#njEffort').value || '', project: $('#njProject').value || '' });
+    setPref('templates', JSON.stringify(list.slice(-12)));
+    renderTemplates();
+  },
+  delTpl: (d) => { const list = userTemplates(); list.splice(+d.i, 1); setPref('templates', JSON.stringify(list)); renderTemplates(); },
   replay: () => { const tl = S.timeline[S.job] && S.timeline[S.job].data; if (!tl) return; S.replay = { job: S.job, t: tl.start, t0: tl.start, t1: tl.end || Date.now(), speed: 30, playing: true }; S.jbodyKey = null; renderJob(); },
   rpPlay: () => { const R = S.replay; if (R.t >= R.t1) R.t = R.t0; R.playing = !R.playing; S.jbodyKey = null; renderJob(); },
   rpExit: () => { S.replay = null; S.jbodyKey = null; renderJob(); },

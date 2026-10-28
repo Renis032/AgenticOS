@@ -5,6 +5,8 @@ const NATIVE = !!(window.webkit && window.webkit.messageHandlers && window.webki
 const NATIVE_INFO = window.osNativeInfo || {};
 function native(cmd, data) { if (NATIVE) window.webkit.messageHandlers.agentos.postMessage(JSON.stringify({ cmd, ...(data || {}) })); }
 const ic = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
+// Thumbs as icons (this system has no emoji font, so 👍/👎 would draw as empty boxes).
+const thumb = (up) => `<svg class="i thumb" role="img" aria-label="${up ? 'good' : 'not good'}"><use href="#i-thumb-${up ? 'up' : 'down'}"/></svg>`;
 S.zoom = 1;
 S.notes = prefObj('notes') || [];
 S.notesSeen = Number(pref('notesSeen', '0'));
@@ -35,6 +37,16 @@ const NO_DRAG = 'button, input, select, textarea, a, kbd, .meter, .searchpill, [
 $('#top').addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest(NO_DRAG) && e.detail === 1) native('drag'); });
 $('#top').addEventListener('dblclick', (e) => { if (!e.target.closest(NO_DRAG)) native('maximize'); });
 
+// Who is busy, at a glance: a small avatar per lead (and parallel desk) with a ring for its state; click to open its job.
+function leadsBarHtml() {
+  const list = [...leads(), ...Object.values(S.agents).filter((a) => a.twinOf && !a.retired).map((a) => a.id)].map((k) => S.agents[k]).filter(Boolean);
+  return list.map((a) => {
+    const t = agentJob(a);
+    const st = a.status === 'offline' ? 'down' : t && needsYou(t) ? 'ask' : t ? 'busy' : 'idle';
+    const what = st === 'down' ? 'down (restarting)' : st === 'ask' ? `waiting for you on #${t.n}` : st === 'busy' ? `working on #${t.n} ${short(t.title, 50)}` : 'free';
+    return `<button class="lav s-${st}" data-act="leadAv" data-id="${esc(a.id)}" data-tip="${esc(`${a.persona}: ${what}`)}" aria-label="${esc(`${a.persona}: ${what}`)}">${esc((a.persona || '?').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1))}${a.twinOf ? `<sub>${esc(String(a.twinNo || 2))}</sub>` : ''}</button>`;
+  }).join('');
+}
 function renderTitlebar(running, open) {
   const app = APP_LIST.find((x) => x.id === S.app) || {};
   let tail = '';
@@ -43,6 +55,8 @@ function renderTitlebar(running, open) {
   const h = `<span>${esc(app.name || '')}</span>${tail}<span class="stat ${running ? 'on' : ''}" data-act="app" data-app="processes">${running} running</span><span class="stat" data-act="app" data-app="jobs">${open} open</span>`;
   const el = $('#appTitle');
   if (el.dataset.h !== h) { el.innerHTML = h; el.dataset.h = h; }
+  const lb = $('#leadsBar'), lh = leadsBarHtml();
+  if (lb.dataset.h !== lh) { lb.innerHTML = lh; lb.dataset.h = lh; }
   const unread = S.notes.filter((n) => n.t > S.notesSeen).length;
   $('#nbadge').textContent = unread > 9 ? '9+' : unread;
   $('#nbadge').classList.toggle('on', unread > 0);
@@ -124,6 +138,7 @@ function appMenu() {
   return [
     { label: 'New job', icon: 'newjob', kb: 'Ctrl+N', run: () => openApp('newjob') },
     { label: 'Search and commands', icon: 'command', kb: 'Ctrl+K', run: openPal },
+    { label: 'Take the tour', icon: 'info', run: () => startTour() },
     { sep: true }, { head: 'View' },
     { label: 'Show sidebar', checked: pref('sidebar', 'expanded') === 'expanded', kb: 'Ctrl+B', run: toggleSidebar },
     { label: 'Follow the system theme', checked: pref('theme', 'system') === 'system', run: () => setTheme('system') },
@@ -182,8 +197,30 @@ function notifyQuiet(title) {
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 200); }, 1600);
 }
 
+// Undo instead of "are you sure?": the action waits UNDO_MS behind a toast with an Undo button, then runs. Closing the
+// window runs anything still waiting, so nothing is lost.
+const UNDO_MS = 5000;
+const pendingUndo = new Set();
+function undoable(label, run, undo) {
+  const el = document.createElement('div');
+  el.className = 'toast undo';
+  el.innerHTML = `<span class="tic">${ic('check')}</span><div style="flex:1"><b>${esc(label)}</b></div><button class="btn sm">Undo</button><i class="ubar" style="animation-duration:${UNDO_MS}ms"></i>`;
+  $('#toasts').appendChild(el);
+  const job = { run, done: false };
+  const finish = (doIt) => {
+    if (job.done) return; job.done = true; pendingUndo.delete(job); clearTimeout(job.timer);
+    el.classList.add('out'); setTimeout(() => el.remove(), 200);
+    if (doIt) Promise.resolve().then(run).catch((e) => alert(e.message)); else if (undo) undo();
+  };
+  job.finish = finish;
+  job.timer = setTimeout(() => finish(true), UNDO_MS);
+  el.querySelector('button').onclick = () => finish(false);
+  pendingUndo.add(job);
+}
+addEventListener('beforeunload', () => { for (const j of [...pendingUndo]) j.finish(true); });
+
 // ---------------------------------------------------------------- notification center
-const NOTE_ICON = { answer: 'check', question: 'messages', warn: 'info', limit: 'usage' };
+const NOTE_ICON = { answer: 'check', question: 'messages', warn: 'info', limit: 'usage', lesson: 'memory' };
 function logNote(kind, title, text, ticketId) {
   S.notes.unshift({ t: Date.now(), kind, title, text: short(text || '', 300), ticketId: ticketId || null });
   S.notes = S.notes.slice(0, 60);
@@ -210,8 +247,8 @@ function renderNcenter() {
 // ---------------------------------------------------------------- preferences window
 const PREF_SECTIONS = [['general', 'General', 'settings'], ['appearance', 'Appearance', 'sun'], ['notifications', 'Notifications', 'bell'], ['jobs', 'Jobs & chat', 'jobs'], ['agents', 'Agents & teams', 'teams'], ['keys', 'Keyboard', 'keyboard'], ['data', 'Data & backups', 'archive'], ['about', 'About', 'info']];
 // Office-wide settings live on the server (roster.json); the Preferences window edits them through /api/office-settings.
-function officeSelect(key, opts) {
-  const v = (S.office || {})[key];
+function officeSelect(key, opts, def) {
+  const v = (S.office || {})[key] ?? def;
   return `<select data-office="${key}">${opts.map(([val, l]) => `<option value="${val}" ${Number(v) === Number(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 }
 document.addEventListener('change', (e) => {
@@ -226,6 +263,32 @@ function openPrefs(sec) {
   S.prefSec = sec || S.prefSec || 'general';
   $('#prefs').classList.add('on');
   renderPrefs();
+}
+// Telegram: plans, questions and commands on your phone with buttons (lib/telegram.js). The token stays on the server.
+function loadTelegram() {
+  return api('GET', '/api/telegram').then((r) => { S.tg = r; if ($('#prefs').classList.contains('on') && S.prefSec === 'notifications') renderPrefs(); }).catch(() => { S.tg = { unavailable: true }; });
+}
+setInterval(() => { if ($('#prefs').classList.contains('on') && S.prefSec === 'notifications' && S.tg && S.tg.configured && !S.tg.linked) loadTelegram(); }, 3000);
+function telegramPrefs() {
+  const T = S.tg;
+  if (!T) { loadTelegram(); return pGroup('Telegram', [prow('Telegram', 'Loading…', '')]); }
+  if (T.unavailable) return '';
+  const intro = 'Get plans, questions and commands on your phone, with buttons to answer them. Only your own chat is listened to.';
+  if (!T.configured) return pGroup('Telegram', [prow('Connect a Telegram bot', `${intro} In Telegram, message @BotFather, send /newbot, and paste the token it gives you here.`,
+    '<div class="row" style="margin:0"><input class="in" id="tgToken" type="password" placeholder="123456:ABC-…" autocomplete="off" style="width:220px"><button class="btn pri sm" data-act="tgConnect">Connect</button></div>')]);
+  const err = T.lastError ? `<div class="hint" style="color:var(--fail)">Last problem: ${esc(T.lastError)}</div>` : '';
+  if (!T.linked) return pGroup('Telegram', [prow(`Almost there: send the code to @${esc(T.botName || 'your bot')}`, `Open your bot in Telegram and send <code>/start ${esc(T.pairCode || '')}</code>. This page updates when it arrives.${err}`,
+    `<div class="row" style="margin:0"><button class="btn sm" data-act="tgCopy" data-v="/start ${esc(T.pairCode || '')}">Copy</button><button class="btn sm danger" data-act="tgDisconnect">Cancel</button></div>`)]);
+  const ev = T.events || {};
+  const sw = (k, label, desc) => prow(label, desc, `<label class="sw"><input type="checkbox" data-act="tgEvent" data-k="${k}" ${ev[k] ? 'checked' : ''}><i></i></label>`);
+  return pGroup('Telegram', [
+    prow(`Connected to ${esc(T.chatName || 'your chat')}`, `Through @${esc(T.botName || 'your bot')}. ${intro}${err}`, `<div class="row" style="margin:0"><label class="sw" title="On or off"><input type="checkbox" data-act="tgEnabled" ${T.enabled ? 'checked' : ''}><i></i></label><button class="btn sm" data-act="tgTest">Send a test</button><button class="btn sm danger" data-act="tgDisconnect">Disconnect</button></div>`),
+    sw('plan', 'Plans to approve', 'Approve or reject from the message.'),
+    sw('question', 'Questions', 'Tap an option, or reply to the message with your answer.'),
+    sw('command', 'Terminal commands', 'Run, run all on the job, or don\'t run.'),
+    sw('access', 'Edits outside a project', 'Allow or deny.'),
+    sw('done', 'Finished jobs', 'A short note with the lead, the cost and the start of the answer.'),
+  ]);
 }
 function closePrefs() { $('#prefs').classList.remove('on'); }
 const prow = (title, desc, control) => `<div class="prow"><div class="pt"><b>${title}</b>${desc ? `<span>${desc}</span>` : ''}</div>${control}</div>`;
@@ -275,7 +338,7 @@ const PREF_BODY = {
       prow('Questions and plans', 'An agent is waiting for your answer or your OK.', pSwitch('nQuestions', '1')),
       prow('Warnings', 'Budget stops, long chats and other problems.', pSwitch('nWarn', '1')),
       prow('Usage limits', 'The 5-hour or weekly limit is getting close.', pSwitch('nLimits', '1')),
-    ]),
+    ]) + telegramPrefs(),
   jobs: () => `<h2>Jobs & chat</h2><div class="hint">Writing to agents and reading their work.</div>` +
     pGroup('Message box', [
       prow('Send with', 'The other key combination adds a new line.', pSeg('sendKey', 'enter', [['enter', 'Enter'], ['ctrl', 'Ctrl+Enter']])),
@@ -311,14 +374,22 @@ const PREF_BODY = {
         officeSelect('leadContextNudge', [[0, 'Never'], [80000, '80k tokens'], [100000, '100k tokens'], [150000, '150k tokens']])),
       prow('Check the agents follow their instructions', 'Runs the agent eval in a throwaway office (real agents on Haiku, a few cents) when the office has been idle for 20 minutes and you are under half of your usage windows. Results over time are in Health.',
         officeSelect('agentEvalDays', [[0, 'Only when I run it'], [1, 'Every day'], [3, 'Every 3 days'], [7, 'Every week']])),
+      prow('Review lessons before agents use them', 'After a job goes wrong, its lead writes a one-line lesson. With review on, it waits on Today until you keep, edit or drop it; off, it goes straight into the agent\'s next session.',
+        officeSelect('reviewLessons', [[1, 'Yes, I review them'], [0, 'No, use them straight away']], 1)),
       prow('Remind me when something waits', 'A plan, question or command that waits this long gets a reminder (not between 22:00 and 08:00).',
         officeSelect('remindAfterMinutes', [[0, 'Never'], [30, 'After 30 minutes'], [60, 'After 1 hour'], [120, 'After 2 hours']])),
+    ]) +
+    pGroup('Parallel leads', [
+      prow('When a lead is busy, start a second desk for new jobs', 'A new job for a lead who is working on something else goes to a parallel copy of that lead (same instructions and memory, read-only), so it starts right away instead of waiting. Follow-ups on the lead\'s current job still wait for the lead.',
+        officeSelect('leadTwins', [[0, 'Off: new jobs wait'], [1, 'Up to 1 extra desk'], [2, 'Up to 2'], [3, 'Up to 3']])),
+      prow('Close an idle parallel desk after', 'Its jobs go back to the lead, who gets the earlier answers as context.',
+        officeSelect('twinIdleMinutes', [[10, '10 minutes'], [20, '20 minutes'], [30, '30 minutes'], [60, '1 hour']])),
     ]) +
     pGroup('Leads', leads().map((k) => { const a = S.agents[k] || {}; return prow(`${esc(a.persona || k)} <span class="hint">· ${esc((S.roles[k] || {}).room || '')}</span>`, esc((S.roles[k] || {}).description || ''), `${modelChip(a)}`); })) +
     `<button class="btn pri" data-act="prefTeams">${ic('teams')} Open Teams & roles</button>`,
   data: () => {
     const B = S.backups;
-    if (!B) { loadBackups(); return '<h2>Data & backups</h2><div class="hint">Loading…</div>'; }
+    if (!B) { loadBackups(); return `<h2>Data & backups</h2>${skel(4)}`; }
     const kinds = { daily: 'daily', manual: 'made by you', 'before-restore': 'saved before a restore' };
     return `<h2>Data & backups</h2><div class="hint">Everything the office knows (agents, jobs, memories, conversations) lives in data/. A compressed copy is saved every day; the newest ${B.keep} are kept in <code>${esc(B.dir)}</code>.</div>` +
       pGroup('', [prow('Back up now', B.list.length ? `Newest: ${ago(B.list[0].t)}.` : 'No backup yet: the first one is made a minute after start-up.', '<button class="btn" data-act="backupNow">Back up now</button>')]) +
@@ -326,8 +397,9 @@ const PREF_BODY = {
       pGroup('Backups', B.list.length ? B.list.map((b) => prow(esc(new Date(b.t).toLocaleString()), `${kinds[b.kind]} · ${sizeOf(b.size)}`, `<button class="btn sm" data-act="backupRestore" data-name="${esc(b.name)}">Restore</button>`)) : [prow('None yet', '', '')]);
   },
   keys: () => `<h2>Keyboard</h2><div class="hint">Shortcuts work everywhere except while you type in a box.</div>` +
-    pGroup('Window', [`<table class="ktable">${[['Ctrl K', 'Search and run commands'], ['Ctrl N', 'New job'], ['Ctrl ,', 'Preferences'], ['Ctrl B', 'Show or hide the sidebar'], ['F10', 'Main menu'], ['Ctrl + / Ctrl − / Ctrl 0', 'Zoom in, out, actual size'], ['F11', 'Full screen'], ['Ctrl R', 'Reload'], ['Ctrl Q', 'Quit'], ['Esc', 'Close a menu or panel, deselect']].map(([k, d]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`]) +
+    pGroup('Window', [`<table class="ktable">${[['Ctrl K', 'Search and run commands'], ['Ctrl J', 'Ask the office'], ['Ctrl N', 'New job'], ['Ctrl ,', 'Preferences'], ['Ctrl B', 'Show or hide the sidebar'], ['F10', 'Main menu'], ['Ctrl + / Ctrl − / Ctrl 0', 'Zoom in, out, actual size'], ['F11', 'Full screen'], ['Ctrl R', 'Reload'], ['Ctrl Q', 'Quit'], ['Esc', 'Close a menu or panel, deselect']].map(([k, d]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`]) +
     pGroup('Apps', [`<table class="ktable">${APP_LIST.map((x) => `<tr><td><kbd>${esc(x.key.toUpperCase())}</kbd></td><td>${esc(x.name)}</td></tr>`).join('')}</table>`]) +
+    pGroup('On an open job', [`<table class="ktable">${[['G', 'Go ahead: approve, run or allow the first thing in Needs you'], ['X', 'Refuse it: reject, don\'t run, or don\'t allow'], ['1 – 5', 'Pick an answer to an agent\'s question'], ['I', 'Jump to the reply box'], ['Alt ↑ / Alt ↓', 'Previous or next message']].map(([k, d]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`]) +
     pGroup('Lists and messages', [`<table class="ktable">${[['↑ ↓', 'Move through jobs or processes'], ['← →', 'Fold or unfold a process'], ['Enter', 'Send (or Ctrl Enter, see Jobs & chat)'], ['Shift Enter', 'New line in a message'], ['?', 'This page']].map(([k, d]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`]),
   about: () => `<h2>About</h2><div class="about-hero" style="margin-top:14px"><img src="/icon.svg" alt=""><div><div style="font-size:18px;font-weight:700">Agentic OS</div><div class="hint">${esc(NATIVE_INFO.version || 'local build')} · runs on this computer with your Claude Code login</div></div></div>` +
     pGroup('', [
@@ -372,9 +444,23 @@ Object.assign(ACT, {
   reloadUi: () => location.reload(),
   wmin: () => native('minimize'), wmax: () => native('maximize'), wclose: () => native('close'),
   toggleSidebar: () => toggleSidebar(),
+  leadAv: (d) => { const a = S.agents[d.id], t = agentJob(a); if (t) ACT.openJob({ id: t.id }); else { S.sel = d.id; openApp('processes'); } },
+  navFold: (d) => { const o = navOpen(); if (o.has(d.grp)) o.delete(d.grp); else o.add(d.grp); setPref('navOpen', JSON.stringify([...o])); dirty(); },
   appmenu: (d, ev) => { const b = ev.target.closest('button'); if ($('#menu').classList.contains('on') && S.menuAnchor === b) return closeMenu(); openMenu(appMenu(), { el: b, align: 'right' }); },
   prefs: (d) => openPrefs(d.sec),
   closePrefs: () => closePrefs(),
+  tgConnect: async () => {
+    const token = ($('#tgToken') || {}).value || '';
+    if (!token.trim()) return notifyQuiet('Paste the token from @BotFather first.');
+    const r = await api('POST', '/api/telegram', { token: token.trim() }).catch((e) => ({ error: e.message }));
+    if (r.error) return alert(`Telegram: ${r.error}`);
+    loadTelegram();
+  },
+  tgCopy: (d) => { navigator.clipboard.writeText(d.v).then(() => notifyQuiet('Copied.')).catch(() => notifyQuiet(d.v)); },
+  tgTest: () => api('POST', '/api/telegram/test').then((r) => notifyQuiet(r.error ? `Telegram: ${r.error}` : 'Test message sent.')).catch((e) => alert(e.message)),
+  tgDisconnect: () => { if (S.tg && S.tg.linked && !confirm('Disconnect Telegram? The bot token is forgotten.')) return; api('DELETE', '/api/telegram').then((r) => { S.tg = r; renderPrefs(); }); },
+  tgEnabled: (d, ev) => api('POST', '/api/telegram/settings', { enabled: ev.target.checked }).then((r) => { S.tg = r; renderPrefs(); }),
+  tgEvent: (d, ev) => api('POST', '/api/telegram/settings', { events: { ...(S.tg.events || {}), [d.k]: ev.target.checked } }).then((r) => { S.tg = r; renderPrefs(); }),
   prefSec: (d) => { S.prefSec = d.sec; if (d.sec === 'data') S.backups = null; renderPrefs(); },
   backupNow: async () => { notifyQuiet('Backing up…'); const r = await api('POST', '/api/backups').catch((e) => ({ error: e.message })); notifyQuiet(r.error ? `Backup failed: ${r.error}` : 'Backed up.'); loadBackups(); },
   backupRestore: async (d) => {

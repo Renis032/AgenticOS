@@ -42,6 +42,12 @@
     "for": "all"
   },
   {
+    "name": "repo-state",
+    "usage": "repo-state [dir] [--commit sha] [--diff] [--max-lines N] [--all]",
+    "does": "where a git repo stands: branch, HEAD, upstream, uncommitted changes, submodules with their own changes, whether a commit is in the history (submodules too); --diff adds the full diff including submodules",
+    "for": "all"
+  },
+  {
     "name": "route",
     "usage": "route \"<ticket text>\"",
     "does": "which lead the routing rules would pick for a ticket",
@@ -139,8 +145,8 @@
   },
   {
     "name": "search",
-    "usage": "search <regex> [dir] [--lang cpp|js|py|java|xml|web|data|md] [--glob \"*.ext\"] [--ignore-case] [--files] [--context N] [--max N]",
-    "does": "code search grouped by file, skipping .git/node_modules/build folders, with optional file type and context lines",
+    "usage": "search <regex> [dir...] [--lang cpp|js|py|java|xml|web|data|md] [--glob \"*.ext\"] [--ignore-case] [--files] [--context N] [--max N] [--max-size MB]",
+    "does": "code search grouped by file, several folders at once; never reads media/binary files or files over 5 MB, so huge repos take seconds (use instead of grep -r)",
     "for": "all"
   },
   {

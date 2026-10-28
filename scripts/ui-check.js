@@ -2,7 +2,7 @@
 'use strict';
 // Clicks through the whole Agentic OS window in a throwaway copy of the office (fake agents, virtual screen, nothing spent) and
 // reports JavaScript errors, buttons that do nothing, buttons pushed off screen and layouts that overflow, with a screenshot per step.
-const { parseArgs, cli, fs, path } = require('./_util');
+const { parseArgs, fs, path } = require('./_util');
 const { spawn, spawnSync } = require('child_process');
 const os = require('os');
 const http = require('http');

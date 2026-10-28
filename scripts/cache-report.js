@@ -4,7 +4,6 @@ const os = require('os');
 const readline = require('readline');
 const { parseArgs, fs, path } = require('./_util');
 
-const BASE = { opus: 5, sonnet: 3, haiku: 1 };
 const PING_EVERY = 50 * 60000;
 const WARM_FOR = 4 * 3600000;
 const tier = (m) => (/haiku/i.test(m) ? 'haiku' : /sonnet/i.test(m) ? 'sonnet' : 'opus');
