@@ -72,7 +72,16 @@ function renderTitlebar(running, open) {
 }
 
 // ---------------------------------------------------------------- preferences applied to the page
-const ACCENTS = { gold: ['#d9b77a', '#9c7a3c'], amber: ['#e8a33d', '#b86e1c'], blue: ['#5aa6ef', '#2f6fbf'], violet: ['#a98bf0', '#7a55d4'], green: ['#4fbf86', '#23885c'], rose: ['#ef6f93', '#c43d66'], teal: ['#3fbab2', '#1f8a84'] };
+const ACCENTS = { gold: ['#d9b77a', '#9c7a3c'], system: ['#0a84ff', '#0068d6'], amber: ['#e8a33d', '#b86e1c'], blue: ['#5aa6ef', '#2f6fbf'], violet: ['#a98bf0', '#7a55d4'], green: ['#4fbf86', '#23885c'], rose: ['#ef6f93', '#c43d66'], teal: ['#3fbab2', '#1f8a84'] };
+// Looks (public/ui/themes.css): each has a light and a dark variant and a default accent. sw: preview colours
+// [sidebar, background, panel] for dark and light.
+const LOOKS = {
+  champagne: { name: 'Champagne', accent: 'gold', sw: [['#111419', '#0b0d11', '#161a21'], ['#f8f5f0', '#f6f3ee', '#fffdfa']] },
+  graphite: { name: 'Graphite', accent: 'system', sw: [['#242426', '#1e1e20', '#2c2c2e'], ['#ececef', '#f5f5f7', '#ffffff']] },
+  midnight: { name: 'Midnight', accent: 'teal', sw: [['#0f172a', '#0a1020', '#131d33'], ['#f3f6fb', '#edf2f8', '#ffffff']] },
+};
+const lookOf = () => (LOOKS[pref('look', 'champagne')] ? pref('look', 'champagne') : 'champagne');
+const accentOf = () => pref('accent', LOOKS[lookOf()].accent);
 const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
 function isDark() { const t = pref('theme', 'system'); return t === 'dark' || (t === 'system' && darkMq.matches); }
 function applyPrefs() {
@@ -82,11 +91,14 @@ function applyPrefs() {
   root.dataset.density = pref('density', 'comfortable');
   root.dataset.motion = pref('motion', 'full');
   root.dataset.sidebar = pref('sidebar', 'expanded');
-  const [dark, light] = ACCENTS[pref('accent', 'gold')] || ACCENTS.gold;
+  root.dataset.look = lookOf();
+  const [dark, light] = ACCENTS[accentOf()] || ACCENTS.gold;
   root.style.setProperty('--accent', isDark() ? dark : light);
-  root.style.setProperty('--accent-ink', isDark() ? '#17120a' : '#ffffff');
   // Older WebKitGTK has no color-mix(), so the tints are built from the accent's RGB.
   const rgb = [1, 3, 5].map((i) => parseInt((isDark() ? dark : light).slice(i, i + 2), 16));
+  // Text on the accent: dark on light accents (gold), white on deep ones (system blue).
+  const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  root.style.setProperty('--accent-ink', lum > 0.55 ? '#17120a' : '#ffffff');
   const mix = (c, k) => '#' + rgb.map((v) => Math.round(v * (1 - k) + c * k).toString(16).padStart(2, '0')).join('');
   root.style.setProperty('--accent-rgb', rgb.join(', '));
   root.style.setProperty('--accent-soft', `rgba(${rgb.join(', ')}, .16)`);
@@ -97,6 +109,7 @@ function applyPrefs() {
 }
 darkMq.addEventListener('change', applyPrefs);
 function toggleSidebar() { setPref('sidebar', pref('sidebar', 'expanded') === 'expanded' ? 'collapsed' : 'expanded'); applyPrefs(); }
+function setLook(k) { setPref('look', k); setPref('accent', LOOKS[k].accent); applyPrefs(); dirty(); if ($('#prefs').classList.contains('on')) renderPrefs(); }
 function setTheme(t) { setPref('theme', t); applyPrefs(); if ($('#prefs').classList.contains('on')) renderPrefs(); }
 function zoomTo(level) {
   level = Math.max(0.7, Math.min(1.6, Math.round(level * 10) / 10));
@@ -144,6 +157,7 @@ function appMenu() {
     { label: 'Follow the system theme', checked: pref('theme', 'system') === 'system', run: () => setTheme('system') },
     { label: 'Dark theme', checked: pref('theme', 'system') === 'dark', run: () => setTheme('dark') },
     { label: 'Light theme', checked: pref('theme', 'system') === 'light', run: () => setTheme('light') },
+    ...Object.entries(LOOKS).map(([k, l]) => ({ label: `${l.name} look`, checked: lookOf() === k, run: () => setLook(k) })),
     { label: 'Zoom in', icon: 'zoom-in', kb: 'Ctrl +', run: () => zoomTo(S.zoom + 0.1) },
     { label: 'Zoom out', icon: 'zoom-out', kb: 'Ctrl −', run: () => zoomTo(S.zoom - 0.1) },
     { label: `Actual size (${Math.round(S.zoom * 100)}%)`, icon: 'search', kb: 'Ctrl 0', run: () => zoomTo(1) },
@@ -251,7 +265,18 @@ function officeSelect(key, opts, def) {
   const v = (S.office || {})[key] ?? def;
   return `<select data-office="${key}">${opts.map(([val, l]) => `<option value="${val}" ${Number(v) === Number(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 }
+// Office settings that are text: a list (one entry per line) or a word choice.
+function officeText(key, placeholder) {
+  const v = (S.office || {})[key];
+  return `<textarea data-office-s="${key}" class="mono" style="min-height:58px;width:min(340px,100%)" placeholder="${esc(placeholder)}">${esc(Array.isArray(v) ? v.join('\n') : v || '')}</textarea>`;
+}
+function officeWord(key, opts, def) {
+  const v = (S.office || {})[key] || def;
+  return `<select data-office-s="${key}">${opts.map(([val, l]) => `<option value="${val}" ${v === val ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+}
 document.addEventListener('change', (e) => {
+  const s = e.target.closest('[data-office-s]');
+  if (s) return void api('POST', '/api/office-settings', { [s.dataset.officeS]: s.value }).then((r) => { S.office = r; notifyQuiet('Saved.'); }).catch((er) => alert(er.message));
   const el = e.target.closest('[data-office]');
   if (!el) return;
   api('POST', '/api/office-settings', { [el.dataset.office]: Number(el.value) }).then((r) => { S.office = r; renderPrefs(); });
@@ -316,10 +341,12 @@ const PREF_BODY = {
       prow('While jobs are running', `What closing the window does when agents are still working. With nothing running, it always quits.${NATIVE_INFO.tray ? ' "In the background" hides it to the tray.' : ''}`,
         pSelect('closeAction', 'ask', [['ask', 'Ask me each time'], ['background', 'Keep them running in the background'], ['stop', 'Stop them and quit']])),
     ]),
-  appearance: () => `<h2>Appearance</h2><div class="hint">Theme, colour and size.</div>` +
+  appearance: () => `<h2>Appearance</h2><div class="hint">Look, theme, colour and size.</div>` +
     pGroup('', [
+      prow('Look', 'The style of the whole window. Each look has a light and a dark version, and picks its own accent colour (you can change it below).',
+        `<div class="looks" role="radiogroup" aria-label="Look">${Object.entries(LOOKS).map(([k, l]) => { const [d, b, pn] = l.sw[isDark() ? 0 : 1]; const a = ACCENTS[l.accent][isDark() ? 0 : 1]; return `<button class="${lookOf() === k ? 'on' : ''}" role="radio" aria-checked="${lookOf() === k}" data-act="setLook" data-v="${k}"><span class="lk" style="--d:${d};--b:${b};--p:${pn};--a:${a}"><i></i><b></b></span>${esc(l.name)}</button>`; }).join('')}</div>`),
       prow('Theme', 'Follow Ubuntu’s light or dark style, or pick one.', pSeg('theme', 'system', [['system', 'System', 'monitor'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']])),
-      prow('Accent colour', 'Used for highlights, switches and the active app.', `<div class="swatches">${Object.entries(ACCENTS).map(([k, [d, l]]) => `<button class="${pref('accent', 'gold') === k ? 'on' : ''}" style="--c:${isDark() ? d : l}" data-act="prefSeg" data-k="accent" data-v="${k}" data-tip="${k}"></button>`).join('')}</div>`),
+      prow('Accent colour', 'Used for highlights, switches and the active app.', `<div class="swatches">${Object.entries(ACCENTS).map(([k, [d, l]]) => `<button class="${accentOf() === k ? 'on' : ''}" style="--c:${isDark() ? d : l}" data-act="prefSeg" data-k="accent" data-v="${k}" data-tip="${k}"></button>`).join('')}</div>`),
       prow('Text size', 'Zooms the whole window (also Ctrl + and Ctrl −).', `<div class="range"><input type="range" min="70" max="160" step="10" value="${Math.round(S.zoom * 100)}" id="zoomRange" style="--fill:${((Math.round(S.zoom * 100) - 70) / 90) * 100}%"><output id="zoomOut">${Math.round(S.zoom * 100)}%</output></div>`),
       prow('Density', 'Compact fits more rows on screen.', pSeg('density', 'comfortable', [['comfortable', 'Comfortable'], ['compact', 'Compact']])),
       prow('Animations', 'Reduce motion turns off fades and slides.', pSeg('motion', 'full', [['full', 'On'], ['reduced', 'Reduced']])),
@@ -360,6 +387,23 @@ const PREF_BODY = {
         officeSelect('autoRunKnownCommands', [[1, 'Yes'], [0, 'No, always ask']])),
       prow('Agents may run commands', 'For agents that can edit files (leads and implementers): builds, tests, installs, running programs. You see every command and its output in the job and in the Terminal app. Commit, push, sudo, upgrades and rm -rf stay blocked.',
         `<div class="seg">${[['off', 'Off'], ['ask', 'Ask me first'], ['allow', 'Allow']].map(([v, l]) => `<button class="${(S.termMode || 'ask') === v ? 'on' : ''}" data-act="termMode" data-v="${v}">${l}</button>`).join('')}</div>`),
+    ]) +
+    pGroup('Access and limits', [
+      prow('Web access', 'Off: no agent can search or fetch web pages, and terminal commands that reach the network (curl, git pull, npm install…) always ask you first.',
+        officeSelect('allowWeb', [[1, 'Allowed'], [0, 'Off']], 1)),
+      prow('Folders agents may always edit', 'On top of the job\'s project, its team library and scratch folders. One folder per line, e.g. ~/notes.', officeText('extraEditDirs', '~/notes')),
+      prow('Commands that never run', 'A command starting with one of these is refused, for every agent. One per line; * matches anything. The built-in block list (commit, push, sudo, rm -rf…) always applies.', officeText('commandDeny', 'docker system prune\nkubectl delete *')),
+      prow('Commands that run without asking', 'In "Ask me first" mode, a command starting with one of these runs straight away.', officeText('commandAllow', 'npm test\nnpm run lint\npytest')),
+      prow('Daily spending limit', 'Once the office has spent this much today (API prices), new jobs wait for tomorrow. Running jobs finish; Start now overrides it.',
+        officeSelect('dailySpendUsd', [[0, 'No limit'], [5, '$5'], [10, '$10'], [20, '$20'], [50, '$50'], [100, '$100']])),
+    ]) +
+    pGroup('Checks, isolation and recovery', [
+      prow('Separate workspaces', 'A job on a git project can work in its own copy (a git worktree), so two jobs never overwrite each other. You review and apply its changes when it ends; nothing is committed.',
+        officeWord('isolateJobs', [['shared', 'When another job is on the same project'], ['always', 'For every job on a git project'], ['off', 'Never']], 'shared')),
+      prow('When checks fail', 'A job\'s checks (Teams & roles → Projects, or set per job) run after the lead answers. A failure goes back to the lead this many times before the job fails.',
+        officeSelect('verifyRetries', [[0, 'Fail the job straight away'], [1, 'Send back once'], [2, 'Send back twice'], [3, 'Send back three times']], 1)),
+      prow('Flag a stuck agent after', 'An agent working on a job with no activity for this long gets a banner on the job, with Ask for a status and Restart.',
+        officeSelect('stuckMinutes', [[0, 'Never'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour']], 15)),
     ]) +
     pGroup('Plans, reminders and cost', [
       prow('Ask for a plan before work above', 'A lead shows you its plan first when it expects a job to cost more than this, or when it starts two or more teammates or an Opus teammate.',
@@ -470,6 +514,7 @@ Object.assign(ACT, {
     loadBackups();
   },
   prefSeg: (d) => { setPref(d.k, d.v); prefChanged(d.k); },
+  setLook: (d) => setLook(d.v),
   prefTeams: () => { closePrefs(); openApp('settings'); },
   prefHealth: () => { closePrefs(); openApp('health'); },
   nativeAbout: () => native('about'),

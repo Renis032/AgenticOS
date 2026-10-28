@@ -163,6 +163,52 @@ this job** or **Don't allow**. Jobs with no project are not limited; `defaults.e
 turns the limit off. Handoffs, skills, team notes and memories that look like they contain a key, token, private key or
 password are refused, with a note to refer to where the secret is kept instead.
 
+**Separate workspaces** (`lib/workspaces.js`, Preferences → Agents & teams → Checks, isolation and recovery). A job on a
+git project can work in its own git worktree (under `data/worktrees/`), by default only when another open job is on
+the same project (or always, or never; New job can ask for one). The worktree starts from the project as it is now,
+uncommitted and untracked files included, detached so no branch is made. The job's agents edit only there (the hook
+refuses the original folder and names the same file in the copy), and its checks run there. When the job ends, its
+thread shows the changed files and the diff with **Apply to the project** (`git apply`; if the project moved on, a
+3-way merge that leaves conflict markers) or **Discard**. Nothing is committed either way.
+
+**Access and limits** (Preferences → Agents & teams):
+- *Web access* off removes WebSearch and WebFetch from every agent, and terminal commands that reach the network (curl,
+  git pull, npm install, pip install, ssh…) always ask first, whatever the command mode.
+- *Folders agents may always edit*, on top of the job's project.
+- *Commands that never run* and *Commands that run without asking*: your own prefixes (`*` matches anything), on top of
+  the built-in block list.
+- *Daily spending limit*: once today's spend reaches it, new jobs wait for tomorrow (Start now runs one anyway).
+- Stopping a job or restarting an agent stops its whole process group (builds, test runners, servers it started):
+  SIGTERM, then SIGKILL five seconds later for anything still alive (`lib/kill-group.js`).
+
+## Checks before done
+
+A lead saying "done" doesn't close a job by itself (`lib/verify.js`). A project's checks (Teams & roles → Projects,
+`verify` in `projects.json`, e.g. `npm test ;; npm run lint`) or ones given with the job (New job → Checks and
+workspace) are named in the lead's brief, and the office runs them itself after the lead answers, in the job's folder.
+Only exit codes decide: all pass → done, with "Checks passed" and each command's time in the thread; one fails → its
+output goes back to the lead to fix (once by default, *When checks fail*), then the job ends **failed** with the output
+on the job and a lesson asked for. Jobs without checks still get their evidence: if the last run of a command on the
+job failed and nothing re-ran it, the closed job says so.
+
+## Interrupted jobs and stuck agents
+
+A job is **interrupted**, not failed, when the office restarts while it runs or its lead's process dies mid-turn
+(`lib/recovery.js`). **Resume** sends the lead what already happened on the job (files changed, commands run with
+their exit codes, its last progress notes, the last messages) and tells it to check the current state and not repeat
+installs, migrations, deletions or messages. Interrupted jobs show under Needs you for three days. An agent working on
+a job with no activity for 15 minutes (*Flag a stuck agent after*), while not waiting on you or on a command, puts a
+banner on the job: **Ask for a status** or **Restart** (the job becomes interrupted, ready to resume).
+
+## Project memory
+
+What the office knows about each project, kept per project (`lib/project-memory.js`, `data/project-memory/`):
+your **instructions** ("use pnpm"), **decisions** and **known failures** agents record with `remember_for_project`,
+and an **outcome** line the office writes for every finished job (status, checks, files, cost, rating). A new job's
+brief gets every instruction and only the few other entries most relevant to its text (shared words, rarer words
+counting more), not the whole history; agents search the rest with `recall_project`. The Projects app shows each
+project's memory, where you add instructions and forget entries.
+
 ## Shared files
 
 When two agents edit the same file, both get an automatic heads-up (and a note from each other), and they
@@ -195,10 +241,19 @@ code, and keeping INDEX.md current. It never edits the reference docs. "Tidy now
 
 ## Teams & projects (Settings)
 
-Change each role's usual model and effort and its instructions, add roles to a team, add or edit projects (owner and
-default lead effort), and create a **new team**: a new lead process under God, with its own library and message room, which God
-starts routing to. Leads pick up changes when they're next idle. Roles that come from `~/.claude/agents/*.md` keep
-their instructions there.
+Change each role's usual model and effort and its instructions, add roles to a team, add or edit projects (owner,
+default lead effort, routing keywords and **checks before done**). Leads pick up changes when they're next idle. Roles
+that come from `~/.claude/agents/*.md` keep their instructions there.
+
+**A new team lead** (Teams & roles → New team lead, `lib/lead-wizard.js`). Explain in plain words what the lead should
+look after, like you would to a new colleague; optionally give its name, team name and working folder. One Sonnet call
+(no tools, a cent or two) drafts the rest the way the built-in leads are set up: what the team owns and doesn't (God
+routes with it), routing keywords, model and effort, the lead's instructions (how it works, how it checks its work,
+what it must never do) and one to three specialists it can hire. You review and edit every field, then **Create**:
+the lead starts as a permanent process under God with its own library and message room; its keywords route matching
+jobs straight to it (`roles.<lead>.keywords`, read by `scripts/route.js`), and a working folder of its own becomes a
+project of the team. The office's standing rules (report progress, never commit or push, use permanent staff) are
+added to whatever the instructions say. Without the model, the draft is a plain template from your own words.
 
 ## Plans approved automatically, and reminders
 

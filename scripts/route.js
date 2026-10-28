@@ -35,7 +35,8 @@ function route(text, projects, roster) {
   for (const p of projects) {
     const full = norm(home(p.path));
     const tilde = full.replace(norm(require('os').homedir()), '~');
-    if (t.includes(full) || t.includes(tilde)) add(p.department, 10, `mentions ${p.path}`, p);
+    // A team whose folder is the whole home folder routes by its keywords only (every path is under ~).
+    if (full !== norm(home('~')) && (t.includes(full) || t.includes(tilde))) add(p.department, 10, `mentions ${p.path}`, p);
     for (const w of keywordsOf(p)) if (hasWord(t, w)) add(p.department, 2, `“${w}”`, p);
   }
   for (const k of leads) {

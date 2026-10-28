@@ -139,6 +139,7 @@ function entryHtml(list, t) {
       case 'plandecision': if (e.auto) return `<div class="line-ev">Plan ${esc(e.auto)} · ${clock(e.t)}</div>`;
         return `<div class="line-ev">You ${e.decision === 'rejected' ? 'rejected' : e.decision === 'changed' ? 'approved with changes' : 'approved'} the plan${e.text ? `: “${esc(e.text)}”` : ''} · ${clock(e.t)}</div>`;
       case 'rating': return `<div class="line-ev">You rated this ${e.score > 0 ? thumb(true) : thumb(false)}${e.text ? `: “${esc(e.text)}”` : ''} · ${clock(e.t)}</div>`;
+      case 'verify': return `<div class="line-ev ${e.ok ? 'vok' : 'vbad'}">${e.ok ? '✓' : '✕'} ${md(e.text).replace(/^<p>|<\/p>$/g, '')} · ${clock(e.t)}</div>`;
       default: return `<div class="line-ev">${esc(e.text || '')} · ${clock(e.t)}</div>`;
     }
   }).join('');
@@ -148,7 +149,10 @@ const busyOn = (t) => Object.values(S.agents).filter((a) => agentJob(a) === t).s
 const queuedOn = (t) => Object.values(S.agents).find((a) => (a.inbox || []).some((i) => i.ticketId === t.id));
 const pendingCmd = (t) => (t.commands || []).find((c) => c.status === 'pending');
 const pendingAccess = (t) => (t.access || []).find((r) => r.status === 'pending');
-const needsYou = (t) => !!(t.waiting || (t.plan && t.plan.status === 'pending') || (t.overBudget && t.status === 'open') || pendingCmd(t) || pendingAccess(t));
+// Also: a recently interrupted job to resume, a finished job's workspace to review, and a lead that looks stuck.
+const wsToReview = (t) => !!(t.workspace && t.workspace.status === 'active' && !['open', 'paused', 'scheduled'].includes(t.status));
+const needsYou = (t) => !!(t.waiting || (t.plan && t.plan.status === 'pending') || (t.overBudget && t.status === 'open') || pendingCmd(t) || pendingAccess(t)
+  || (t.status === 'interrupted' && !t.archived && Date.now() - (t.closedAt || 0) < 3 * 86400000) || wsToReview(t) || (t.stuck && t.status === 'open'));
 function jobLiveHtml(t) {
   if (t.status !== 'open' || needsYou(t)) return '';
   const busy = busyOn(t);
@@ -282,10 +286,46 @@ window.addEventListener('beforeunload', () => {
   if (p) navigator.sendBeacon(`/api/tickets/${p.id}/message`, new Blob([JSON.stringify({ text: p.text, attachments: p.files })], { type: 'application/json' }));
 });
 function failBanner(t) {
-  if (!['failed', 'interrupted'].includes(t.status)) return '';
-  const why = t.status === 'failed' ? short(String(t.answer || 'No reason was given.').replace(/\s+/g, ' '), 300)
-    : 'The agent stopped before finishing: the office was restarted or its process ended.';
-  return `<div class="banner fail"><b>This job ${t.status === 'failed' ? 'failed' : 'was interrupted'}.</b> ${esc(why)}<div class="row"><button class="btn pri sm" data-act="retry">Retry</button></div></div>`;
+  if (t.status === 'interrupted') {
+    return `<div class="banner fail"><b>This job was interrupted</b>${t.interruptedWhy ? `: ${esc(t.interruptedWhy)}` : ''}. Resume sends the lead what already happened (files changed, commands run), so nothing is done twice.<div class="row"><button class="btn pri sm" data-act="jobContinue">Resume</button></div></div>`;
+  }
+  if (t.status !== 'failed') return '';
+  const why = t.verify && t.verify.status === 'failed' ? `Its checks failed: \`${(t.verify.runs.find((r) => r.code !== 0) || {}).cmd || '?'}\`.` : short(String(t.answer || 'No reason was given.').replace(/\s+/g, ' '), 300);
+  return `<div class="banner fail"><b>This job failed.</b> ${md(why).replace(/^<p>|<\/p>$/g, '')}<div class="row"><button class="btn pri sm" data-act="retry">Retry</button></div></div>`;
+}
+// A lead that has shown no activity for a while (lib/recovery.js).
+function stuckBanner(t) {
+  const s = t.stuck;
+  if (!s || t.status !== 'open') return '';
+  return `<div class="banner"><b>${esc(s.persona)} has shown no activity for ${dur(Date.now() - s.since)}.</b> ${s.nudgedAt ? `Nudged ${ago(s.nudgedAt)}.` : 'It may be stuck, or thinking through something long.'}<div class="row"><button class="btn sm pri" data-act="jobNudge">Ask for a status</button><button class="btn sm danger" data-act="jobRestartStuck" title="Stop its turn; the job becomes interrupted and can be resumed">Restart ${esc(s.persona)}</button></div></div>`;
+}
+// The job's checks (lib/verify.js): running, passed or failed, with the failing output.
+function verifyCard(t) {
+  const V = t.verify;
+  if (!V) return '';
+  const icon = V.status === 'passed' ? '✓' : V.status === 'failed' ? '✕' : '⋯';
+  const runs = (V.cmds || []).map((c) => { const r = (V.runs || []).find((x) => x.cmd === c); return `<div class="vrow ${r ? (r.code === 0 ? 'ok' : 'bad') : ''}"><span class="vic">${r ? (r.code === 0 ? '✓' : '✕') : V.status === 'running' ? '⋯' : '–'}</span><code>${esc(c)}</code><span class="hint">${r ? `exit ${r.code} · ${(r.ms / 1000).toFixed(1)} s` : V.status === 'running' ? 'waiting' : 'not run'}</span></div>${r && r.code !== 0 && r.out ? `<details class="vout"><summary>output</summary><pre>${esc(r.out)}</pre></details>` : ''}`; }).join('');
+  return `<div class="vcard s-${V.status}"><div class="vh"><span class="vbig">${icon}</span><b>${V.status === 'passed' ? 'Checks passed' : V.status === 'failed' ? 'Checks failed' : 'Checking the work…'}</b><span class="hint">${V.attempt > 1 ? `attempt ${V.attempt} · ` : ''}run by the office, not the agent</span></div>${runs}</div>`;
+}
+// The job's isolated workspace (lib/workspaces.js): review the diff, apply it to the project or discard it.
+function workspaceCard(t) {
+  const W = t.workspace;
+  if (!W) return '';
+  if (W.status === 'applied') return `<div class="wcard"><b>${ic('check')} Changes applied to the project.</b> <span class="hint">${(W.files || []).length} file${(W.files || []).length === 1 ? '' : 's'} · nothing committed</span></div>`;
+  if (W.status === 'discarded') return '<div class="wcard"><b>Workspace discarded.</b> <span class="hint">The project was not changed.</span></div>';
+  const running = ['open', 'paused'].includes(t.status);
+  const cached = S.ws && S.ws.id === t.id ? S.ws : null;
+  const R = cached && cached.r;
+  if (!running && !cached) { S.ws = { id: t.id, r: null }; api('GET', `/api/tickets/${t.id}/workspace`).then((r) => { S.ws = { id: t.id, r }; S.jbodyKey = null; dirty(); }).catch(() => {}); }
+  const files = R && R.files ? R.files : [];
+  return `<div class="wcard"><div class="vh"><b>${ic('projects')} ${W.status === 'conflicts' ? 'Applied with conflicts' : 'Separate workspace'}</b><span class="hint">${esc(String(W.path).replace(/^\/home\/[^/]+/, '~'))}</span></div>
+    ${running ? '<div class="hint">This job works in its own copy of the project. When it ends, review its changes here and apply them.</div>'
+      : W.status === 'conflicts' ? '<div class="hint">The project changed while the job ran. Resolve the conflict markers (&lt;&lt;&lt;&lt;&lt;&lt;&lt;) in the project, then remove the workspace.</div><div class="row"><button class="btn sm" data-act="wsDiscard">Remove the workspace</button></div>'
+      : !R ? skel(2) : files.length ? `<div class="hint">${files.length} file${files.length === 1 ? '' : 's'} changed. Apply copies them into the project folder (nothing is committed).</div>
+        ${files.slice(0, 12).map((f) => `<div class="wfile"><span class="pill">${esc(f.status)}</span><code>${esc(f.path)}</code></div>`).join('')}
+        ${R.diff ? `<details class="idiff"><summary>Show the diff</summary>${diffHtml(R.diff.slice(0, 120000))}</details>` : ''}
+        <div class="row"><button class="btn sm pri" data-act="wsApply">Apply to the project</button><button class="btn sm danger" data-act="wsDiscard">Discard</button></div>`
+      : '<div class="hint">The job changed nothing in its workspace.</div><div class="row"><button class="btn sm" data-act="wsDiscard">Remove the workspace</button></div>'}</div>`;
 }
 function handoffBanner(t) {
   return (t.handoffs || []).map((name) => {
@@ -370,9 +410,9 @@ function renderJob() {
       ${!['open', 'paused'].includes(t.status) ? `<button class="btn sm" data-act="archive">${t.archived ? 'Unarchive' : 'Archive'}</button>` : ''}${canWrap ? `<button class="btn sm" data-act="wrapUp" title="Ask ${esc(who(owner))} to save the project handoff and sum up">Wrap up</button>` : ''}<button class="btn sm" data-act="delJob">Delete</button></h2>
     <div class="kv"><span>cost <b>${money(t.costUsd)}</b>${t.budgetUsd != null ? ` of ${money(t.budgetUsd)}` : ''}</span>${t.costUsd && ticketShare(t.costUsd) ? `<span>limits <b>${ticketShare(t.costUsd)}</b></span>` : ''}<span>owner <b>${esc(people.map(who).join(', ') || 'routing')}</b></span>${t.project ? `<span>project <b>${esc(t.project)}</b></span>` : ''}<span>lead effort <b>${esc(t.leadEffort || 'high')}</b></span><span>opened <b>${ago(t.createdAt)}</b></span>${t.closedAt ? `<span>took <b>${dur(t.closedAt - t.createdAt)}</b></span>` : ''}</div>`;
   const q = t.waiting;
-  const banHtml = failBanner(t) + handoffBanner(t) + (t.overBudget && t.status === 'open' ? `<div class="banner"><b>Paused at the budget.</b> ${money(t.costUsd)} of ${money(t.budgetUsd)} spent. <div class="row"><button class="btn pri sm" data-act="budget" data-add="5">+ $5</button><button class="btn sm" data-act="budget" data-add="10">+ $10</button><button class="btn sm danger" data-act="stop">Stop job</button></div></div>` : '')
+  const banHtml = failBanner(t) + stuckBanner(t) + handoffBanner(t) + (t.overBudget && t.status === 'open' ? `<div class="banner"><b>Paused at the budget.</b> ${money(t.costUsd)} of ${money(t.budgetUsd)} spent. <div class="row"><button class="btn pri sm" data-act="budget" data-add="5">+ $5</button><button class="btn sm" data-act="budget" data-add="10">+ $10</button><button class="btn sm danger" data-act="stop">Stop job</button></div></div>` : '')
     + (t.status === 'paused' ? '<div class="banner"><b>Paused.</b> Nothing runs on this job until you resume it.</div>' : '')
-    + (t.status === 'scheduled' ? `<div class="banner"><b>Scheduled.</b> Starts ${whenAt(t.scheduledFor)}, after the 5-hour limit resets. <div class="row"><button class="btn pri sm" data-act="startNow">Start now</button></div></div>` : '');
+    + (t.status === 'scheduled' ? `<div class="banner"><b>Scheduled.</b> Starts ${whenAt(t.scheduledFor)}${t.heldBy === 'daily' ? ': today\'s spending limit is reached' : ', after the 5-hour limit resets'}. <div class="row"><button class="btn pri sm" data-act="startNow">Start now</button></div></div>` : '');
   const ban = $('#jban');
   if (ban.dataset.h !== banHtml) { ban.innerHTML = banHtml; ban.dataset.h = banHtml; }
   const need = $('#jneed');
@@ -388,7 +428,7 @@ function renderJob() {
   $('#jtabs').innerHTML = [['thread', 'Thread'], ['tree', 'Process tree'], ['changes', `Changes${nCh ? ` (${nCh})` : ''}`], ['timeline', 'Timeline']].map(([k, l]) => `<button class="${S.jtab === k ? 'on' : ''}" data-act="jtab" data-tab="${k}">${l}</button>`).join('');
   $('#jtext').placeholder = q ? `Answer ${who(q.from)}…` : t.status === 'open' ? 'Add to this job…' : 'Reply to reopen this job…';
   $('#jhint').textContent = (q ? `Answers ${who(q.from)}.` : `Goes to ${who(t.direct || (t.assignees.length === 1 ? t.assignees[0] : S.root))}.`) + (pref('sendKey', 'enter') === 'ctrl' ? ' Ctrl+Enter sends.' : ' Enter sends, Shift+Enter adds a line.') + (queuedFid(t) ? ' ↑ edits your queued message.' : '');
-  const key = `${t.id}|${S.jtab}|${t.thread.length}|${queuedFid(t)}|${t.status}|${(t.commands || []).map((c) => c.status).join()}|${(t.access || []).map((r) => r.status).join()}|${nCh}|${(t.changes || []).map((c) => c.revertedAt || 0).join()}|${t.rating ? t.rating.score : 0}|${S.rerate}|${S.replay ? Math.round(S.replay.t / 1000) : ''}|${S.jtab === 'tree' || S.jtab === 'timeline' ? Math.floor(Date.now() / 5000) + Object.values(S.agents).map((a) => a.status).join('') : ''}`;
+  const key = `${t.id}|${S.jtab}|${t.thread.length}|${t.verify ? t.verify.status + (t.verify.runs || []).length : ''}|${t.workspace ? t.workspace.status : ''}|${S.ws && S.ws.id === t.id && S.ws.r ? 'w' : ''}|${queuedFid(t)}|${t.status}|${(t.commands || []).map((c) => c.status).join()}|${(t.access || []).map((r) => r.status).join()}|${nCh}|${(t.changes || []).map((c) => c.revertedAt || 0).join()}|${t.rating ? t.rating.score : 0}|${S.rerate}|${S.replay ? Math.round(S.replay.t / 1000) : ''}|${S.jtab === 'tree' || S.jtab === 'timeline' ? Math.floor(Date.now() / 5000) + Object.values(S.agents).map((a) => a.status).join('') : ''}`;
   if (key === S.jbodyKey) return;
   S.jbodyKey = key;
   const body = $('#jbody');
@@ -400,7 +440,7 @@ function renderJob() {
     const prevLen = S.jbodyLen || 0;
     const fresh = same ? t.thread.slice(prevLen) : [];
     const mine = fresh.some((e) => ['user', 'followup', 'reply'].includes(e.kind));
-    const jump = stickyRender(body, same && !mine, () => { body.innerHTML = threadHtml(t) + '<div id="jdraft"></div>' + changesCard(t) + rate; });
+    const jump = stickyRender(body, same && !mine, () => { body.innerHTML = threadHtml(t) + '<div id="jdraft"></div>' + verifyCard(t) + workspaceCard(t) + changesCard(t) + rate; });
     if (!same) body.scrollTop = q ? 0 : body.scrollHeight;
     else if (jump && fresh.some((e) => FOREGROUND.includes(e.kind) && !['user', 'followup', 'reply'].includes(e.kind))) newPill(body, fresh.length);
     S.jbodyFor = t.id; S.jbodyLen = t.thread.length;

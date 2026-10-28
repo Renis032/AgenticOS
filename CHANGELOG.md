@@ -24,6 +24,21 @@ and versions follow [Semantic Versioning](https://semver.org/).
   the question, "A, B or C?"), in the job, on Today and in Telegram; keys 1–5 pick one (`lib/suggest-answers.js`).
 - Lesson review: lessons the leads write after a job went wrong wait on Today until you keep, edit or drop them; only
   kept ones reach the agents (`reviewLessons`, on by default).
+- New team lead wizard: explain the lead's purpose in plain words; a draft of its routing, keywords, instructions and
+  specialists to review and edit before creating it (`lib/lead-wizard.js`).
+- Checks before done: a project's or job's checks run by the office after the lead answers; real exit codes decide,
+  failures go back to the lead, then fail the job with the evidence (`lib/verify.js`).
+- Interrupted jobs resume with what already happened, so nothing is done twice; stuck agents are flagged with Ask for
+  a status and Restart; stopping kills an agent's whole process group (`lib/recovery.js`, `lib/kill-group.js`).
+- Separate workspaces: jobs on the same git project work in their own worktrees, reviewed and applied without commits
+  (`lib/workspaces.js`).
+- Access and limits: web access off, folders agents may always edit, your own never-run and run-without-asking command
+  lists, and a daily spending limit.
+- Project memory: instructions, decisions, known failures and job outcomes per project; each job gets only what is
+  relevant (`lib/project-memory.js`, tools `remember_for_project` and `recall_project`).
+- Cost per successful job in Usage, per lead and per project (`lib/outcomes.js`).
+- Looks: Champagne (the default), Graphite (flat, neutral greys, system blue) and Midnight (navy, teal), each in
+  light and dark (Preferences → Appearance → Look, `public/ui/themes.css`).
 - Agent answers render *italics*.
 - Inline diffs in the conversation, work steps folded into "who worked how long", undo toasts instead of confirm
   dialogs, plan costs as a share of the 5-hour window, plan progress in the job list, lead avatars with status in the

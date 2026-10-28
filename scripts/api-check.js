@@ -155,6 +155,87 @@ async function check() {
     const bad = cases.filter(([q, want]) => suggest(q).join('|') !== want);
     ok('questions without choices get suggested answers from their wording (yes/no, A or B, a list), and none when unsure', !bad.length, JSON.stringify(bad.map(([q]) => [q, suggest(q)])));
   }
+  // Checks before done (lib/verify.js): real exit codes decide; a failure goes back to the lead once, then the job fails.
+  {
+    const vdir = fs.mkdtempSync(path.join(work, 'verify-'));
+    const closed = [], sent = [], th = [];
+    const V = require(path.join(ROOT, 'lib', 'verify')).install({ blockedCommand: (r, c) => (/rm -rf/.test(c) ? 'rm -rf' : null), broadcast: () => {}, closeTicket: (t, failed) => { t.status = failed ? 'failed' : 'done'; closed.push([t.n, t.status]); },
+      enqueueResident: (k, item) => sent.push([k, item.text]), lessons: { ask: () => {} }, now: Date.now, readJson: () => ({ defaults: { verifyRetries: 1 } }), spawn, thread: (t, e) => th.push(e), touchTicket: () => {}, workdirOf: () => vdir });
+    const mk = (n, cmds) => ({ id: 'v' + n, n, status: 'open', pending: [], thread: [], verifyCmds: cmds });
+    const good = mk(1, ['true', 'echo ok']);
+    const bad = mk(2, ['echo failing >&2; exit 3']);
+    V.start(good, 'lead'); V.start(bad, 'lead');
+    await until(() => closed.length === 1 && sent.length === 1, 8000);
+    ok('the office runs a job\'s checks itself: passing closes it done, a failure goes back to the lead with the output', good.status === 'done' && good.verify.status === 'passed' && bad.status === 'open' && /exited with 3/.test(sent[0][1]) && /failing/.test(sent[0][1]), JSON.stringify({ closed, sent, gv: good.verify, bv: bad.verify }).slice(0, 400));
+    V.start(bad, 'lead');
+    await until(() => closed.length === 2, 8000);
+    ok('a check that fails again after the retry ends the job as failed, with the evidence in the thread', bad.status === 'failed' && bad.verify.attempt === 2 && th.some((e) => e.kind === 'verify' && e.ok === false), JSON.stringify(bad.verify).slice(0, 300));
+    const ev = V.evidence({ commands: [{ command: 'npm test', exitCode: 1 }, { command: 'npm run lint', exitCode: 0 }, { command: 'npm test', exitCode: 0 }, { command: 'make', exitCode: 2 }] });
+    ok('evidence keeps the last run of each command and flags the ones still failing', ev.commands.length === 3 && ev.failing.length === 1 && ev.failing[0].command === 'make', JSON.stringify(ev));
+    ok('a job without checks is not held back', V.start(mk(3, []), 'lead') === false, '');
+  }
+  // Isolated workspaces (lib/workspaces.js): a git worktree per job, applied back without commits, or discarded.
+  if (spawnSync('git', ['--version']).status === 0) {
+    const repo = fs.mkdtempSync(path.join(work, 'repo-'));
+    const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+    g('init', '-q'); fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n'); g('add', '.'); g('commit', '-qm', 'init');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'one\nuncommitted\n'); fs.writeFileSync(path.join(repo, 'new.txt'), 'untracked\n');
+    const tk = new Map();
+    const other = { id: 'o1', n: 1, project: 'Repo', status: 'open' };
+    tk.set('o1', other);
+    const Wk = require(path.join(ROOT, 'lib', 'workspaces')).install({ DATA: path.join(work, 'wsdata'), fs, home: (p) => p, now: Date.now, path, readJson: (f) => (f === 'projects.json' ? [{ name: 'Repo', path: repo }] : { defaults: {} }), thread: () => {}, tickets: tk, touchTicket: () => {} });
+    const job = { id: 'w1', n: 2, project: 'Repo', status: 'open' };
+    tk.set('w1', job);
+    const W = Wk.create(job);
+    const startsFromNow = W && fs.readFileSync(path.join(W.path, 'a.txt'), 'utf8').includes('uncommitted') && fs.existsSync(path.join(W.path, 'new.txt'));
+    ok('a second job on the same git project works in its own worktree, starting from the project as it is now (uncommitted and untracked files too)', !!W && startsFromNow && Wk.blockedRoot(job) === repo, JSON.stringify(W));
+    fs.writeFileSync(path.join(W.path, 'a.txt'), 'one\nuncommitted\nfrom the job\n'); fs.writeFileSync(path.join(W.path, 'b.txt'), 'added\n');
+    const rv = Wk.review(job);
+    job.status = 'done';
+    const ap = Wk.apply(job);
+    const log = g('log', '--oneline').stdout.trim().split('\n').length;
+    ok('the user reviews the job\'s diff and applies it to the project: files change, nothing is committed, the worktree is removed', rv.files.length === 2 && ap.ok && !ap.conflicts && fs.readFileSync(path.join(repo, 'a.txt'), 'utf8').includes('from the job') && fs.existsSync(path.join(repo, 'b.txt')) && log === 1 && !fs.existsSync(W.worktree), JSON.stringify({ rv: rv.files, ap, log }));
+    const job2 = { id: 'w2', n: 3, project: 'Repo', status: 'open' };
+    tk.set('w2', job2);
+    const W2 = Wk.create(job2);
+    fs.writeFileSync(path.join(W2.path, 'c.txt'), 'nope\n');
+    job2.status = 'done';
+    ok('or discards it, leaving the project untouched', Wk.discard(job2).ok && !fs.existsSync(path.join(repo, 'c.txt')) && !fs.existsSync(W2.worktree), '');
+  }
+  // Project memory (lib/project-memory.js): instructions always, other entries only when relevant.
+  {
+    const P = require(path.join(ROOT, 'lib', 'project-memory')).install({ DATA: path.join(work, 'pmdata'), agents: new Map(), findSecret: () => null, fs, newId: (() => { let i = 0; return () => 'p' + ++i; })(), now: Date.now, path,
+      readJson: () => [{ name: 'Shop', path: '~/shop' }], ticketOfAgent: () => null });
+    P.add('Shop', 'instruction', 'Use pnpm, never npm, in this repository.', 'user');
+    P.add('Shop', 'failure', 'Date tests fail outside UTC; jest.config.js sets TZ=UTC since #41.', 'lead', 41);
+    P.add('Shop', 'decision', 'Payments go through the Stripe webhook handler in api/webhooks.ts, never from the client.', 'lead', 30);
+    P.add('Shop', 'outcome', '"Fix checkout button colour" ended done.', 'office', 12);
+    const brief = P.briefFor({ project: 'Shop', title: 'Date tests are failing', text: 'The date tests fail on CI again.' });
+    ok('a job\'s brief gets the project\'s instructions and only the relevant memories', /pnpm/.test(brief) && /TZ=UTC/.test(brief) && !/Stripe/.test(brief) && !/checkout/.test(brief), brief);
+    ok('project memory refuses unknown projects and empty notes', P.add('Nope', 'decision', 'something long enough').error && P.add('Shop', 'decision', 'short').error, '');
+  }
+  // Recovery (lib/recovery.js): an interrupted job resumes with what already happened, so nothing is done twice.
+  {
+    const ags = new Map([['lead', { id: 'lead', persona: 'Lead', resident: true }]]);
+    const q = [];
+    const Rc = require(path.join(ROOT, 'lib', 'recovery')).install({ ACTIVE: ['working'], agents: ags, broadcast: () => {}, enqueueResident: (k, i) => q.push([k, i.text]), eventsOf: () => [{ kind: 'progress', text: 'tests half fixed', t: 1 }], now: Date.now,
+      readJson: () => ({ root: 'god' }), restartResident: () => {}, thread: () => {}, tickets: new Map(), touchTicket: () => {} });
+    const t = { id: 'r1', n: 5, title: 'x', text: 'Fix the tests', status: 'open', pending: [], direct: 'lead', thread: [], changes: [{ path: '/tmp/a.js' }], commands: [{ command: 'npm install', exitCode: 0, status: 'done' }] };
+    Rc.markInterrupted(t, 'the office restarted');
+    const r = Rc.resume(t);
+    ok('an interrupted job resumes with what already happened (files, commands, progress) and a warning not to repeat actions', t.status === 'open' && r.ok && /\/tmp\/a\.js/.test(q[0][1]) && /npm install` → exit 0/.test(q[0][1]) && /Do NOT repeat/.test(q[0][1]) && /half fixed/.test(q[0][1]), q[0] && q[0][1].slice(0, 300));
+  }
+  // Outcomes (lib/outcomes.js): cost per successful job, not per job.
+  {
+    const tk = new Map([
+      ['a', { id: 'a', n: 1, status: 'done', createdAt: 0, closedAt: 600000, costUsd: 2, direct: 'lead', thread: [] }],
+      ['b', { id: 'b', n: 2, status: 'done', createdAt: 0, closedAt: 600000, costUsd: 3, direct: 'lead', thread: [], rework: 1 }],
+      ['c', { id: 'c', n: 3, status: 'failed', createdAt: 0, closedAt: 600000, costUsd: 1, direct: 'lead', thread: [{ kind: 'verify', ok: false }], verify: { status: 'failed', attempt: 2 } }],
+    ]);
+    const O = require(path.join(ROOT, 'lib', 'outcomes')).install({ agents: new Map([['lead', { id: 'lead', persona: 'Lead' }]]), now: () => 700000, readJson: () => ({ root: 'god' }), tickets: tk });
+    const o = O.report(30).overall;
+    ok('outcomes count only clean successes and give the cost per successful job', o.jobs === 3 && o.succeeded === 1 && o.costPerSuccess === 6 && o.checkFails === 1 && o.retries === 2, JSON.stringify(o));
+  }
   // The agent eval over time (lib/evals.js), with a stand-in eval script so nothing is spent.
   {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentos-evals-'));
@@ -341,6 +422,17 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     ok('Ask the office answers from gathered facts, and refuses an empty question', asked.answer === 'ok' && Array.isArray(asked.sources) && asked.factsChars > 100 && askedEmpty.error, JSON.stringify({ asked, askedEmpty }).slice(0, 300));
     const team = (await A('POST', '/api/config/team', { persona: 'Vera', room: 'Research Desk', description: 'Owns research questions.' })).body || {};
     ok('a new team can be created from Teams & roles', team.ok && !team.error, JSON.stringify(team).slice(0, 200));
+    // The new-lead wizard: a draft from the user's words (the stand-in model answers "ok", so the template is used), then a full lead.
+    const dr = (await A('POST', '/api/config/team/draft', { purpose: 'Look after my home server: docker containers, nightly backups and the raspberry pi.', persona: 'Hale' })).body || {};
+    const tooShort = (await A('POST', '/api/config/team/draft', { purpose: 'servers' })).body || {};
+    ok('the lead wizard drafts a lead from a plain description, and asks for more when it is too short', dr.persona === 'Hale' && dr.prompt.length > 100 && dr.keywords.includes('docker') && tooShort.error, JSON.stringify({ dr, tooShort }).slice(0, 300));
+    const made = (await A('POST', '/api/config/team', { ...dr, room: 'Homelab', keywords: ['homelab', 'docker'], roles: [{ name: 'Ops Engineer', description: 'Runs containers.', access: 'edit' }] })).body || {};
+    const cfg2 = (await A('GET', '/api/config')).body || {};
+    const leadRole = (cfg2.roles || []).find((r) => r.key === made.key) || {};
+    const roster2 = { root: cfg2.root, residents: cfg2.residents, roles: Object.fromEntries((cfg2.roles || []).map((r) => [r.key, r])) };
+    const routed = require(path.join(ROOT, 'scripts', 'route.js')).route('restart the docker containers on the homelab box', cfg2.projects || [], roster2);
+    ok('a wizard lead gets its instructions, specialists and routing keywords, and matching jobs route to it', made.ok && /Never commit or push/.test(leadRole.prompt) && (leadRole.children || []).includes('homelab-ops-engineer') &&
+      routed.lead === made.key, JSON.stringify({ made, routed, leadRole: { ...leadRole, prompt: (leadRole.prompt || '').slice(0, 80) } }).slice(0, 400));
     const ev = (await A('GET', '/api/evals')).body || {};
     const evSet = (await A('POST', '/api/office-settings', { agentEvalDays: 3 })).body || {};
     ok('the agent eval history loads, and how often it runs can be set', Array.isArray(ev.runs) && evSet.agentEvalDays === 3, JSON.stringify({ ev, evSet: evSet.agentEvalDays }));

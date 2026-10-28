@@ -751,3 +751,35 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 .lreview .lt { margin: 4px 0 6px; max-width: 80ch; }
 .lreview .lrin { width: 100%; margin: 4px 0 6px; }
 .lreview .row { gap: 6px; }
+
+/* New team lead wizard (Teams & roles) */
+.lwiz .lwgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; margin-top: 10px; }
+.lwiz .lwgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.lwiz .lwgrid label.full { grid-column: 1 / -1; }
+.lwiz .lwgrid label .hint { font-weight: 400; }
+.lwiz .lwgrid .in, .lwiz .lwgrid select, .lwiz .lwgrid textarea { color: var(--text); font-weight: 400; }
+.lwiz .lwrole { margin-top: 6px; align-items: center; }
+@media (max-width: 860px) { .lwiz .lwgrid { grid-template-columns: 1fr; } }
+
+/* Checks before done (lib/verify.js) and the job's separate workspace (lib/workspaces.js) */
+.vcard, .wcard { margin: 10px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.vcard .vh, .wcard .vh { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.vcard .vbig { width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--panel3); }
+.vcard.s-passed { border-color: rgba(var(--done-rgb), .45); } .vcard.s-passed .vbig { background: var(--done); color: #fff; }
+.vcard.s-failed { border-color: rgba(var(--fail-rgb), .5); } .vcard.s-failed .vbig { background: var(--fail); color: #fff; }
+.vcard .vrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.vcard .vrow .vic { width: 14px; text-align: center; color: var(--muted); }
+.vcard .vrow.ok .vic { color: var(--done); } .vcard .vrow.bad .vic { color: var(--fail); }
+.vcard .vrow .hint { margin-left: auto; }
+.vcard .vout pre { max-height: 260px; overflow: auto; font-size: 12px; background: var(--code); padding: 8px; border-radius: 6px; white-space: pre-wrap; }
+.wcard .wfile { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+.wcard .row { margin-top: 8px; gap: 6px; }
+.line-ev.vok { color: var(--done); } .line-ev.vbad { color: var(--fail); }
+.njmore { margin-top: 10px; } .njmore summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.njmore .njf { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.njmore .njf textarea { font-family: var(--mono); color: var(--text); font-weight: 400; }
+.pmem { margin-top: 18px; max-width: 980px; } .pmem h3 select { font-size: inherit; padding: 2px 6px; }
+.pmem .pmrow { gap: 10px; align-items: center; } .pmem .pmrow .pill { white-space: nowrap; }
+/* Cost per successful job (Usage) */
+.ostats { display: flex; gap: 28px; flex-wrap: wrap; margin: 4px 0; }
+.otab { width: 100%; margin-top: 4px; } .otab td.num, .otab th.num { text-align: right; font-variant-numeric: tabular-nums; }

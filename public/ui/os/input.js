@@ -229,6 +229,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); ACT.lessonKeep(el.dataset); }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); S.lessonEdit = null; S.tdKey = null; S.memKey = null; dirty(); }
 }, true);
+// Reads the wizard's review form back into S.lw.draft (so re-rendering keeps what the user typed).
+function lwRead() {
+  const D = S.lw.draft, v = (n) => ($('#lw_d_' + n) || {}).value;
+  for (const k of ['persona', 'room', 'cwd', 'access', 'model', 'effort', 'description', 'prompt']) if (v(k) != null) D[k] = v(k);
+  if (v('keywords') != null) D.keywords = v('keywords').split(',').map((x) => x.trim()).filter(Boolean);
+  D.roles = D.roles.map((r, i) => ({ name: ($('#lw_r_name_' + i) || {}).value ?? r.name, description: ($('#lw_r_desc_' + i) || {}).value ?? r.description, access: ($('#lw_r_access_' + i) || {}).value ?? r.access }));
+  return D;
+}
 function stepMessages(dir) {
   const body = $('#jbody');
   if (!body) return;
@@ -428,6 +436,14 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
     routePreview();
   },
   wrapUp: () => api('POST', `/api/tickets/${S.job}/message`, { text: 'Wrap up: save the project handoff for what we did (current state, this session, next steps), then give me a short summary.' }),
+  jobContinue: () => api('POST', `/api/tickets/${S.job}/continue`).catch((e) => alert(e.message)),
+  jobNudge: () => api('POST', `/api/tickets/${S.job}/nudge`).catch((e) => alert(e.message)),
+  jobRestartStuck: () => { const id = S.job; undoable(`Restarting the lead on #${S.tickets[id].n}…`, () => api('POST', `/api/tickets/${id}/restart-stuck`)); },
+  wsApply: () => { const id = S.job; api('POST', `/api/tickets/${id}/workspace/apply`).then((r) => { S.ws = null; notifyQuiet(r.conflicts ? 'Applied with conflicts: look for conflict markers in the project.' : `Applied ${r.files} file change${r.files === 1 ? '' : 's'} to the project. Nothing was committed.`); }).catch((e) => alert(e.message)); },
+  wsDiscard: () => { const id = S.job; undoable(`Discarding the workspace of #${S.tickets[id].n}`, () => api('POST', `/api/tickets/${id}/workspace/discard`).then(() => { S.ws = null; })); },
+  pmAdd: () => { const v = $('#pmText').value.trim(); if (!v) return; api('POST', `/api/projects/${encodeURIComponent(S.pmProject)}/memory`, { kind: 'instruction', text: v }).then(() => { S.pm = null; renderProjectMemory(); }).catch((e) => alert(e.message)); },
+  pmDel: (d) => api('DELETE', `/api/projects/${encodeURIComponent(S.pmProject)}/memory/${d.id}`).then(() => { S.pm = null; renderProjectMemory(); }).catch((e) => alert(e.message)),
+  pmKind: (d) => { S.pmKind = d.k || null; renderProjectMemory(); },
   retry: () => { const t = S.tickets[S.job]; return api('POST', `/api/tickets/${t.id}/message`, { text: t.status === 'failed' ? `Please try again. The last attempt failed with: ${short(String(t.answer || '').replace(/\s+/g, ' '), 400)}` : 'Please try again: the last attempt was interrupted before you finished. Pick up where you stopped.' }); },
   stopAgent: (d) => { const a = S.agents[d.id]; if (a && confirm(`Stop ${a.persona}? Their lead is told and carries on without them.`)) return api('POST', `/api/agents/${a.id}/stop`); },
   bgGroup: (d, ev) => { const el = ev.target.closest('details'); if (el) el.open = !el.open; if (S.openGroups.has(d.k)) S.openGroups.delete(d.k); else S.openGroups.add(d.k); },
@@ -464,10 +480,28 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   saveRole: (d, ev) => api('POST', '/api/config/role', { key: d.key, team: d.team, model: $('#m_' + d.key).value || undefined, effort: $('#e_' + d.key).value || undefined, prompt: $('#p_' + d.key) ? $('#p_' + d.key).value : undefined }).then(() => { ev.target.textContent = 'Saved ✓'; setTimeout(() => { S.cfg = null; dirty(); }, 700); }).catch((e) => alert(e.message)),
   delRole: (d) => { if (confirm('Remove this role? Staff already hired keep working.')) api('DELETE', `/api/config/role/${d.key}`).then(() => { S.cfg = null; dirty(); }).catch((e) => alert(e.message)); },
   addRole: (d) => { const v = (n) => $(`#nr_${n}_${d.team}`).value; api('POST', '/api/config/role', { team: d.team, name: v('name'), access: v('access'), model: v('model'), effort: v('effort'), description: v('desc'), prompt: v('prompt') }).then(() => { S.cfg = null; dirty(); }).catch((e) => alert(e.message)); },
+  lwDraft: (d) => {
+    const v = (n) => ($('#lw_' + n) || {}).value || '';
+    S.lw = { purpose: v('purpose'), persona: v('persona'), room: v('room'), cwd: v('cwd').trim(), busy: !d.skip };
+    if (d.skip) { S.lw.draft = { persona: S.lw.persona, room: S.lw.room, cwd: S.lw.cwd || '~', access: 'edit', model: 'opus', effort: 'high', description: S.lw.purpose, keywords: [], prompt: '', roles: [{ name: 'Researcher', description: 'Reads code, docs and the web and reports findings with sources.', access: 'web' }] }; S.cfgKey = null; return dirty(); }
+    S.cfgKey = null; dirty();
+    api('POST', '/api/config/team/draft', { purpose: S.lw.purpose, persona: S.lw.persona, room: S.lw.room, cwd: S.lw.cwd })
+      .then((r) => { S.lw.draft = r; }).catch((e) => alert(e.message)).finally(() => { S.lw.busy = false; S.cfgKey = null; dirty(); });
+  },
+  lwBack: () => { lwRead(); S.lw.draft = null; S.cfgKey = null; dirty(); },
+  lwRoleAdd: () => { lwRead(); S.lw.draft.roles.push({ name: '', description: '', access: 'readonly' }); S.cfgKey = null; dirty(); },
+  lwRoleDel: (d) => { lwRead(); S.lw.draft.roles.splice(Number(d.i), 1); S.cfgKey = null; dirty(); },
+  lwCreate: () => {
+    const D = lwRead();
+    if (!D.persona.trim() || !D.room.trim()) return alert('The lead needs a name and a team.');
+    S.lw.busy = true; S.cfgKey = null; dirty();
+    api('POST', '/api/config/team', D).then(() => { notifyQuiet(`${D.persona} joined as lead of ${D.room}.`); S.lw = null; S.cfg = null; dirty(); })
+      .catch((e) => { S.lw.busy = false; S.cfgKey = null; dirty(); alert(e.message); });
+  },
   addTeam: () => { const v = (n) => $('#nt_' + n).value; api('POST', '/api/config/team', { persona: v('persona'), room: v('room'), cwd: v('cwd'), access: v('access'), description: v('desc') }).then(() => { S.cfg = null; dirty(); }).catch((e) => alert(e.message)); },
   addProj: () => { S.cfg.projects.push({ name: '', path: '', department: S.cfg.residents.find((k) => k !== S.cfg.root), description: '' }); S.cfgKey = null; dirty(); },
   delProj: (d) => { S.cfg.projects.splice(Number(d.i), 1); S.cfgKey = null; dirty(); },
-  saveProj: () => { const list = S.cfg.projects.map((p, i) => ({ ...p, name: $('#pj_name_' + i).value.trim(), path: $('#pj_path_' + i).value.trim(), department: $('#pj_dep_' + i).value, description: $('#pj_desc_' + i).value.trim(), leadEffort: $('#pj_eff_' + i).value || undefined, keywords: $('#pj_kw_' + i).value.split(',').map((x) => x.trim()).filter(Boolean) })).filter((p) => p.name && p.path); api('PUT', '/api/projects', list).then(async () => { const st = await api('GET', '/api/state'); S.projects = st.projects; S.cfg = null; dirty(); notify('answer', 'Projects saved', ''); }).catch((e) => alert(e.message)); },
+  saveProj: () => { const list = S.cfg.projects.map((p, i) => ({ ...p, name: $('#pj_name_' + i).value.trim(), path: $('#pj_path_' + i).value.trim(), department: $('#pj_dep_' + i).value, description: $('#pj_desc_' + i).value.trim(), leadEffort: $('#pj_eff_' + i).value || undefined, keywords: $('#pj_kw_' + i).value.split(',').map((x) => x.trim()).filter(Boolean), verify: $('#pj_ver_' + i).value.split(';;').map((x) => x.trim()).filter(Boolean) })).filter((p) => p.name && p.path); api('PUT', '/api/projects', list).then(async () => { const st = await api('GET', '/api/state'); S.projects = st.projects; S.cfg = null; dirty(); notify('answer', 'Projects saved', ''); }).catch((e) => alert(e.message)); },
 };
 document.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-act]');

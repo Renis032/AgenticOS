@@ -1,0 +1,150 @@
+/* Agentic OS — looks. Loaded after os-lux.css. The look (html[data-look], Preferences → Appearance) is separate from
+   light/dark: each look has both. "champagne" is the default and has no rules here; it is os-lux.css as is.
+     graphite  neutral greys, flat cards, solid system-blue selection, sentence-case titles (a native desktop look)
+     midnight  deep navy surfaces with the champagne layer's glass and motion
+   Specificity: :root[data-look=x] ties with os-lux.css's :root[data-theme=light] and wins by order; the light variants
+   add a third selector so they win over the dark ones. */
+
+/* ---------------------------------------------------------------- graphite: tokens */
+:root[data-look=graphite] {
+  --desk: #1c1c1e; --bg: #1e1e20; --panel: #262628; --panel2: #2c2c2e; --panel3: #363638; --dock: #242426;
+  --line: rgba(255, 255, 255, .075); --line2: rgba(255, 255, 255, .13);
+  --text: #ececee; --muted: #a1a1a6; --faint: #8e8e93;
+  --code: #1a1a1c; --sel: rgba(10, 132, 255, .20);
+  --glass: rgba(36, 36, 38, .96); --glass-strong: rgba(40, 40, 42, .98);
+  --shadow: 0 12px 34px rgba(0, 0, 0, .50), 0 0 0 1px rgba(0, 0, 0, .35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .25);
+  --panel-rgb: 38, 38, 40; --panel2-rgb: 44, 44, 46; --panel3-rgb: 54, 54, 56; --code-rgb: 26, 26, 28; --muted-rgb: 161, 161, 166; --text-rgb: 236, 236, 238; --panel-hi: #262628;
+  --run: #4aa8ff; --deleg: #9d8cf9; --done: #32d74b; --fail: #ff6b5e; --stop: #ffcc40; --idle: #64d2ff; --off: #7c7c80; --queue: #98989d;
+  --run-rgb: 74, 168, 255; --deleg-rgb: 157, 140, 249; --done-rgb: 50, 215, 75; --fail-rgb: 255, 107, 94; --stop-rgb: 255, 204, 64;
+  --think: #b9adff; --opus: #ff9f6b; --sonnet: #6ab4ff; --haiku: #4fd18b;
+  --serif: var(--sans); --r-sm: 6px; --r: 8px; --r-lg: 10px;
+}
+@media (prefers-color-scheme: light) { :root[data-look=graphite]:not([data-theme=dark]) {
+  --desk: #e8e8eb; --bg: #f5f5f7; --panel: #ffffff; --panel2: #f5f5f7; --panel3: #e8e8ed; --dock: #ececef;
+  --line: rgba(0, 0, 0, .085); --line2: rgba(0, 0, 0, .15);
+  --text: #1d1d1f; --muted: #6e6e73; --faint: #6e6e73;
+  --code: #f5f5f7; --sel: rgba(0, 122, 255, .12);
+  --glass: rgba(246, 246, 248, .96); --glass-strong: rgba(251, 251, 253, .98);
+  --shadow: 0 12px 34px rgba(0, 0, 0, .16), 0 0 0 1px rgba(0, 0, 0, .06); --shadow-sm: 0 1px 2px rgba(0, 0, 0, .06);
+  --panel-rgb: 255, 255, 255; --panel2-rgb: 245, 245, 247; --panel3-rgb: 232, 232, 237; --code-rgb: 245, 245, 247; --muted-rgb: 110, 110, 115; --text-rgb: 29, 29, 31; --panel-hi: #ffffff;
+  --run: #0a6fd8; --deleg: #6e4fd6; --done: #248a3d; --fail: #d70015; --stop: #a05a00; --idle: #0a7ea3; --off: #8e8e93; --queue: #8e8e93;
+  --run-rgb: 10, 111, 216; --deleg-rgb: 110, 79, 214; --done-rgb: 36, 138, 61; --fail-rgb: 215, 0, 21; --stop-rgb: 160, 90, 0;
+  --think: #5b51b8; --opus: #c0602f; --sonnet: #2f6fbf; --haiku: #23885c;
+} }
+:root[data-look=graphite][data-theme=light] {
+  --desk: #e8e8eb; --bg: #f5f5f7; --panel: #ffffff; --panel2: #f5f5f7; --panel3: #e8e8ed; --dock: #ececef;
+  --line: rgba(0, 0, 0, .085); --line2: rgba(0, 0, 0, .15);
+  --text: #1d1d1f; --muted: #6e6e73; --faint: #6e6e73;
+  --code: #f5f5f7; --sel: rgba(0, 122, 255, .12);
+  --glass: rgba(246, 246, 248, .96); --glass-strong: rgba(251, 251, 253, .98);
+  --shadow: 0 12px 34px rgba(0, 0, 0, .16), 0 0 0 1px rgba(0, 0, 0, .06); --shadow-sm: 0 1px 2px rgba(0, 0, 0, .06);
+  --panel-rgb: 255, 255, 255; --panel2-rgb: 245, 245, 247; --panel3-rgb: 232, 232, 237; --code-rgb: 245, 245, 247; --muted-rgb: 110, 110, 115; --text-rgb: 29, 29, 31; --panel-hi: #ffffff;
+  --run: #0a6fd8; --deleg: #6e4fd6; --done: #248a3d; --fail: #d70015; --stop: #a05a00; --idle: #0a7ea3; --off: #8e8e93; --queue: #8e8e93;
+  --run-rgb: 10, 111, 216; --deleg-rgb: 110, 79, 214; --done-rgb: 36, 138, 61; --fail-rgb: 215, 0, 21; --stop-rgb: 160, 90, 0;
+  --think: #5b51b8; --opus: #c0602f; --sonnet: #2f6fbf; --haiku: #23885c;
+}
+
+/* ---------------------------------------------------------------- graphite: components (flat, no glow, no glass) */
+html[data-look=graphite] body { letter-spacing: 0; }
+html[data-look=graphite] #main, html[data-look=graphite] .bmapwrap { background: var(--bg); animation: none; }
+html[data-look=graphite] #top { background: var(--dock); -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look=graphite] #top .brand img { filter: none; }
+html[data-look=graphite] #dock { background: var(--dock); -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look=graphite] .toolbar h1, html[data-look=graphite] .jhead h2 .jt, html[data-look=graphite] #top .brand,
+html[data-look=graphite] .prefs section h2, html[data-look=graphite] .pcard h3, html[data-look=graphite] .brain-side h3 { font-weight: 700; letter-spacing: -0.012em; font-variation-settings: normal; }
+html[data-look=graphite] .toolbar h1 { font-size: 17px; }
+
+/* Sidebar: the active app is a solid accent row, headings in sentence case. */
+html[data-look=graphite] .app-link { border-radius: 8px; font-weight: 500; }
+html[data-look=graphite] .app-link:hover { background: rgba(var(--text-rgb), .07); }
+html[data-look=graphite] .app-link.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+html[data-look=graphite] .app-link.on svg { color: var(--accent-ink); }
+html[data-look=graphite] .app-link.on::before { display: none; }
+html[data-look=graphite] .app-link.on .bd { background: rgba(255, 255, 255, .24); color: var(--accent-ink); }
+html[data-look=graphite] .app-link .bd.ask, html[data-look=graphite] .nbadge { animation: none; box-shadow: none; }
+html[data-look=graphite] .dock-sec { text-transform: none; letter-spacing: 0; font-size: 11.5px; font-weight: 600; }
+html[data-look=graphite] #quick { border-radius: 8px; background: var(--panel); }
+
+/* Controls */
+html[data-look=graphite] .btn { border-radius: 7px; background: var(--panel3); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+html[data-look=graphite] .btn:hover { background: rgba(var(--text-rgb), .13); border-color: var(--line2); }
+html[data-look=graphite] .btn.sm { border-radius: 6px; }
+html[data-look=graphite] .btn.pri { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; box-shadow: var(--shadow-sm); }
+html[data-look=graphite] .btn.pri:hover { filter: brightness(1.1); box-shadow: var(--shadow-sm); }
+html[data-look=graphite] .btn.pri::after { display: none; }
+html[data-look=graphite] .in, html[data-look=graphite] select, html[data-look=graphite] textarea { border-radius: 7px; background: var(--code); border-color: var(--line2); }
+html[data-look=graphite] .in:focus, html[data-look=graphite] select:focus, html[data-look=graphite] textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .30); }
+html[data-look=graphite] .searchpill { border-radius: 8px; background: var(--panel); box-shadow: none; }
+html[data-look=graphite] .seg { border-radius: 8px; background: var(--panel3); }
+html[data-look=graphite] .seg button { border-radius: 6px; }
+html[data-look=graphite] .seg button.on { background: var(--panel); box-shadow: var(--shadow-sm); }
+html[data-look=graphite] .sw input:checked + i { background: var(--accent); border-color: var(--accent); box-shadow: none; }
+html[data-look=graphite] .chip, html[data-look=graphite] .bchip { background: var(--panel3); }
+
+/* Cards: flat panels with a hairline border; titles in sentence case, like a native inspector. */
+html[data-look=graphite] .card, html[data-look=graphite] .pcard, html[data-look=graphite] .bfind, html[data-look=graphite] .pgroup {
+  background: var(--panel); border: 1px solid var(--line); box-shadow: none; animation: none; border-radius: 10px; }
+html[data-look=graphite] .card:hover, html[data-look=graphite] .pcard:hover, html[data-look=graphite] .bfind:hover { transform: none; box-shadow: none; border-color: var(--line2); }
+html[data-look=graphite] .card h3 { text-transform: none; letter-spacing: 0; font-size: 13.5px; font-weight: 600; color: var(--text); }
+html[data-look=graphite] .label { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
+html[data-look=graphite] .ev .h { letter-spacing: .4px; }
+html[data-look=graphite] .hbar .v, html[data-look=graphite] .kv b, html[data-look=graphite] table.ps td.num { font-family: var(--mono); }
+
+/* Lists and the conversation */
+html[data-look=graphite] .joblist, html[data-look=graphite] .list, html[data-look=graphite] .insp, html[data-look=graphite] .brain-side { background: var(--bg); }
+html[data-look=graphite] .jl.on { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+html[data-look=graphite] .li:hover, html[data-look=graphite] .jl:hover, html[data-look=graphite] table.ps tbody tr:hover { background: rgba(var(--text-rgb), .05); }
+html[data-look=graphite] table.ps th { background: var(--panel2); -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look=graphite] .ev { border-radius: 10px; background: var(--panel); box-shadow: none; }
+html[data-look=graphite] .ev.user { background: var(--panel2); border-color: var(--line); }
+html[data-look=graphite] .ev.answer { border-color: var(--line2); box-shadow: none; }
+html[data-look=graphite] .ev:last-child, html[data-look=graphite] .toast { animation: none; }
+html[data-look=graphite] .composer { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look=graphite] .composer textarea { border-radius: 10px; }
+html[data-look=graphite] .jlive { background: var(--panel); }
+
+/* Menus and the palette: the hovered item is a solid accent row. */
+html[data-look=graphite] .menu, html[data-look=graphite] .pop, html[data-look=graphite] #pal .box, html[data-look=graphite] .toast, html[data-look=graphite] .modal { border-radius: 10px; }
+html[data-look=graphite] .menu .mi { border-radius: 5px; }
+html[data-look=graphite] .menu .mi.hot, html[data-look=graphite] #pal .it.on { background: var(--accent); color: var(--accent-ink); }
+html[data-look=graphite] .menu .mi.hot *, html[data-look=graphite] #pal .it.on * { color: inherit; }
+html[data-look=graphite] #pal .it:hover:not(.on) { background: rgba(var(--text-rgb), .07); }
+html[data-look=graphite] .prefs aside { background: var(--dock); }
+html[data-look=graphite] .prefs aside .pn.on { background: var(--accent); color: var(--accent-ink); }
+html[data-look=graphite] .prefs aside .pn.on svg { color: var(--accent-ink); }
+html[data-look=graphite] .modal-wrap, html[data-look=graphite] #pal { -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ---------------------------------------------------------------- midnight: tokens only (keeps the champagne layer's glass and motion) */
+:root[data-look=midnight] {
+  --desk: #060a13; --bg: #0a1020; --panel: #0f172a; --panel2: #131d33; --panel3: #1b2640;
+  --line: rgba(148, 163, 184, .10); --line2: rgba(148, 163, 184, .18);
+  --text: #e2e8f0; --muted: #94a3b8; --faint: #8796ad; --code: #0b1222; --sel: rgba(var(--accent-rgb), .14);
+  --glass: rgba(12, 19, 36, .74); --glass-strong: rgba(11, 17, 32, .97);
+  --panel-rgb: 15, 23, 42; --panel2-rgb: 19, 29, 51; --panel3-rgb: 27, 38, 64; --code-rgb: 11, 18, 34; --muted-rgb: 148, 163, 184; --text-rgb: 226, 232, 240; --panel-hi: #111a2f;
+}
+@media (prefers-color-scheme: light) { :root[data-look=midnight]:not([data-theme=dark]) {
+  --desk: #e3e9f2; --bg: #edf2f8; --panel: #ffffff; --panel2: #f3f6fb; --panel3: #e5ebf4;
+  --line: rgba(15, 23, 42, .09); --line2: rgba(15, 23, 42, .16);
+  --text: #0f172a; --muted: #475569; --faint: #536177; --code: #f1f5f9;
+  --glass: rgba(255, 255, 255, .78); --glass-strong: rgba(255, 255, 255, .97);
+  --panel-rgb: 255, 255, 255; --panel2-rgb: 243, 246, 251; --panel3-rgb: 229, 235, 244; --code-rgb: 241, 245, 249; --muted-rgb: 71, 85, 105; --text-rgb: 15, 23, 42; --panel-hi: #ffffff;
+} }
+:root[data-look=midnight][data-theme=light] {
+  --desk: #e3e9f2; --bg: #edf2f8; --panel: #ffffff; --panel2: #f3f6fb; --panel3: #e5ebf4;
+  --line: rgba(15, 23, 42, .09); --line2: rgba(15, 23, 42, .16);
+  --text: #0f172a; --muted: #475569; --faint: #536177; --code: #f1f5f9;
+  --glass: rgba(255, 255, 255, .78); --glass-strong: rgba(255, 255, 255, .97);
+  --panel-rgb: 255, 255, 255; --panel2-rgb: 243, 246, 251; --panel3-rgb: 229, 235, 244; --code-rgb: 241, 245, 249; --muted-rgb: 71, 85, 105; --text-rgb: 15, 23, 42; --panel-hi: #ffffff;
+}
+
+/* ---------------------------------------------------------------- the look picker (Preferences → Appearance) */
+.looks { display: flex; gap: 10px; flex-wrap: wrap; }
+.looks button { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-radius: 10px; border: 2px solid transparent; background: none; cursor: pointer; color: var(--text); font: inherit; font-size: 12px; }
+.looks button.on { border-color: var(--accent); }
+.looks button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.looks .lk { display: grid; grid-template-columns: 22px 1fr; width: 96px; height: 60px; border-radius: 7px; overflow: hidden; border: 1px solid var(--line2); background: var(--b); }
+.looks .lk i { background: var(--d); display: flex; flex-direction: column; gap: 3px; padding: 6px 4px; }
+.looks .lk i::before { content: ''; height: 5px; border-radius: 2px; background: var(--a); }
+.looks .lk b { margin: 8px 7px; border-radius: 4px; background: var(--p); box-shadow: inset 0 0 0 1px rgba(128, 128, 128, .18); position: relative; }
+.looks .lk b::after { content: ''; position: absolute; left: 6px; bottom: 6px; width: 22px; height: 6px; border-radius: 2px; background: var(--a); }

@@ -23,7 +23,8 @@ function nextSteps(state) {
 APPS.projects = {
   mount(root) {
     root.innerHTML = `<div class="app"><div class="toolbar"><h1>Projects</h1><input class="in" id="boardQ" placeholder="Filter projects…" value="${esc(S.boardQ)}" style="width:220px"><span class="hint" style="flex:1">Where each personal project stands, from its handoff. Continue starts a job that picks up there.</span><button class="btn sm" data-act="boardRefresh">Refresh</button></div>
-      <div class="page" id="board">${skel(6, "cards")}</div></div>`;
+      <div class="page"><div id="board">${skel(6, "cards")}</div><div id="pmem"></div></div></div>`;
+    renderProjectMemory();
     $('#boardQ').oninput = (e) => { S.boardQ = e.target.value; APPS.projects.update(); };
     loadBoard(true).then(() => APPS.projects.update());
   },
@@ -51,6 +52,28 @@ APPS.projects = {
   },
 };
 
+// What the office remembers per project (lib/project-memory.js): the user's standing instructions, decisions and known
+// failures the agents recorded, and one line per finished job. Rendered on its own so the board's refreshes keep typing.
+const PM_KIND = { instruction: ['your instruction', 'accent'], decision: ['decision', 'deleg'], failure: ['known failure', 'fail'], outcome: ['past job', 'idle'] };
+function renderProjectMemory() {
+  const el = $('#pmem');
+  if (!el) return;
+  const names = S.projects.filter((p) => !p.keywordsFromSubfolders).map((p) => p.name);
+  if (!names.length) { el.innerHTML = ''; return; }
+  const cur = names.includes(S.pmProject) ? S.pmProject : names[0];
+  S.pmProject = cur;
+  const list = S.pm && S.pm.project === cur ? S.pm.list : null;
+  if (!list) api('GET', `/api/projects/${encodeURIComponent(cur)}/memory`).then((l) => { S.pm = { project: cur, list: l }; renderProjectMemory(); }).catch(() => {});
+  const shown = (list || []).filter((e) => S.pmKind ? e.kind === S.pmKind : e.kind !== 'outcome' || S.pmAll);
+  el.innerHTML = `<div class="card pmem"><h3>${ic('memory')} What the office remembers about <select id="pmSel" aria-label="Project">${names.map((n) => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></h3>
+    <div class="hint">New jobs on this project get your instructions and only the entries relevant to them, not the whole history. Agents add decisions and known failures; the office adds a line for every finished job.</div>
+    <div class="row pmadd"><input class="in" id="pmText" placeholder="Add an instruction, e.g. Use pnpm, never npm" style="flex:1"><button class="btn sm pri" data-act="pmAdd">Add</button></div>
+    <div class="chips" style="margin:8px 0">${[['', 'All but past jobs'], ['instruction', 'Instructions'], ['decision', 'Decisions'], ['failure', 'Known failures'], ['outcome', 'Past jobs']].map(([k, l]) => `<button class="chip ${((S.pmKind || '') === k) ? 'on' : ''}" data-act="pmKind" data-k="${k}">${l}</button>`).join('')}</div>
+    ${!list ? skel(3) : shown.length ? shown.slice(0, 60).map((e) => `<div class="li pmrow"><span class="pill" style="--c:var(--${PM_KIND[e.kind][1]})">${PM_KIND[e.kind][0]}</span><span style="flex:1;min-width:0">${esc(e.text)}</span><span class="hint">${e.ticketN ? `<a data-act="openJobN" data-n="${e.ticketN}">#${e.ticketN}</a> · ` : ''}${ago(e.t)}</span><button class="btn sm" data-act="pmDel" data-id="${e.id}" title="Forget this">Forget</button></div>`).join('')
+      : '<div class="hint">Nothing remembered yet.</div>'}</div>`;
+  $('#pmSel').onchange = (e) => { S.pmProject = e.target.value; S.pm = null; renderProjectMemory(); };
+  $('#pmText').onkeydown = (e) => { if (e.key === 'Enter') ACT.pmAdd(); };
+}
 // ================================================================ app: New job
 APPS.newjob = {
   mount(root) {
@@ -62,6 +85,9 @@ APPS.newjob = {
         <div class="files" id="njFiles"></div>
         <div class="row"><select id="njProject"></select><select id="njEffort" title="How hard the lead thinks on this job"><option value="">lead effort: auto</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>
           <button class="btn ibtn" data-act="attachNew">${ic('clip')} Attach files</button><label class="chk"><input type="checkbox" id="njAfter"> start after the 5-hour limit resets</label><span style="flex:1"></span><button class="btn pri" data-act="sendJob">Start job</button></div>
+        <details class="njmore" id="njMore"><summary>Checks and workspace</summary>
+          <label class="njf">Done when these pass <span class="hint">the office runs them itself after the lead answers; one command per line</span><textarea id="njVerify" style="min-height:44px" placeholder="e.g. npm test"></textarea></label>
+          <label class="chk"><input type="checkbox" id="njIsolate"> work in a separate copy of the project (git worktree); you review and apply the changes at the end</label></details>
         <div id="njRoute" class="routecard" aria-live="polite"></div><div class="hint" id="njEst" style="margin-top:4px"></div>
       </div></div></div>`;
     const sel = $('#njProject');
@@ -73,7 +99,12 @@ APPS.newjob = {
     const txt = $('#njText');
     if (S.quickText) { txt.value = S.quickText; S.quickText = ''; }
     txt.oninput = () => routePreview();
-    sel.onchange = () => { setPref('project', sel.value); routePreview(); };
+    // Checks default to the project's (Teams & roles → Projects); editing them sets this job's own.
+    const ver = $('#njVerify');
+    const fillChecks = () => { if (ver.dataset.dirty) return; const p = S.projects.find((x) => x.name === sel.value); ver.value = ((p && p.verify) || []).join('\n'); if (ver.value) $('#njMore').open = true; };
+    ver.oninput = () => { ver.dataset.dirty = '1'; };
+    fillChecks();
+    sel.onchange = () => { setPref('project', sel.value); fillChecks(); routePreview(); };
     txt.onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendNewJob(); } };
     wireDrop(txt, () => S.newFiles, () => { $('#njFiles').innerHTML = S.newFiles.map((p) => fileChip(p, true)).join(''); });
     $('#njFiles').innerHTML = S.newFiles.map((p) => fileChip(p, true)).join('');
@@ -141,7 +172,9 @@ function useTemplate(k) {
 async function sendNewJob() {
   const text = $('#njText').value.trim();
   if (!text) return;
-  const r = await api('POST', '/api/tasks', { text, project: $('#njProject').value || undefined, effort: $('#njEffort').value || undefined, attachments: S.newFiles, after: $('#njAfter').checked ? 'reset' : undefined }).catch((e) => alert(e.message));
+  const ver = $('#njVerify');
+  const r = await api('POST', '/api/tasks', { text, project: $('#njProject').value || undefined, effort: $('#njEffort').value || undefined, attachments: S.newFiles, after: $('#njAfter').checked ? 'reset' : undefined,
+    verify: ver && ver.dataset.dirty ? ver.value : undefined, isolate: $('#njIsolate') && $('#njIsolate').checked ? true : undefined }).catch((e) => alert(e.message));
   if (!r) return;
   S.newFiles = [];
   S.job = r.id; S.jtab = 'thread';
@@ -280,12 +313,27 @@ async function termRun(line) {
 }
 
 // ================================================================ app: Usage
+// What it costs to get a job done well (lib/outcomes.js): successes are jobs done with passing checks, not rated down,
+// not undone and not followed up within two hours.
+function outcomesHtml(o, L) {
+  const O = o.overall;
+  const rate = (x) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+  const row = (g) => `<tr><td>${esc(g.name)}</td><td class="num">${g.jobs}</td><td class="num">${rate(g.successRate)}</td><td class="num">${g.checked ? `${g.checkFails}` : '–'}</td><td class="num">${g.retries}</td><td class="num">${g.medianMinutes == null ? '–' : dur(g.medianMinutes * 60000)}</td><td class="num">${money(g.costUsd)}</td><td class="num"><b>${g.costPerSuccess == null ? '–' : money(g.costPerSuccess)}</b></td></tr>`;
+  const table = (rows, first) => rows.length ? `<table class="ps otab"><thead><tr><th>${first}</th><th class="num">Jobs</th><th class="num">Success</th><th class="num">Check fails</th><th class="num">Retries</th><th class="num">Median time</th><th class="num">Cost</th><th class="num">Per success</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table>` : '<div class="hint">No finished jobs yet.</div>';
+  return `<div class="cards" style="margin-top:12px"><div class="card wide"><h3>${ic('check')} Cost per successful job · last ${o.days} days</h3>
+    <div class="ostats"><div><div class="big">${O.costPerSuccess == null ? '–' : money(O.costPerSuccess)}</div><div class="hint">per successful job</div></div><div><div class="big">${rate(O.successRate)}</div><div class="hint">${O.succeeded} of ${O.jobs} jobs succeeded</div></div><div><div class="big">${O.costPerJob == null ? '–' : money(O.costPerJob)}</div><div class="hint">per job, any outcome</div></div><div><div class="big">${O.checkFails}</div><div class="hint">check failures · ${O.retries} retries</div></div>${L.dailyCap ? `<div><div class="big">${money(L.today)}</div><div class="hint">today, of ${money(L.dailyCap)} limit</div></div>` : ''}</div>
+    <div class="hint" style="margin:6px 0 10px">A success is a job that ended done, with its checks passing, not rated down, not undone and not followed up within two hours. Failed and reworked jobs still cost money, which is why cost per success is the number to watch.</div>
+    <div class="label">By lead</div>${table(o.byLead, 'Lead')}
+    ${o.byProject.length ? `<div class="label" style="margin-top:12px">By project</div>${table(o.byProject, 'Project')}` : ''}
+    ${o.failing.length ? `<div class="label" style="margin-top:12px">Recent jobs that didn't succeed</div>${o.failing.map((t) => `<div class="li" data-act="openJob" data-id="${t.id}"><span class="hint mono">#${t.n}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span><span class="hint">${esc(t.why)} · ${money(t.costUsd)}</span></div>`).join('')}` : ''}</div></div>`;
+}
 APPS.usage = {
   mount(root) { root.innerHTML = `<div class="app"><div class="toolbar"><h1>Usage</h1><span class="hint">Plan limits as Anthropic reports them on every agent run, and office spend.</span><span class="sp"></span><button class="btn sm" data-act="limRefresh">Refresh</button></div><div class="page" id="usBody"></div></div>`; S.usKey = null; },
   update() {
     if (!S.spend || Date.now() - S.spend.at > 60000) { S.spend = { at: Date.now(), data: S.spend && S.spend.data }; api('GET', '/api/spend').then((d) => { S.spend = { at: Date.now(), data: d }; S.usKey = null; dirty(); }).catch(() => {}); }
     const L = S.limits || { windows: {} };
-    const key = `${L.updatedAt}|${L.probing}|${!!L.hold}|${S.spend.data ? S.spend.at : 0}|${Math.floor(Date.now() / 30000)}`;
+    if (!S.outc || Date.now() - S.outc.at > 60000) { S.outc = { at: Date.now(), data: S.outc && S.outc.data }; api('GET', '/api/outcomes?days=30').then((d) => { S.outc = { at: Date.now(), data: d }; S.usKey = null; dirty(); }).catch(() => {}); }
+    const key = `${L.updatedAt}|${L.probing}|${!!L.hold}|${S.spend.data ? S.spend.at : 0}|${S.outc.data ? S.outc.at : 0}|${Math.floor(Date.now() / 30000)}`;
     if (key === S.usKey) return;
     S.usKey = key;
     const wins = Object.entries(L.windows || {}).sort(([a], [b]) => (a === 'five_hour' ? -1 : b === 'five_hour' ? 1 : a.localeCompare(b)));
@@ -309,6 +357,7 @@ APPS.usage = {
         <div class="card"><h3>By team</h3>${hb(sp.teams.map((r) => ({ ...r, label: r.key === S.root ? 'God (routing)' : `${r.label}'s team` })))}</div>
         <div class="card"><h3>By model</h3>${hb(sp.models)}</div></div>`;
     }
+    if (S.outc.data) html += outcomesHtml(S.outc.data, L);
     html += `<div class="hint" style="margin-top:14px;max-width:820px">Anthropic reports limits as percentages, not tokens; the window size is estimated from how far the bar moves while the office spends. Other Claude use moves the same bars, so estimates lean low. Dollars are API-equivalent prices, covered by your plan.</div>`;
     $('#usBody').innerHTML = html;
   },
@@ -384,8 +433,8 @@ APPS.settings = {
       html += `<div class="card"><h3>${esc(L.room)} · lead ${esc(L.persona)}</h3>` + (L.children || []).filter((c) => byKey[c]).map((c) => { const r = byKey[c]; return `<div class="rolerow"><div class="top"><b>${esc(r.name)}</b>${sel('m_' + c, ['', 'haiku', 'sonnet', 'opus'], r.model || '')}${sel('e_' + c, ['', 'low', 'medium', 'high', 'xhigh'], r.effort || '')}<button class="btn sm" data-act="saveRole" data-key="${esc(c)}" data-team="${esc(lk)}">Save</button>${r.createdInUi ? `<button class="btn sm danger" data-act="delRole" data-key="${esc(c)}">Remove</button>` : ''}</div><div class="hint">${esc(r.description)}${r.agentFile ? ' · instructions in ' + esc(r.agentFile) : ''}</div>${r.agentFile ? '' : `<details><summary>instructions</summary><textarea id="p_${esc(c)}" style="min-height:90px">${esc(r.prompt)}</textarea></details>`}</div>`; }).join('')
         + `<details style="margin-top:8px"><summary>+ Add a role</summary><div class="form" style="margin-top:8px"><input class="in" id="nr_name_${lk}" placeholder="Role name"><select id="nr_access_${lk}"><option value="readonly">reads only</option><option value="edit">can edit files</option><option value="web">reads + web</option></select><select id="nr_model_${lk}"><option>sonnet</option><option>haiku</option><option>opus</option></select><select id="nr_effort_${lk}"><option>medium</option><option>low</option><option>high</option><option>xhigh</option></select><input class="in full" id="nr_desc_${lk}" placeholder="One line: what they do"><textarea class="full" id="nr_prompt_${lk}" placeholder="Instructions"></textarea><button class="btn pri sm" data-act="addRole" data-team="${esc(lk)}">Add role</button></div></details></div>`;
     }
-    html += `<div class="card"><h3>Projects</h3>${cfg.projects.map((p, i) => `<div class="rolerow"><div class="form"><input class="in" id="pj_name_${i}" value="${esc(p.name)}" placeholder="Name"><input class="in" id="pj_path_${i}" value="${esc(p.path)}" placeholder="Folder"><select id="pj_dep_${i}">${ls.map((k) => `<option value="${k}" ${k === p.department ? 'selected' : ''}>${esc(byKey[k].persona)} · ${esc(byKey[k].room)}</option>`).join('')}</select><select id="pj_eff_${i}">${['', 'medium', 'high', 'xhigh', 'max'].map((e) => `<option value="${e}" ${e === (p.leadEffort || '') ? 'selected' : ''}>${e ? 'lead effort ' + e : 'lead effort auto'}</option>`).join('')}</select><input class="in full" id="pj_desc_${i}" value="${esc(p.description || '')}" placeholder="Description"><input class="in full" id="pj_kw_${i}" value="${esc((p.keywords || []).join(', '))}" placeholder="Routing keywords, comma-separated"></div><a class="hint" data-act="delProj" data-i="${i}">remove</a></div>`).join('')}<div class="row"><button class="btn sm" data-act="addProj">+ Project</button><button class="btn pri sm" data-act="saveProj">Save projects</button></div></div>`;
-    html += `<div class="card"><h3>New team</h3><div class="form"><input class="in" id="nt_persona" placeholder="Lead's name"><input class="in" id="nt_room" placeholder="Team name"><input class="in" id="nt_cwd" placeholder="Working folder, e.g. ~/Documents"><select id="nt_access"><option value="readonly">reads only</option><option value="edit">can edit files</option></select><textarea class="full" id="nt_desc" placeholder="What this team owns (used for routing)"></textarea><button class="btn pri sm" data-act="addTeam">Create team</button></div><div class="hint" style="margin-top:6px">The new lead becomes a permanent process under God, with its own library and message room.</div></div></div>`;
+    html += `<div class="card"><h3>Projects</h3>${cfg.projects.map((p, i) => `<div class="rolerow"><div class="form"><input class="in" id="pj_name_${i}" value="${esc(p.name)}" placeholder="Name"><input class="in" id="pj_path_${i}" value="${esc(p.path)}" placeholder="Folder"><select id="pj_dep_${i}">${ls.map((k) => `<option value="${k}" ${k === p.department ? 'selected' : ''}>${esc(byKey[k].persona)} · ${esc(byKey[k].room)}</option>`).join('')}</select><select id="pj_eff_${i}">${['', 'medium', 'high', 'xhigh', 'max'].map((e) => `<option value="${e}" ${e === (p.leadEffort || '') ? 'selected' : ''}>${e ? 'lead effort ' + e : 'lead effort auto'}</option>`).join('')}</select><input class="in full" id="pj_desc_${i}" value="${esc(p.description || '')}" placeholder="Description"><input class="in full" id="pj_kw_${i}" value="${esc((p.keywords || []).join(', '))}" placeholder="Routing keywords, comma-separated"><input class="in full mono" id="pj_ver_${i}" value="${esc((p.verify || []).join(' ;; '))}" placeholder="Checks before a job counts as done, e.g. npm test ;; npm run lint"></div><a class="hint" data-act="delProj" data-i="${i}">remove</a></div>`).join('')}<div class="row"><button class="btn sm" data-act="addProj">+ Project</button><button class="btn pri sm" data-act="saveProj">Save projects</button></div></div>`;
+    html += leadWizardHtml() + '</div>';
     $('#cfgBody').innerHTML = html;
   },
 };
@@ -462,6 +511,36 @@ function lessonReviewHtml(list, wide) {
       ${S.lessonEdit === l.id ? `<input id="lr-${l.id}" class="in lrin" maxlength="220" value="${esc(l.text)}" data-id="${a.id}" data-lid="${l.id}" aria-label="Lesson text">` : `<div class="lt">${esc(l.text)}</div>`}
       <div class="row"><button class="btn sm pri" data-act="lessonKeep" data-id="${a.id}" data-lid="${l.id}">${S.lessonEdit === l.id ? 'Keep as edited' : 'Keep'}</button>${S.lessonEdit === l.id ? '' : `<button class="btn sm" data-act="lessonEdit" data-lid="${l.id}">Edit</button>`}<button class="btn sm danger" data-act="lessonDrop" data-id="${a.id}" data-lid="${l.id}">Drop</button></div></div>`).join('')}</div>`;
 }
+// The new-lead wizard (lib/lead-wizard.js): explain the purpose, get a full draft, review every field, create.
+function leadWizardHtml() {
+  const W = S.lw || {};
+  const v = (k) => esc(W.draft ? W.draft[k] ?? '' : '');
+  if (!W.draft) {
+    return `<div class="card lwiz"><h3>${ic('teams')} New team lead</h3>
+      <div class="hint">Explain what this lead should look after, like you would to a new colleague. The office drafts the rest (name, routing, instructions, specialists) the way the built-in leads are set up; you review everything before it is created.</div>
+      <textarea id="lw_purpose" class="full" style="min-height:96px;margin-top:8px" placeholder="e.g. Look after my home server: Docker containers, backups and the Raspberry Pi in ~/homelab. Keep things running, explain what changed, and never expose services to the internet.">${esc(W.purpose || '')}</textarea>
+      <div class="form" style="margin-top:6px"><input class="in" id="lw_persona" placeholder="Lead's name (optional)" value="${esc(W.persona || '')}"><input class="in" id="lw_room" placeholder="Team name (optional)" value="${esc(W.room || '')}"><input class="in" id="lw_cwd" placeholder="Working folder, e.g. ~/homelab (optional)" value="${esc(W.cwd || '')}"></div>
+      <div class="row" style="margin-top:8px"><button class="btn pri sm" data-act="lwDraft" ${W.busy ? 'disabled' : ''}>${W.busy ? 'Drafting… (about 15 s)' : 'Draft the lead'}</button><a class="hint" data-act="lwDraft" data-skip="1">or fill it in yourself</a></div></div>`;
+  }
+  const roles = W.draft.roles || [];
+  return `<div class="card lwiz wide"><h3>${ic('teams')} New team lead · review</h3>
+    <div class="hint">${esc(W.draft.note || (W.draft.drafted === 'model' ? 'Drafted from your description. Change anything, then create the lead.' : 'Fill in the fields, then create the lead.'))}</div>
+    <div class="lwgrid">
+      <label>Lead's name<input class="in" id="lw_d_persona" value="${v('persona')}"></label>
+      <label>Team<input class="in" id="lw_d_room" value="${v('room')}"></label>
+      <label>Working folder<input class="in" id="lw_d_cwd" value="${v('cwd')}"></label>
+      <label>Files<select id="lw_d_access"><option value="edit" ${W.draft.access === 'edit' ? 'selected' : ''}>can edit files</option><option value="readonly" ${W.draft.access !== 'edit' ? 'selected' : ''}>reads only</option></select></label>
+      <label>Model<select id="lw_d_model">${['opus', 'sonnet', 'haiku'].map((m) => `<option ${W.draft.model === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+      <label>Effort<select id="lw_d_effort">${['medium', 'high', 'xhigh'].map((m) => `<option ${W.draft.effort === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+      <label class="full">What the team owns <span class="hint">God routes jobs with this; say what it does not own too</span><textarea id="lw_d_description" style="min-height:52px">${v('description')}</textarea></label>
+      <label class="full">Routing keywords <span class="hint">a job that mentions one goes straight to this lead</span><input class="in" id="lw_d_keywords" value="${esc((W.draft.keywords || []).join(', '))}"></label>
+      <label class="full">Instructions <span class="hint">the lead reads these at the start of every session; the office adds its own rules (never commit, report progress)</span><textarea id="lw_d_prompt" style="min-height:180px">${v('prompt')}</textarea></label>
+    </div>
+    <div class="label" style="margin-top:10px">Specialists the lead can hire</div>
+    ${roles.map((r, i) => `<div class="form lwrole"><input class="in" id="lw_r_name_${i}" value="${esc(r.name)}" placeholder="Role"><select id="lw_r_access_${i}">${[['readonly', 'reads only'], ['edit', 'can edit files'], ['web', 'reads + web']].map(([k, l]) => `<option value="${k}" ${r.access === k ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="in full" id="lw_r_desc_${i}" value="${esc(r.description)}" placeholder="One line: what they do"><a class="hint" data-act="lwRoleDel" data-i="${i}">remove</a></div>`).join('') || '<div class="hint">None yet. The lead can still hire a custom specialist for a job.</div>'}
+    <div class="row" style="margin-top:6px"><a class="hint" data-act="lwRoleAdd">+ Add a specialist</a></div>
+    <div class="row" style="margin-top:12px"><button class="btn pri sm" data-act="lwCreate" ${W.busy ? 'disabled' : ''}>${W.busy ? 'Creating…' : `Create ${esc(W.draft.persona || 'the lead')}`}</button><button class="btn sm" data-act="lwBack">Back</button><span class="hint">The lead starts as a permanent process under God, with its own library and message room.</span></div></div>`;
+}
 APPS.today = {
   mount(root) {
     root.innerHTML = `<div class="app"><div class="toolbar"><h1>Today</h1><span class="hint" id="tdHint"></span><span class="sp"></span><button class="btn sm" data-act="app" data-app="newjob">${ic('newjob')} New job</button></div><div class="page" id="tdBody"></div></div>`;
@@ -487,7 +566,7 @@ APPS.today = {
     const h = new Date().getHours();
     $('#tdHint').textContent = `${h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'} · ${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}`;
     const jobLink = (t, extra) => `<div class="li" data-act="openJob" data-id="${t.id}"><span class="hint mono">#${t.n}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>${extra || ''}</div>`;
-    const why = (t) => (t.waiting ? 'a question' : t.plan && t.plan.status === 'pending' ? `a plan · ${money(t.plan.estimateUsd)}${ticketShare(t.plan.estimateUsd) ? ` · ${ticketShare(t.plan.estimateUsd).replace(/^≈ /, '').split(' · ')[0]}` : ''}` : pendingCmd(t) ? 'a command to run' : 'budget stop');
+    const why = (t) => (t.status === 'interrupted' ? 'interrupted · resume' : wsToReview(t) ? 'changes to apply' : t.stuck ? `${t.stuck.persona} looks stuck` : t.waiting ? 'a question' : t.plan && t.plan.status === 'pending' ? `a plan · ${money(t.plan.estimateUsd)}${ticketShare(t.plan.estimateUsd) ? ` · ${ticketShare(t.plan.estimateUsd).replace(/^≈ /, '').split(' · ')[0]}` : ''}` : pendingCmd(t) ? 'a command to run' : 'budget stop');
     const meters = ['five_hour', 'seven_day'].map((k) => { const w = windowOf(k); if (!w) return ''; const u = live(w); return `<div class="hbar"><span class="n">${k === 'five_hour' ? '5-hour window' : 'This week'}</span><span class="t"><i style="width:${Math.min(100, u * 100)}%;background:${meterColor(u)}"></i></span><span class="v">${pct(u)}</span></div>`; }).join('');
     $('#tdBody').innerHTML = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">${setupChecklist(tickets)}${lessonReviewHtml(lessonDrafts(), true)}
       <div class="card"><h3>${ic('bell')} Needs you ${need.length ? `<span class="pill s-ask">${need.length}</span>` : ''}</h3>${need.length ? need.map((t) => jobLink(t, `<span class="hint">${why(t)}</span>`) + (t.waiting ? qoptsHtml(t.waiting, t.id) : '')).join('') : '<div class="hint">Nothing is waiting for you.</div>'}

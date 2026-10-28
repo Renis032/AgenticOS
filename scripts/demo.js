@@ -106,7 +106,7 @@ async function main() {
   }
   fs.copyFileSync(path.join(office, 'roster.example.json'), path.join(office, 'roster.json'));
   fs.writeFileSync(path.join(office, 'projects.json'), JSON.stringify([
-    { name: 'Recipe Box', path: path.join(work, 'Projects', 'recipe-box'), department: 'personal-lead', description: 'A small recipe manager (React + SQLite).', keywords: ['recipe', 'recipes'] },
+    { name: 'Recipe Box', path: path.join(work, 'Projects', 'recipe-box'), department: 'personal-lead', description: 'A small recipe manager (React + SQLite).', keywords: ['recipe', 'recipes'], verify: ['test -f README.md'] },
     { name: 'Trail Log', path: path.join(work, 'Projects', 'trail-log'), department: 'personal-lead', description: 'GPS hikes on a map.', keywords: ['trail', 'hike'] },
   ], null, 2));
   const claude = path.join(work, 'claude');

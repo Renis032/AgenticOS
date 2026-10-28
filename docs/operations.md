@@ -147,6 +147,14 @@ teammates with fresh contexts do long reading, edits and test runs. When a lead'
 (100k tokens, Preferences → Agents & teams), the office reminds it, as mail after its next tool call and again every 50k more,
 to hand the rest to a teammate.
 
+## Cost per successful job
+
+Usage → *Cost per successful job* (`lib/outcomes.js`, `GET /api/outcomes?days=30`): per lead and per project, jobs,
+success rate, check failures, retries (checks sent back, rework, resumes), median time, cost, and cost per success. A
+success is a job that ended done with its checks passing, not rated down, not undone and not followed up within two
+hours. Failed and reworked jobs still cost money, so cost per success is the number to compare, not cost per job. The
+recent jobs that didn't succeed are listed with why.
+
 ## Learning from outcomes
 
 Besides 👍/👎 (now also right on the answer), two signals count against a job's model choice: a follow-up within 2 hours of

@@ -123,6 +123,10 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `agent-stream.js` | reading each agent's output: events, live spend, exact costs, budgets |
 |  | `tickets.js` | jobs: creating and routing them, the schedule, questions, pause, stop, follow-ups, rating, search |
 |  | `quick-effort.js` | a lower effort for quick questions |
+|  | `verify.js` | checks before done: the office runs a job's checks and only exit codes decide |
+|  | `recovery.js` | interrupted jobs resumed with what already happened; stuck agents flagged |
+|  | `kill-group.js` | stopping an agent stops its whole process group |
+|  | `workspaces.js` | a git worktree per job on a shared project, applied back without commits |
 |  | `suggest-answers.js` | one-click answers suggested from a question's wording |
 | HTTP routes | `routes-tickets.js` | jobs |
 |  | `routes-agents.js` | agents and the office tools they call |
@@ -141,6 +145,8 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `limits.js` | the plan's usage windows: hold, resume, schedule |
 |  | `fresh-sessions.js` | fresh sessions when a lead's conversation grows long |
 |  | `lessons.js` | lessons from jobs that went wrong, reviewed by the user before agents use them |
+|  | `project-memory.js` | instructions, decisions, known failures and outcomes per project, retrieved per job |
+|  | `lead-wizard.js` | a new team lead drafted from the user's description of its purpose |
 |  | `on-call.js` | who stays on a team |
 |  | `skills.js` | skills agents propose |
 |  | `libraries.js` | team libraries |
@@ -149,6 +155,7 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `work-area.js` | the day-job area, configured only locally |
 | Insight and upkeep | `brain.js` | the knowledge graph, decision flow and optimizer |
 |  | `ask-office.js` | Ask the office: facts gathered without a model, worded by Haiku |
+|  | `outcomes.js` | cost per successful job, per lead and per project |
 |  | `timeline.js` | job timelines and spend |
 |  | `health.js` | the Health report |
 |  | `evals.js` | the agent eval over time |

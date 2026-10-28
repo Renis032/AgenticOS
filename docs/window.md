@@ -13,7 +13,7 @@ and the `agentos` commands. Opening the address in a browser gets "Agentic OS on
 the window quits Agentic OS; if jobs are still running it asks first: stop them and quit, or keep them running in the
 background (reopen the window from the applications menu). `./agentos stop` ends everything. F5 or Ctrl+R reloads,
 Ctrl +/− zooms. The window has its own title bar (drag it, double-click to maximize, window buttons from your
-Ubuntu setting), a main menu (☰ or F10), **Preferences** (⚙ or Ctrl+,: theme, accent colour, text size, density,
+Ubuntu setting), a main menu (☰ or F10), **Preferences** (⚙ or Ctrl+,: look, theme, accent colour, text size, density,
 sidebar, start-up app, what closing does, notifications, sounds, do not disturb, send key, and office settings like terminal commands, automatic plan approval and reminders…), a
 **notification center** (🔔), right-click menus on jobs, native dialogs and desktop notifications, and it remembers
 its size and position. No npm install (Node 18 built-ins only).
@@ -28,6 +28,13 @@ badges glow slowly. Preferences → Appearance → Animations → Reduced turns 
 CSS `color-mix()`, so tints are written as `rgba(var(--x-rgb), alpha)`: each colour has an `--x-rgb` token next to it
 (the accent's is set by `applyPrefs` in `shell.js`). Entrance animations only move things and never fade them in,
 because WebKit can pause animations in a hidden window and content must never be left invisible.
+
+**Looks** (Preferences → Appearance → Look, or the ☰ menu). `public/ui/themes.css`, loaded last, adds two more looks
+on top of the default *Champagne*; each has a light and a dark version and picks its own accent, which you can change.
+*Graphite* is a flat native-desktop style: neutral greys, hairline-bordered cards, a solid system-blue row for the
+active app and the hovered menu item, sentence-case titles in Inter, and none of the glass, glow or hover motion.
+*Midnight* keeps Champagne's finish on deep navy surfaces with a teal accent. A look is `html[data-look]`, set by
+`applyPrefs`; button text on the accent turns dark or white by the accent's brightness.
 
 ## The sidebar
 

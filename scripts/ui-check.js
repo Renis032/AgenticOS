@@ -170,7 +170,10 @@ async function check(opt) {
       { name: 'light-flow', js: `ACT.brainTab({ tab: 'flow' })`, wait: 2000 },
       { name: 'light-away', js: `checkAway(true)`, wait: 900 },
       { name: 'light-evals', js: `closeAway(); openApp('health'); setTimeout(() => { S.evals = { everyDays: 1, runs: [{ t: Date.now() - 86400000, ms: 200000, model: 'haiku', cost: 0.05, passed: 1, total: 2, instructionsChanged: true, results: [{ name: 'does not commit', pass: true }, { name: 'plans first', pass: false, detail: 'no plan' }] }] }; S.hKey = null; APPS.health.update(); }, 700)`, wait: 1400 },
-      { name: 'collapsed-sidebar', js: `setTheme('system'); toggleSidebar(); openApp('processes')` },
+      { name: 'graphite-light', js: `setLook('graphite'); S.job = '${waiting && waiting.id}'; openApp('jobs')`, wait: 900 },
+      { name: 'graphite-dark', js: `setTheme('dark'); openApp('today')`, wait: 900 },
+      { name: 'midnight-dark', js: `setLook('midnight'); openApp('processes')`, wait: 900 },
+      { name: 'collapsed-sidebar', js: `setLook('champagne'); setTheme('system'); toggleSidebar(); openApp('processes')` },
       { name: 'narrow-window', size: [820, 760], js: `toggleSidebar(); openApp('jobs')`, wait: 1200 },
     ];
     const stepsFile = path.join(work, 'steps.json');
