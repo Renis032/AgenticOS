@@ -6,8 +6,24 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Standing instructions for a lead: in Processes, **Keep as instruction** saves something you tell a lead once
+  ("when you fix a bug, add a short brief on why this fix and a commit message like the others"); it goes into their
+  system prompt on every job until you remove it from the new *Instructions* tab. A lead mid-session gets the change on
+  its next message. API: `/api/agents/<id>/standing`.
+- Lessons to review show why: `add_lesson` now requires `reasoning` (what happened and why the lesson would have
+  prevented it), and the draft records what made the office ask; both appear on the review card.
+- `repo-state --log N`: the last N commit subjects, so a lead without `git log` can match the repository's style.
+- The office in your own Claude Code sessions: a read-only MCP server (`lib/mcp-office.js`) with `office_recall`,
+  `office_job` and `office_project`, backed by new no-model endpoints `/api/office/facts`, `/api/office/job` and
+  `/api/office/project`. Add it with `claude mcp add --scope user agentos -- node ~/agent-workplace/lib/mcp-office.js`.
+- A reviewer for jobs without checks: one Sonnet call reads the request, answer, diff and commands and says PASS or
+  FAIL with concrete problems; a FAIL goes back to the lead, and concerns that remain are flagged on a job closed done
+  (Preferences → *Review jobs without checks*, `reviewAnswers`, on when files changed by default).
 - Telegram approvals: plans, questions, commands and edit-access requests arrive in a linked Telegram chat with the
   same buttons as the window; optional notes when a job finishes (Preferences → Notifications, `lib/telegram.js`).
+- Telegram control: start jobs (`/new`, or just send the task and confirm), follow up (`#12 …` or reply to any
+  message about a job), job cards with Pause / Resume / Stop / Start now that update live as the job moves, 👍 / 👎 on
+  finished jobs, notes when a job fails, and `/jobs`, `/job 12`, `/ps`, `/usage`, `/waiting`, `/projects`, `/help`.
 - Second desks (twins): a busy lead hands a job for another ticket to a temporary twin with the same role and
   memory, so new jobs don't queue behind long ones (`leadTwins`, `twinIdleMinutes`). Each queued job reports what it
   is waiting behind and its place in line.
@@ -50,6 +66,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   and respect for the system's reduce-motion setting.
 
 ### Fixed
+- A retired second desk stayed in Processes for good, shown as *down* and *restarting…* like a crashed lead. It now
+  shows **retiring…** while its process stops, then **retired** with when and why, and leaves the tree after three
+  minutes (`lib/residents.js`, `lib/state.js`, `public/ui/os/processes.js`).
+- Stopping a job God was routing could leave God shown as offline over its freshly started process, so mail to God
+  failed until its next job (`lib/residents.js`).
 - Colours written as `rgba(…))` with an extra parenthesis were ignored by the browser, so some tints never showed.
 - Emoji with no font on the system (paperclip, thumbs, file, folder) drew as empty boxes; they are SVG icons now.
 - A job that arrived while its lead was restarting for a fresh session waited instead of going to a second desk.

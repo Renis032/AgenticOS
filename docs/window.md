@@ -62,6 +62,18 @@ or of your most expensive one, and the matching passages in agents' memories, te
 Haiku then words a short answer from those facts only, citing jobs as #N; click one to open it. An answer takes a few
 seconds and costs well under a cent. Follow-up questions keep the last three turns; *New chat* starts over.
 
+The same facts are available to your own Claude Code sessions outside the office, without the Haiku step, through a
+read-only MCP server (`lib/mcp-office.js`). Add it once:
+
+```bash
+claude mcp add --scope user agentos -- node ~/agent-workplace/lib/mcp-office.js
+```
+
+Any chat then has `office_recall` (the facts for a question: jobs, memories, libraries, handoffs, who is working on
+what), `office_job` (one job in detail, with its cost breakdown) and `office_project` (a project's checks, your
+instructions, decisions, known failures, latest jobs and handoff). Nothing is written and no model is called. The office
+must be running; if it isn't, the tools say so.
+
 ## Getting started: the tour
 
 Main menu → *Take the tour* (also in Ctrl+K, on Today and on an empty Jobs list) walks through five steps on the real
@@ -72,7 +84,7 @@ never starts on its own; Esc or Skip ends it.
 
 | App | Key | What it is |
 |---|---|---|
-| **Processes** | `p` | The full process tree. God (PID 1) is the root; each lead is a permanent process under it; staff sit under their lead while idle and, while working, under whoever started them, so delegations nest as deep as they go. Columns: PID, model/effort, state, job, live activity (thinking in purple), cost, tasks. Filter by name or job, hide idle staff, fold branches. Select a process for its inspector: thinking and messages (Mind), memory, last report, track record and feedback, children, and actions (kill, fresh session, weekly review, reset, message, feedback, follow-up). |
+| **Processes** | `p` | The full process tree. God (PID 1) is the root; each lead is a permanent process under it; staff sit under their lead while idle and, while working, under whoever started them, so delegations nest as deep as they go. Columns: PID, model/effort, state, job, live activity (thinking in purple), cost, tasks. Filter by name or job, hide idle staff, fold branches. Select a process for its inspector: thinking and messages (Mind), a lead's standing instructions (Instructions), memory, last report, track record and feedback, children, and actions (kill, fresh session, weekly review, reset, message, keep as instruction, feedback, follow-up). |
 | **Jobs** | `j` | Every ticket: thread (anything waiting on you, such as a plan, a command, a question or an edit outside the project, sits in one **Needs you** panel above the reply box, with long plans shortened to their first steps; a job waiting behind another one says which and how many are ahead), the job's own **process tree** (who started whom, with state and cost per process), changes with diff and undo, timeline with **replay** (the tree and the thread as they were at each moment). Plans to approve, questions to answer, pause/resume/stop, budget, rating, attachments, archive. |
 | **New job** | `n` | Write the task (or start from a template: bug report, new feature, code review, research, quick question, or your own saved ones), attach files, pick a project or let the office decide. A card under the box shows live who will take the job and why, at what effort, what similar jobs cost, and whether a second desk takes it because the lead is busy. Start after the limit resets. The `$ new job…` box in the dock does the same. |
 | **Projects** | `o` | One card per personal project from its handoff: current state, next steps, last session, jobs and cost. **Continue** starts a job that picks up where it stopped; the New job page offers the same as one-click chips. |
@@ -101,7 +113,10 @@ never starts on its own; Esc or Skip ends it.
 - **One-click answers.** A question from an agent shows its choices (or suggested ones, such as *Yes / No*) as buttons
   in the job, under the job on Today, and in Telegram. On the open job, keys 1–5 pick one.
 - **Lessons wait for you.** A lesson a lead writes after a job went wrong appears on Today under *Lessons to review*:
-  Keep, Edit (Enter keeps your wording, Escape cancels) or Drop. Only kept ones reach the agents.
+  Keep, Edit (Enter keeps your wording, Escape cancels) or Drop. Each shows what made the office ask and the lead's own
+  reasoning for the lesson. Only kept ones reach the agents.
+- **Tell a lead something for good.** In a lead's inspector (Processes), **Keep as instruction** saves what you wrote as
+  a standing instruction they follow on every job; the *Instructions* tab lists them, ✕ removes one.
 - **Rate from the notification.** A finished job's toast has Open, a thumbs-up and a thumbs-down; the rating goes to the
   lead as feedback.
 - **Drop files anywhere.** Dragging files onto the window attaches them to the open job's reply, or starts a new job with

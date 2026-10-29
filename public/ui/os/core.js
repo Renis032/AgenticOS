@@ -57,7 +57,12 @@ const who = (id) => (id === 'user' ? 'You' : id === 'script' ? 'Office script' :
 const leads = () => S.residents.filter((k) => k !== S.root);
 const teamName = (k) => (S.roles[k] && S.roles[k].room) || k;
 const modelChip = (a) => (a && a.model ? `<span class="mdl m-${esc(a.model)}">${esc(a.model)}/${esc(a.effort || '?')}</span>` : '<span class="hint">—</span>');
-const stateLabel = (s) => ({ delegating: 'leading', idle: 'idle', offline: 'down', open: 'running', scheduled: 'scheduled', paused: 'paused' }[s] || s);
+const stateLabel = (s) => ({ delegating: 'leading', idle: 'idle', offline: 'down', open: 'running', scheduled: 'scheduled', paused: 'paused', retiring: 'retiring…', retired: 'retired' }[s] || s);
+// The state a process shows: a retired agent (a second desk that went home, a specialist off the team) is not "down".
+const shownState = (a) => (a.retiring ? 'retiring' : a.retired && !a.current && !ACTIVE.includes(a.status) ? 'retired' : a.resident && a.current && a.status === 'idle' ? 'running' : a.status);
+// A second desk stays in view for a few minutes after it retires, so you see it go instead of it vanishing.
+const RETIRED_SHOWN_MS = 3 * 60000;
+const justRetired = (a) => a.retiring || (a.retired && a.retired.t && Date.now() - a.retired.t < RETIRED_SHOWN_MS);
 const pill = (s, extra) => `<span class="pill s-${esc(s)} ${['running', 'delegating', 'open'].includes(s) ? 'live' : ''}">${esc(extra || stateLabel(s))}</span>`;
 const LEVELS = [1, 3, 6, 10, 15, 25, 40, 60];
 const levelOf = (a) => 1 + LEVELS.filter((x) => (a.resident ? a.ticketsHandled || 0 : a.tasksDone || 0) >= x).length;

@@ -114,12 +114,32 @@ size, what filled it, and where to save.
 default; Preferences → Agents & teams), so a long job summarises its history instead of re-reading an ever longer context on
 every call. `job-cost`'s "avg context" shows the effect.
 
-## Telegram: approve from your phone
+## Telegram: run the office from your phone
 
 Plans, questions, terminal commands and edit-access requests that need you can also arrive in Telegram, with the same
 buttons as the window (Approve / Reject, Run / Run all on this job / Don't run, the question's options, Allow / Deny).
-For a question without options, reply to its message with your answer. Optionally you also get a short note when a job
-finishes.
+For a question without options, reply to its message with your answer. You get a note when a job fails and, if you
+turn it on, when one finishes (with 👍 / 👎, Follow up and Details).
+
+From the chat you can also run jobs (the bot's menu lists the commands; `/help` explains them):
+
+| Send | What happens |
+|---|---|
+| `/new fix the login page` | starts a job, routed like one from the window; `/new recipe-box: add dark mode` picks the project |
+| any other text | offered as a new job, started only when you tap *Start the job* (a stray message never starts work) |
+| `#12 make it blue` | a follow-up on job #12 (or the answer to its open question); `#12` alone shows the job |
+| a reply to any message about a job | a follow-up on that job |
+| `/jobs`, `/job 12` | jobs in progress and finished in the last day; one job as a card |
+| `/pause 12`, `/resume 12`, `/stop 12` | as in the window; stopping asks you to confirm |
+| `/watch 12` | the job's card, kept up to date as the job moves (at most every 10 s) |
+| `/ps` | every lead and running specialist: model and effort, state, job and what it is doing |
+| `/usage` | the 5-hour and weekly windows, when they reset, and today's spend against the daily limit |
+| `/waiting` | sends again whatever waits for you, at the bottom of the chat |
+| `/projects` | project names to use with `/new` |
+
+A job card shows the status, lead, cost against the budget, who is working on it right now and on what, the last few
+messages and the answer, with Refresh, Pause / Resume / Stop (Start now for a scheduled job), Follow up and Live
+updates. Jobs you start or follow up from Telegram get a live card and always get their finished/failed note.
 
 1. In Telegram, open **@BotFather**, send `/newbot`, pick a name, and copy the token it gives you (`123456789:ABC…`).
 2. In Agentic OS: **Preferences → Notifications → Telegram**, paste the token. The office checks it and shows a 6-digit code.

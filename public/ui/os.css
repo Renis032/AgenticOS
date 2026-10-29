@@ -107,7 +107,7 @@ table.ps tr.dim td { opacity: .55; }
 .pill.live::before { animation: blink 1s ease-in-out infinite; }
 @keyframes blink { 50% { opacity: .25; } }
 .s-running, .s-open { --c: var(--run); } .s-delegating { --c: var(--deleg); } .s-done { --c: var(--done); } .s-failed, .s-interrupted { --c: var(--fail); }
-.s-stopped, .s-paused, .s-ask { --c: var(--stop); } .s-queued, .s-scheduled { --c: var(--queue); } .s-idle { --c: var(--idle); } .s-offline { --c: var(--off); }
+.s-stopped, .s-paused, .s-ask { --c: var(--stop); } .s-queued, .s-scheduled { --c: var(--queue); } .s-idle { --c: var(--idle); } .s-offline { --c: var(--off); } .s-retiring, .s-retired { --c: var(--muted); }
 .lv { font-size: 10.5px; font-weight: 700; color: #b8862a; }
 
 .insp { width: 440px; flex: none; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
@@ -698,6 +698,7 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 .lav.s-ask { border-color: var(--stop); box-shadow: 0 0 0 2px rgba(var(--stop-rgb), .22); }
 .lav.s-down { border-color: var(--fail); opacity: .7; }
 .lav.s-idle { color: var(--muted); }
+.lav.s-retiring { border-style: dashed; opacity: .6; }
 @media (max-width: 1100px) { #leadsBar { display: none; } }
 .toast .tacts { display: flex; gap: 6px; margin-top: 6px; }
 
@@ -713,7 +714,8 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 
 /* Job and process states carry a shape as well as a colour (colour-blind friendly, readable when tiny). */
 .pill.s-done::before, .pill.s-failed::before, .pill.s-stopped::before, .pill.s-paused::before, .pill.s-interrupted::before,
-.pill.s-queued::before, .pill.s-scheduled::before, .pill.s-idle::before, .pill.s-offline::before, .pill.s-ask::before {
+.pill.s-queued::before, .pill.s-scheduled::before, .pill.s-idle::before, .pill.s-offline::before, .pill.s-ask::before,
+.pill.s-retiring::before, .pill.s-retired::before {
   width: auto; height: auto; background: none; border-radius: 0; font-size: 10px; line-height: 1; font-weight: 800; animation: none;
 }
 .pill.s-done::before { content: '✓'; }
@@ -724,6 +726,8 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 .pill.s-interrupted::before { content: '!'; }
 .pill.s-queued::before { content: '⋯'; }
 .pill.s-scheduled::before, .pill.s-idle::before { content: '○'; }
+.pill.s-retiring::before { content: '↩'; }
+.pill.s-retired::before { content: '⌂'; }
 
 /* Today: the getting-set-up checklist. */
 .card.setup h3 { display: flex; align-items: center; gap: 8px; }
@@ -750,6 +754,7 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 .lreview > .hint { margin-bottom: 6px; }
 .lreview .lt { margin: 4px 0 6px; max-width: 80ch; }
 .lreview .lrin { width: 100%; margin: 4px 0 6px; }
+.lreview .lwhy { margin: 0 0 6px; max-width: 80ch; }
 .lreview .row { gap: 6px; }
 
 /* New team lead wizard (Teams & roles) */

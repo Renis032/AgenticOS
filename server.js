@@ -116,7 +116,7 @@ function thread(t, entry) {
 
 // ---------------------------------------------------------------- roster, memory, prompts and the agent command line (lib/prompts.js)
 
-const { expandTools, defOf, childRolesFor, MEMORY_DIR, readMemory, writeMemory, giveFeedback, pendingFeedback, teamOf, modelOf, promptSizes, buildArgs, claudeSkillsFor, childEnv } = require('./lib/prompts').install({
+const { expandTools, defOf, childRolesFor, MEMORY_DIR, readMemory, writeMemory, giveFeedback, pendingFeedback, standingLines, standingVersion, setStanding, teamOf, modelOf, promptSizes, buildArgs, claudeSkillsFor, childEnv } = require('./lib/prompts').install({
   DATA, PORT, ROOT, UPLOADS, addEvent, agents, fs, home, now, os, path, readJson, spawn, touch,
   canRunCommands: (...a) => canRunCommands(...a), commandMode: (...a) => commandMode(...a),
   handoffsOf: (...a) => handoffsOf(...a), savedHandoffs: (...a) => savedHandoffs(...a),
@@ -132,14 +132,14 @@ const { readLines, onStreamMessage, ticketBudget, waitForBudget, releaseBudget }
 // ---------------------------------------------------------------- residents, the always-alive agents (lib/residents.js)
 
 const { PERSONAS, baseAgent, startResident, enqueueResident, pumpResident, restartResident } = require('./lib/residents').install({
-  CLAUDE_BIN, addEvent, agents, broadcast, buildArgs, childEnv, fs, home, limits, modelOf, now, onStreamMessage, path, pendingFeedback, procs, readJson, readLines, spawn, thread, tickets, touch, touchTicket,
+  CLAUDE_BIN, addEvent, agents, broadcast, buildArgs, childEnv, fs, home, limits, modelOf, now, onStreamMessage, path, pendingFeedback, procs, readJson, readLines, spawn, standingLines, standingVersion, thread, tickets, touch, touchTicket,
   isShuttingDown: () => shuttingDown, arms: live(() => arms), lessons: live(() => lessons), verify: live(() => verify), closeTicket: (...a) => closeTicket(...a), recovery: live(() => recovery),
   handoffBrief: (...a) => handoffBrief(...a), handoffsOf: (...a) => handoffsOf(...a), projectsMentioned: (...a) => projectsMentioned(...a),
   isRestartPending: (...a) => isRestartPending(...a), maybeRefresh: (...a) => maybeRefresh(...a), maybeTidy: (...a) => maybeTidy(...a),
 });
 // ---------------------------------------------------------------- tickets (lib/tickets.js)
 
-const { newTicket, reopen, stopTicket, cleanAttachments, attachText, saveUpload, rawBody, createTicket, dispatchTicket, runSchedule, askUser, answerUser, recallFollowup, rateTicket, searchTickets, searchText, pauseTicket, resumeTicket } = require('./lib/tickets').install({
+const { newTicket, stopTicket, cleanAttachments, attachText, saveUpload, rawBody, createTicket, dispatchTicket, runSchedule, askUser, answerUser, followUp, recallFollowup, rateTicket, searchTickets, searchText, pauseTicket, resumeTicket } = require('./lib/tickets').install({
   ACTIVE, EFFORTS, UPLOADS, addEvent, agents, broadcast, checkHold, enqueueResident, fs, giveFeedback, limits, newId, nextTicketN, now, path, planWaiters,
   probeLimits, pumpResident, quickEffort, readJson, releaseBudget, restartResident, routeByRules, thread, ticketBudget, tickets, touch, touchTicket, userAskWaiters,
   endAccess: (...a) => endAccess(...a), endCommands: (...a) => endCommands(...a), lessons: live(() => lessons),
@@ -491,6 +491,7 @@ server.listen(PORT, HOST, () => {
       if (!stillQueued) recovery.markInterrupted(t, 'the office restarted while it was running');
     }
     if (t.verify && t.verify.status === 'running') t.verify.status = 'failed';
+    if (t.reviewer && t.reviewer.status === 'running') t.reviewer.status = 'skipped';
   }
   console.log(`Agentic OS running at http://127.0.0.1:${PORT}`);
   for (const key of readJson('roster.json').residents) startResident(key);
@@ -523,10 +524,12 @@ const evals = require('./lib/evals').install({
 });
 setInterval(() => evals.maybeScheduled(), 5 * 60000).unref();
 
-// Plans, questions, commands and edit requests in a linked Telegram chat, with buttons (lib/telegram.js).
-const telegram = require('./lib/telegram').install({ DATA, agents, tickets, now, decidePlan, decideCommand, answerUser, decideAccess });
+// Plans, questions, commands and edit requests in a linked Telegram chat, with buttons; jobs, processes and usage from the chat (lib/telegram.js).
+const telegram = require('./lib/telegram').install({ DATA, ACTIVE, agents, tickets, now, readJson, thread, limitsView, decidePlan, decideCommand,
+  answerUser, decideAccess, createTicket, dispatchTicket, followUp, pauseTicket, resumeTicket, stopTicket, rateTicket });
 // Questions about the office answered on Haiku from facts gathered without a model (lib/ask-office.js).
-const askOffice = require('./lib/ask-office').install({ CLAUDE_BIN, MEMORY_DIR, agents, childEnv, fs, noteSpend, now, path, readJson, searchTickets, spawn, teamsList: (...a) => teamsList(...a), tickets });
+const askOffice = require('./lib/ask-office').install({ CLAUDE_BIN, MEMORY_DIR, agents, childEnv, fs, noteSpend, now, path,
+  projectMemory: live(() => projectMemory), readJson, searchTickets, spawn, teamsList: (...a) => teamsList(...a), tickets });
 // ---------------------------------------------------------------- checks before done (lib/verify.js)
 
 // The folder a job works in: its isolated workspace, else its project's folder, else home.
@@ -561,7 +564,7 @@ const recovery = require('./lib/recovery').install({ ACTIVE, agents, broadcast, 
 setInterval(() => { try { recovery.watchdog(); } catch {} }, 60000).unref();
 // What it costs to get a job done well (lib/outcomes.js).
 const outcomes = require('./lib/outcomes').install({ agents, now, readJson, tickets });
-const verify = require('./lib/verify').install({ blockedCommand, broadcast, closeTicket, enqueueResident, lessons, now, readJson, spawn, thread, touchTicket, workdirOf });
+const verify = require('./lib/verify').install({ blockedCommand, broadcast, changesOf, closeTicket, enqueueResident, lessons, now, oneShot: askOffice.oneShot, readJson, spawn, thread, touchTicket, workdirOf });
 
 // The new-lead wizard: a lead drafted from the user's own words (lib/lead-wizard.js).
 const leadWizard = require('./lib/lead-wizard').install({ fs, home, oneShot: askOffice.oneShot, readJson });
@@ -579,15 +582,14 @@ const shutdown = () => {
 
 const routeModules = [
   require('./lib/routes-tickets').install({
-    UPLOADS, agents, answerUser, askUser, attachText, broadcast, changesOf, cleanAttachments, createTicket, decidePlan, dispatchTicket,
-    enqueueResident, fs, lessons, newId, now, path, pauseTicket, proposePlan, rateTicket, rawBody, readJson, recallFollowup, releaseBudget,
-    reopen, resumeTicket, revertChanges, saveState, saveUpload, searchText, searchTickets, stopTicket, thread, ticketBudget, tickets,
-    timelineOf, touch, touchTicket,
+    UPLOADS, agents, askUser, broadcast, changesOf, cleanAttachments, createTicket, decidePlan, dispatchTicket, followUp, fs, lessons,
+    path, pauseTicket, proposePlan, rateTicket, rawBody, readJson, recallFollowup, releaseBudget, resumeTicket, revertChanges, saveState,
+    saveUpload, searchText, searchTickets, stopTicket, thread, ticketBudget, tickets, timelineOf, touch, touchTicket,
   }),
   require('./lib/routes-agents').install({
     ACTIVE, MEMORY_DIR, addEvent, addToDocs, agents, ask, assign, colleagues, decideAccess, decideCommand, delegate, denyEdit, enqueue,
     enqueueResident, eventsOf, fs, giveFeedback, lessons, maybeRefresh, newTicket, onCall, path, pumpResident, readMemory, requestAccess,
-    restartResident, runCommand, runReview, saveHandoff, sendMail, snapshotBefore, staffList, stopCommand, stopTree, takeUnread, thread,
+    restartResident, runCommand, runReview, saveHandoff, sendMail, setStanding, snapshotBefore, staffList, stopCommand, stopTree, takeUnread, thread,
     ticketOfAgent, tickets, touch, touchFile, touchTicket, waitForTeam, writeMemory,
   }),
   require('./lib/routes-office').install({

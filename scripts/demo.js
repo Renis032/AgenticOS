@@ -159,7 +159,7 @@ async function main() {
   await call(port, T, 'POST', '/api/projects/Recipe%20Box/memory', { kind: 'instruction', text: 'Use pnpm, never npm, in this repository.' });
   await call(port, T, 'POST', '/api/projects/Recipe%20Box/memory', { kind: 'instruction', text: 'Keep the bundle under 200 kB; check with pnpm build before saying done.' });
   // A lesson waiting for review on Today, as if an earlier job had gone wrong.
-  await call(port, T, 'POST', '/api/lessons', { agentId: 'personal-lead', text: 'Check layout changes at phone width before reporting them as done.' });
+  await call(port, T, 'POST', '/api/lessons', { agentId: 'personal-lead', text: 'Check layout changes at phone width before reporting them as done.', reasoning: 'I reported the new header done after checking it only on desktop; on a phone it overflowed and the user had to follow up.' });
   // The plan call waits for your decision; once you approve (or reject) it, the stand-in finishes the dark-mode job.
   call(port, T, 'POST', '/api/propose-plan', { agentId: 'personal-lead', plan, estimateUsd: 1.8 }, 24 * 3600000).then(() => fs.writeFileSync(path.join(work, 'release'), ''));
 

@@ -39,11 +39,11 @@ $('#top').addEventListener('dblclick', (e) => { if (!e.target.closest(NO_DRAG)) 
 
 // Who is busy, at a glance: a small avatar per lead (and parallel desk) with a ring for its state; click to open its job.
 function leadsBarHtml() {
-  const list = [...leads(), ...Object.values(S.agents).filter((a) => a.twinOf && !a.retired).map((a) => a.id)].map((k) => S.agents[k]).filter(Boolean);
+  const list = [...leads(), ...Object.values(S.agents).filter((a) => a.twinOf && (!a.retired || a.retiring)).map((a) => a.id)].map((k) => S.agents[k]).filter(Boolean);
   return list.map((a) => {
     const t = agentJob(a);
-    const st = a.status === 'offline' ? 'down' : t && needsYou(t) ? 'ask' : t ? 'busy' : 'idle';
-    const what = st === 'down' ? 'down (restarting)' : st === 'ask' ? `waiting for you on #${t.n}` : st === 'busy' ? `working on #${t.n} ${short(t.title, 50)}` : 'free';
+    const st = a.retiring ? 'retiring' : a.status === 'offline' ? 'down' : t && needsYou(t) ? 'ask' : t ? 'busy' : 'idle';
+    const what = st === 'retiring' ? `retiring, jobs go back to ${who(a.twinOf)}` : st === 'down' ? 'down (restarting)' : st === 'ask' ? `waiting for you on #${t.n}` : st === 'busy' ? `working on #${t.n} ${short(t.title, 50)}` : 'free';
     return `<button class="lav s-${st}" data-act="leadAv" data-id="${esc(a.id)}" data-tip="${esc(`${a.persona}: ${what}`)}" aria-label="${esc(`${a.persona}: ${what}`)}">${esc((a.persona || '?').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1))}${a.twinOf ? `<sub>${esc(String(a.twinNo || 2))}</sub>` : ''}</button>`;
   }).join('');
 }
@@ -298,7 +298,7 @@ function telegramPrefs() {
   const T = S.tg;
   if (!T) { loadTelegram(); return pGroup('Telegram', [prow('Telegram', 'Loading…', '')]); }
   if (T.unavailable) return '';
-  const intro = 'Get plans, questions and commands on your phone, with buttons to answer them. Only your own chat is listened to.';
+  const intro = 'Get plans, questions and commands on your phone, with buttons to answer them; start, follow up, pause and stop jobs from there too (send /help to the bot). Only your own chat is listened to.';
   if (!T.configured) return pGroup('Telegram', [prow('Connect a Telegram bot', `${intro} In Telegram, message @BotFather, send /newbot, and paste the token it gives you here.`,
     '<div class="row" style="margin:0"><input class="in" id="tgToken" type="password" placeholder="123456:ABC-…" autocomplete="off" style="width:220px"><button class="btn pri sm" data-act="tgConnect">Connect</button></div>')]);
   const err = T.lastError ? `<div class="hint" style="color:var(--fail)">Last problem: ${esc(T.lastError)}</div>` : '';
@@ -312,7 +312,8 @@ function telegramPrefs() {
     sw('question', 'Questions', 'Tap an option, or reply to the message with your answer.'),
     sw('command', 'Terminal commands', 'Run, run all on the job, or don\'t run.'),
     sw('access', 'Edits outside a project', 'Allow or deny.'),
-    sw('done', 'Finished jobs', 'A short note with the lead, the cost and the start of the answer.'),
+    sw('done', 'Finished jobs', 'A short note with the lead, the cost and the start of the answer, with 👍 / 👎 and Follow up.'),
+    sw('failed', 'Failed jobs', 'A note when a job fails. Jobs you start or follow up from Telegram always get their note.'),
   ]);
 }
 function closePrefs() { $('#prefs').classList.remove('on'); }
@@ -402,6 +403,8 @@ const PREF_BODY = {
         officeWord('isolateJobs', [['shared', 'When another job is on the same project'], ['always', 'For every job on a git project'], ['off', 'Never']], 'shared')),
       prow('When checks fail', 'A job\'s checks (Teams & roles → Projects, or set per job) run after the lead answers. A failure goes back to the lead this many times before the job fails.',
         officeSelect('verifyRetries', [[0, 'Fail the job straight away'], [1, 'Send back once'], [2, 'Send back twice'], [3, 'Send back three times']], 1)),
+      prow('Review jobs without checks', 'A reviewer (one Sonnet call, a few cents) reads the request, the answer and the diff before the job closes. Problems go back to the lead like a failed check; if they remain, the job closes done with the concerns flagged.',
+        officeSelect('reviewAnswers', [[0, 'Never'], [1, 'When files changed'], [2, 'Every job']], 1)),
       prow('Flag a stuck agent after', 'An agent working on a job with no activity for this long gets a banner on the job, with Ask for a status and Restart.',
         officeSelect('stuckMinutes', [[0, 'Never'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour']], 15)),
     ]) +

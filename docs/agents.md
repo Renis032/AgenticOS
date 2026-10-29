@@ -29,7 +29,18 @@ session. The Memory app lists them above the memory, with **Remove** on each.
 **You review lessons first** (on by default; Preferences → Agents & teams → *Review lessons before agents use them*).
 A new lesson waits as a draft on Today (and in that agent's Memory page) until you **Keep** it, **Edit** it and keep
 your wording, or **Drop** it. Only kept lessons reach the agents' prompts, so a wrong conclusion from a bad day doesn't
-steer every later job. With review off, lessons apply straight away as before.
+steer every later job. With review off, lessons apply straight away as before. Each draft shows **why the agent wants
+it**: the agent must send `reasoning` with the lesson (what it did on that job and why the line would have prevented
+it), and the office adds what made it ask (failed, 👎, rework or undone). Neither goes into the prompts; they are there so
+you can judge whether the agent drew the right conclusion.
+
+**Standing instructions** (`setStanding` in `lib/prompts.js`). Things you tell a lead once and want on every job, such
+as "when you fix a bug, end with a short brief on why you chose this fix and a one-line commit message in the style of
+the recent commits". Open the lead in Processes, write it in the box and press **Keep as instruction**; the
+*Instructions* tab lists them with ✕ to remove one. They go into the lead's system prompt under *The user's standing
+instructions to you* (above its memory, and winning over it), and a lead whose session is already running gets the
+new list on its next message. Unlike feedback they are never used up; a second desk follows its lead's. At most 20 per
+lead. The API is `GET/POST /api/agents/<id>/standing` and `DELETE /api/agents/<id>/standing/<entryId>`.
 
 **Who stays on the team** (`lib/on-call.js`). Only generally useful people are permanent:
 
@@ -73,7 +84,9 @@ questions, commands — and follow-ups on it go to the twin while it is alive.
 - Follow-ups on the lead's **current** ticket still wait for the lead; mail and library tidying stay with the lead.
 - The memory is the lead's and **read-only** for a twin; lessons a twin sends with `add_lesson` go to the lead.
 - A twin **retires** after `twinIdleMinutes` (default 20) idle. Later follow-ups on its tickets go back to the lead,
-  who gets the earlier answer as context.
+  who gets the earlier answer as context. A restart retires every twin too. While its process stops it shows as
+  **retiring…**, then **retired** with when and why (hover the activity); it stays in Processes for three minutes so you
+  see it go, then leaves the tree.
 - At most `leadTwins` twins per lead (default 1, up to 3; 0 turns the feature off and jobs queue as before), set in
   Preferences. God is never twinned.
 - A restart retires twins; anything they had queued or were working on goes back to the lead.
@@ -190,6 +203,15 @@ Only exit codes decide: all pass → done, with "Checks passed" and each command
 output goes back to the lead to fix (once by default, *When checks fail*), then the job ends **failed** with the output
 on the job and a lesson asked for. Jobs without checks still get their evidence: if the last run of a command on the
 job failed and nothing re-ran it, the closed job says so.
+
+**The reviewer** covers jobs that have no checks (*Review jobs without checks*: never, when files changed (the
+default), or every job; `reviewAnswers` 0/1/2). One Sonnet call with no tools reads the request and follow-ups, the
+lead's answer, the diff (up to 40k characters) and the commands run, and replies PASS or FAIL with concrete problems:
+part of the request not done, a bug in the diff, or a claim the diff and commands don't back up. Style never fails a
+job. A FAIL goes back to the lead like a failed check (the same *When checks fail* retries). Because a reviewer is a
+model and not an exit code, a job it still objects to after the retries closes **done** with the concerns flagged in
+the thread, not failed. If the reviewer can't answer, the job closes on the lead's answer. Routines and the weekly
+review are never reviewed. Its cost is added to the job's.
 
 ## Interrupted jobs and stuck agents
 

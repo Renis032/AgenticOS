@@ -18,7 +18,7 @@ command line), never by an agent:
 | `diff-files` | byte-for-byte compare (sha1), whitespace-only check, unified diff; also directories |
 | `xml-check` | XML well-formedness with xmllint |
 | `changed-files` | uncommitted changes in a git repo (read-only: status + diff --stat) |
-| `repo-state` | where a git repo stands: branch, HEAD, upstream, uncommitted changes, submodules with their own changes, whether a commit from a ticket is in the history; `--diff` adds the full diff, submodules included |
+| `repo-state` | where a git repo stands: branch, HEAD, upstream, uncommitted changes, submodules with their own changes, whether a commit from a ticket is in the history; `--diff` adds the full diff, submodules included; `--log N` the last N commit subjects, to write a commit message in the same style |
 | `route` | which lead the routing rules would pick for a ticket |
 | `library-check` | duplicate notes and file:line references that no longer match the code |
 | `weekly-report` | a team's week in numbers: tickets, costs, ratings, staff, problems |

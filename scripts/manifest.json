@@ -43,8 +43,8 @@
   },
   {
     "name": "repo-state",
-    "usage": "repo-state [dir] [--commit sha] [--diff] [--max-lines N] [--all]",
-    "does": "where a git repo stands: branch, HEAD, upstream, uncommitted changes, submodules with their own changes, whether a commit is in the history (submodules too); --diff adds the full diff including submodules",
+    "usage": "repo-state [dir] [--commit sha] [--diff] [--max-lines N] [--log N] [--all]",
+    "does": "where a git repo stands: branch, HEAD, upstream, uncommitted changes, submodules with their own changes, whether a commit is in the history (submodules too); --diff adds the full diff including submodules; --log N the last N commit subjects, to match their style",
     "for": "all"
   },
   {

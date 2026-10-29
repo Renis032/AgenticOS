@@ -2,7 +2,7 @@
 'use strict';
 // Where a git repository stands, in one call: branch, HEAD, upstream, uncommitted changes, submodules with their own
 // changes, and whether a commit named in a ticket is in the history (looked up in the submodules too). --diff adds the
-// full diff, submodules included. Read-only.
+// full diff, submodules included; --log N the last N commit subjects (to write a commit message in the same style). Read-only.
 const { spawnSync } = require('child_process');
 const { parseArgs, home, cli, path } = require('./_util');
 
@@ -69,6 +69,11 @@ function run(argv, { cwd }) {
     }
   }
   if (opt.commit) lines.push('', findCommit(root, subs, String(opt.commit)));
+  if (opt.log) {
+    const n = Math.min(Math.max(Number(opt.log) || 10, 1), 50);
+    const log = (out(root, ['log', `-${n}`, '--no-merges', '--format=%h %s']) || '').split('\n').filter(Boolean);
+    lines.push('', log.length ? `Last ${log.length} commit${log.length === 1 ? '' : 's'} (no merges):` : 'No commits yet.', ...log.map((l) => `  ${l}`));
+  }
   if (opt.diff) {
     const max = Number(opt['max-lines']) || 400;
     const d = (out(root, ['diff', '--submodule=diff', 'HEAD']) || '').split('\n');

@@ -509,6 +509,7 @@ function lessonReviewHtml(list, wide) {
   return `<div class="card ${wide ? 'wide' : ''} lreview"><h3>${ic('memory')} Lessons to review <span class="pill s-ask">${list.length}</span></h3><div class="hint">Written by the leads after a job went wrong. They reach the agents only once you keep them.</div>
     ${list.map(({ a, l }) => `<div class="lr"><div class="lh"><b>${esc(a.persona)}</b> <span class="hint">${l.ticketN ? `after <a data-act="openJobN" data-n="${l.ticketN}">#${l.ticketN}</a> · ` : ''}${ago(l.t)}</span></div>
       ${S.lessonEdit === l.id ? `<input id="lr-${l.id}" class="in lrin" maxlength="220" value="${esc(l.text)}" data-id="${a.id}" data-lid="${l.id}" aria-label="Lesson text">` : `<div class="lt">${esc(l.text)}</div>`}
+      ${l.reason || l.trigger ? `<div class="hint lwhy">${l.trigger ? `<b>Asked because</b> ${esc(l.trigger)}.` : ''}${l.reason ? ` <b>${esc(a.persona)}'s reasoning:</b> ${esc(l.reason)}` : ''}</div>` : ''}
       <div class="row"><button class="btn sm pri" data-act="lessonKeep" data-id="${a.id}" data-lid="${l.id}">${S.lessonEdit === l.id ? 'Keep as edited' : 'Keep'}</button>${S.lessonEdit === l.id ? '' : `<button class="btn sm" data-act="lessonEdit" data-lid="${l.id}">Edit</button>`}<button class="btn sm danger" data-act="lessonDrop" data-id="${a.id}" data-lid="${l.id}">Drop</button></div></div>`).join('')}</div>`;
 }
 // The new-lead wizard (lib/lead-wizard.js): explain the purpose, get a full draft, review every field, create.

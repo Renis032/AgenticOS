@@ -33,7 +33,10 @@ it's doing or what it costs. Agentic OS gives you a standing team instead:
 - **Jobs** with live progress, per-job cost, follow-ups, plans, questions with one-click answers, terminal-command
   approvals, and reminders when something needs you
 - **Checks before done**: a project's checks (`npm test`, `make`…) run by the office after the lead answers; real exit
-  codes decide, failures go back to the lead, and the evidence stays on the job
+  codes decide, failures go back to the lead, and the evidence stays on the job; jobs without checks get a reviewer
+  that reads the request, answer and diff
+- **The office in your own Claude Code sessions**: an MCP server (`lib/mcp-office.js`) lets any terminal chat search
+  the office's jobs, memories, libraries, project memory and handoffs, read-only and free
 - **Recovery**: a job interrupted by a restart or a crash resumes with what already happened, so nothing is done
   twice; a stuck agent is flagged; stopping a job stops everything it started
 - **Separate workspaces**: two jobs on the same git project each work in their own git worktree; you review the diff
@@ -98,7 +101,8 @@ Run `./agentos setup` again any time.
   The strip under the conversation shows who is working on what and what it has cost so far.
 - **When an agent needs you** (a question, a plan, a command to run) the job says *needs you*, you get a notification,
   and reminders follow if it waits. Questions come with one-click answers (keys 1–5). Plans under an amount you choose
-  can be approved automatically. With a Telegram bot linked, all of it reaches your phone too.
+  can be approved automatically. With a Telegram bot linked, all of it reaches your phone too, and from the chat you
+  can start, follow up, pause and stop jobs and see who is working on what (send `/help` to the bot).
 - **Give a project checks** in Teams & roles → Projects (e.g. `npm test ;; npm run lint`), or per job under *Checks and
   workspace*: a job is done only when they pass.
 - **Add a team lead** in Teams & roles → *New team lead*: describe what it should look after, review the draft, create.

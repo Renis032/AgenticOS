@@ -99,6 +99,7 @@ sequenceDiagram
 | `server.js` | startup, shared state, wiring the modules together |
 | `lib/` | the server's parts, one `install(ctx)` per module (table below) |
 | `lib/mcp-delegate.js` | office tools every agent gets over MCP |
+| `lib/mcp-office.js` | read-only office tools for your own Claude Code sessions over MCP (recall, jobs, projects) |
 | `lib/mail-hook.js` | hook on every agent tool call |
 | `lib/stop.sh` | `./agentos stop`: stops this office's server, refusing while agents work unless `-f` |
 | `public/os.html`, `public/ui/` | the window's page: styles in `os.css`, code in `os/*.js` (classic scripts sharing one scope, loaded in order) |
@@ -123,7 +124,7 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `agent-stream.js` | reading each agent's output: events, live spend, exact costs, budgets |
 |  | `tickets.js` | jobs: creating and routing them, the schedule, questions, pause, stop, follow-ups, rating, search |
 |  | `quick-effort.js` | a lower effort for quick questions |
-|  | `verify.js` | checks before done: the office runs a job's checks and only exit codes decide |
+|  | `verify.js` | checks before done: the office runs a job's checks and only exit codes decide; a reviewer for jobs without checks |
 |  | `recovery.js` | interrupted jobs resumed with what already happened; stuck agents flagged |
 |  | `kill-group.js` | stopping an agent stops its whole process group |
 |  | `workspaces.js` | a git worktree per job on a shared project, applied back without commits |
@@ -132,6 +133,7 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `routes-agents.js` | agents and the office tools they call |
 |  | `routes-office.js` | the window, settings, teams, limits, health |
 | Agent tools | `mcp-delegate.js` | the MCP server inside every agent: delegate, plans, questions, scripts, memory, mail |
+|  | `mcp-office.js` | the MCP server for Claude Code sessions outside the office: read-only, no model called |
 |  | `mail-hook.js` | the hook on every tool call: save before edit, edit scope, script redirects, mail |
 |  | `office-scripts.js` | running office and team scripts for agents |
 |  | `commands.js` | terminal commands and their approval |
@@ -140,7 +142,7 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `shared-files.js` | heads-ups when two agents edit the same file |
 |  | `mail.js` | agents talking to each other |
 |  | `team-chat.js` | team rooms |
-|  | `telegram.js` | plans, questions and commands on your phone through a Telegram bot, with buttons |
+|  | `telegram.js` | plans, questions and commands on your phone through a Telegram bot, with buttons; start, follow up, pause and stop jobs, live job cards, processes and usage from the chat |
 | Working well | `plans.js` | plans for big jobs and automatic approval |
 |  | `limits.js` | the plan's usage windows: hold, resume, schedule |
 |  | `fresh-sessions.js` | fresh sessions when a lead's conversation grows long |

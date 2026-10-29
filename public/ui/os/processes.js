@@ -25,10 +25,11 @@ function procRows() {
     let self = true;
     if (!S.showIdle && !a.resident && !busy) self = false;
     if (!S.showOnCall && (a.onCall || a.retired) && !busy) self = false; // hired for one project, or retired: off the team list
-    if (a.twinOf && a.retired && !busy) self = false; // a parallel lead that went home: its jobs are back with the lead
+    const gone = a.twinOf && a.retired && !busy && !justRetired(a) && S.sel !== a.id; // a parallel lead that went home: its jobs are back with the lead
+    if (a.twinOf && a.retired && !busy && !justRetired(a)) self = false;
     if (q && !(`${a.persona} ${a.name} ${a.role} ${a.no}`.toLowerCase().includes(q))) self = false;
     if (jobIds && !jobIds.has(a.id)) self = false;
-    const k = self || childKeep || a.id === S.root || (a.resident && !q && !jobIds);
+    const k = self || childKeep || a.id === S.root || (a.resident && !gone && !q && !jobIds);
     keep.set(a.id, k);
     return self || childKeep;
   };
@@ -51,6 +52,8 @@ function activityOf(a) {
   const busy = ACTIVE.includes(a.status) || (a.resident && a.current);
   if (busy && L.thought) return { text: L.thought, think: L.kind === 'think' };
   if (busy) return { text: a.progress || 'working…' };
+  if (a.retiring) return { text: `retiring: its jobs go back to ${who(a.twinOf || a.homeId)}` };
+  if (a.retired) return { text: `retired ${a.retired.t ? ago(a.retired.t) : ''}${a.retired.why ? ` · ${a.retired.why}` : ''}` };
   if (a.status === 'offline') return { text: 'restarting…' };
   if (a.resident) return { text: (a.inbox || []).length ? `${a.inbox.length} waiting in inbox` : a.id === S.root ? 'routing — waits for jobs that the rules can\'t place' : 'waiting for work' };
   if (a.endedAt) return { text: `${a.lastOutcome || 'idle'} · last task ${ago(a.endedAt)}${a.title ? ` · ${a.title}` : ''}` };
@@ -86,11 +89,11 @@ APPS.processes = {
     $('#psBody').innerHTML = rows.map(({ a, glyph, has }) => {
       const j = agentJob(a);
       const act = activityOf(a);
-      const st = a.resident && a.current && a.status === 'idle' ? 'running' : a.status;
+      const st = shownState(a);
       const busy = ACTIVE.includes(st) || (a.resident && a.current);
       return `<tr class="${S.sel === a.id ? 'on' : ''} ${!busy && !a.resident ? 'dim' : ''}" data-act="sel" data-id="${a.id}">
         <td class="pid">${a.no || ''}</td>
-        <td class="nm"><span class="tree">${esc(glyph)}</span>${has ? `<span class="tw" data-act="fold" data-id="${a.id}">${S.collapsed.has(a.id) ? '▸' : '▾'}</span>` : '<span class="tw"></span>'}<b>${esc(a.persona)}</b><span class="r">${esc(a.id === S.root ? 'router' : a.name)}</span>${a.twinOf ? ' <span class="hint" title="A parallel desk for this lead while it was busy">parallel</span>' : ''}${a.retired ? ` <span class="hint" title="${esc(a.retired.why || '')}">retired</span>` : a.onCall ? ` <span class="hint" title="Hired for one project; comes back when it does">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}${a.staff && starOf(a.homeId) === a.id ? ' <span class="lv" title="most reliable on the team">★</span>' : ''}</td>
+        <td class="nm"><span class="tree">${esc(glyph)}</span>${has ? `<span class="tw" data-act="fold" data-id="${a.id}">${S.collapsed.has(a.id) ? '▸' : '▾'}</span>` : '<span class="tw"></span>'}<b>${esc(a.persona)}</b><span class="r">${esc(a.id === S.root ? 'router' : a.name)}</span>${a.twinOf ? ' <span class="hint" title="A parallel desk for this lead while it was busy">parallel</span>' : ''}${a.retired && !a.twinOf ? ` <span class="hint" title="${esc(a.retired.why || '')}">retired</span>` : a.onCall ? ` <span class="hint" title="Hired for one project; comes back when it does">on call · ${esc(a.onCall.project || 'past job')}</span>` : ''}${a.staff && starOf(a.homeId) === a.id ? ' <span class="lv" title="most reliable on the team">★</span>' : ''}</td>
         <td>${modelChip(a)}</td><td>${pill(st)}</td>
         <td>${j ? `<a data-act="openJob" data-id="${j.id}">#${j.n}</a>` : '<span class="hint">—</span>'}</td>
         <td class="act ${act.think ? 'th' : ''}" title="${esc(act.text)}">${esc(short(act.text, 160))}</td>
@@ -123,7 +126,7 @@ function renderInspector() {
   const j = agentJob(a);
   const par = S.agents[parentOf(a)];
   const L = S.live[a.id] || {};
-  $('#inspHead').innerHTML = `<h2>${esc(a.persona)} ${pill(a.resident && a.current && a.status === 'idle' ? 'running' : a.status)} <span class="hint mono">PID ${a.no || '?'}</span><span class="sp" style="flex:1"></span><button class="btn sm" data-act="unsel" title="Close">✕</button></h2>
+  $('#inspHead').innerHTML = `<h2>${esc(a.persona)} ${pill(shownState(a))} <span class="hint mono">PID ${a.no || '?'}</span><span class="sp" style="flex:1"></span><button class="btn sm" data-act="unsel" title="Close">✕</button></h2>
     <div class="sub">${esc(a.id === S.root ? 'Router — assigns jobs the rules cannot place' : a.title || a.name)}${par ? ` · child of <a data-act="sel" data-id="${par.id}">${esc(par.persona)}</a>` : ''}</div>
     <div class="kv"><span>${modelChip(a)}</span>${a.id !== S.root ? `<span>level <b>${levelOf(a)}</b></span>` : ''}<span>cost <b>${money(a.costUsd)}</b></span><span>turns <b>${a.turns || 0}</b></span>
       ${a.resident ? `${a.id !== S.root ? `<span>jobs <b>${a.ticketsHandled || 0}</b></span>` : ''}${a.contextTokens && a.id !== S.root ? `<span>session <b>${tokens(a.contextTokens)}</b> tok</span>` : ''}` : `<span>done <b>${a.tasksDone || 0}</b></span><span>not done <b>${a.tasksFailed || 0}</b></span><span>team <b>${esc(teamName(a.homeId))}</b></span>`}
@@ -132,22 +135,33 @@ function renderInspector() {
     <div class="actions">${busy && a.id !== S.root ? '<button class="btn sm danger" data-act="kill">Kill</button>' : ''}
       ${a.resident && a.id !== S.root ? '<button class="btn sm" data-act="fresh" title="Save memory, start a shorter session">Fresh session</button><button class="btn sm" data-act="review">Weekly review</button><button class="btn sm" data-act="reset" title="Restart without saving memory">Reset</button>' : ''}
       ${(a.children || []).filter((c) => S.agents[c]).length ? `<span class="hint">children: ${(a.children || []).filter((c) => S.agents[c]).slice(-6).map((c) => `<a data-act="sel" data-id="${c}">${esc(S.agents[c].persona)}</a>`).join(', ')}</span>` : ''}</div>`;
-  const tabs = ['mind', 'memory', 'report', 'history'];
-  $('#inspTabs').innerHTML = tabs.map((t) => `<button class="${S.itab === t ? 'on' : ''}" data-act="itab" data-tab="${t}">${{ mind: 'Mind', memory: `Memory${a.memoryVersion ? ' v' + a.memoryVersion : ''}`, report: a.resident ? 'Last answer' : 'Report', history: 'History' }[t]}</button>`).join('');
+  const lead = a.resident && a.id !== S.root && !a.twinOf;
+  const tabs = ['mind', ...(lead ? ['standing'] : []), 'memory', 'report', 'history'];
+  if (!tabs.includes(S.itab)) S.itab = 'mind';
+  const nStanding = (a.standing || []).length;
+  $('#inspTabs').innerHTML = tabs.map((t) => `<button class="${S.itab === t ? 'on' : ''}" data-act="itab" data-tab="${t}">${{ mind: 'Mind', standing: `Instructions${nStanding ? ' ' + nStanding : ''}`, memory: `Memory${a.memoryVersion ? ' v' + a.memoryVersion : ''}`, report: a.resident ? 'Last answer' : 'Report', history: 'History' }[t]}</button>`).join('');
   const evs = S.events[a.id] || [];
-  const key = `${a.id}|${S.itab}|${evs.length}|${a.memoryVersion}|${(a.history || []).length}|${(a.feedback || []).length}|${a.result ? a.result.length : 0}`;
+  const key = `${a.id}|${S.itab}|${evs.length}|${a.memoryVersion}|${(a.history || []).length}|${(a.feedback || []).length}|${(a.standing || []).map((x) => x.id).join()}|${a.result ? a.result.length : 0}`;
   if (key !== S.itabKey) {
     S.itabKey = key;
     const body = $('#inspBody');
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 60;
     if (S.itab === 'mind') { body.innerHTML = feedHtml(evs) || '<div class="empty">Nothing yet.</div>'; if (atBottom || !body.dataset.k || body.dataset.k !== a.id) body.scrollTop = body.scrollHeight; body.dataset.k = a.id; }
     else if (S.itab === 'memory') { body.innerHTML = skel(5); api('GET', `/api/agents/${a.id}/memory`).then((r) => { if (S.sel === a.id && S.itab === 'memory') body.innerHTML = r.text ? `<div class="hint" style="margin:8px 0">Shown to ${esc(a.persona)} at the start of every task${a.memoryUpdatedAt ? ` · updated ${ago(a.memoryUpdatedAt)}` : ''}.</div><div class="md">${md(r.text)}</div>` : '<div class="empty">No lessons written yet.</div>'; }); }
+    else if (S.itab === 'standing') body.innerHTML = standingHtml(a);
     else if (S.itab === 'report') body.innerHTML = a.result ? `<div class="md" style="padding-top:8px">${md(a.result)}</div>` : '<div class="empty">No report yet.</div>';
     else body.innerHTML = historyHtml(a);
   }
   const txt = $('#inspText');
-  if (a.resident) { txt.placeholder = `Message ${a.persona} (opens a job on their desk)…`; $('#inspHint').textContent = ''; $('#inspBtns').innerHTML = `${a.id !== S.root ? '<button class="btn sm" data-act="feedback">As feedback</button> ' : ''}<button class="btn pri sm" data-act="message">Send</button>`; }
+  if (a.resident) { txt.placeholder = S.itab === 'standing' ? `Tell ${a.persona} something to do on every job…` : `Message ${a.persona} (opens a job on their desk)…`; $('#inspHint').textContent = ''; $('#inspBtns').innerHTML = `${lead ? `<button class="btn sm${S.itab === 'standing' ? ' pri' : ''}" data-act="standing" title="${esc(a.persona)} follows it on every job until you remove it">Keep as instruction</button> ` : ''}${a.id !== S.root ? '<button class="btn sm" data-act="feedback">As feedback</button> ' : ''}<button class="btn${S.itab === 'standing' ? '' : ' pri'} sm" data-act="message">Send</button>`; }
   else { txt.placeholder = `Coach ${a.persona}: feedback for their next task…`; $('#inspHint').textContent = ''; $('#inspBtns').innerHTML = `${!busy && a.sessionId ? '<button class="btn sm" data-act="followup" title="Continue their last task">As follow-up</button> ' : ''}<button class="btn pri sm" data-act="feedback">Send feedback</button>`; }
+}
+// What the user told this lead to do on every job (lib/prompts.js setStanding); never used up, unlike feedback.
+function standingHtml(a) {
+  const list = a.standing || [];
+  return `<div class="hint" style="margin:8px 0">Things you told ${esc(a.persona)} once that they follow on every job, on top of their role and memory. Write one below and press <b>Keep as instruction</b>.</div>
+    ${list.length ? list.map((x) => `<div class="sec" style="display:flex;gap:8px;align-items:flex-start"><div class="md" style="flex:1">${md(x.text)}</div><span class="hint">${ago(x.t)}</span><button class="btn sm" data-act="standingDel" data-id="${x.id}" title="Remove">✕</button></div>`).join('')
+      : `<div class="empty">None yet. For example: “When you fix a bug, end with a short brief on why you chose this fix and a one-line commit message in the style of the repository's recent commits.”</div>`}`;
 }
 function historyHtml(a) {
   const h = (a.history || []).slice(-15).reverse();

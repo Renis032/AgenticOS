@@ -139,8 +139,12 @@ async function check() {
     const ag = new Map([['lead', { id: 'lead', persona: 'Lead' }]]);
     const R = require(path.join(ROOT, 'lib', 'lessons')).install({ agents: ag, readJson: () => ({ root: 'god', defaults: {} }), now: () => 1, newId: (() => { let i = 0; return () => 'd' + ++i; })(),
       touch: () => {}, addEvent: () => {}, giveFeedback: () => {}, findSecret: () => null, broadcast: () => {} });
-    const sent = R.add('lead', 'Run the tests before saying done.'); R.add('lead', 'Ask before renaming files.');
+    const bare = R.add('lead', 'Run the tests before saying done.');
+    ok('with review on, a lesson without its reasoning is refused', /reasoning/.test(bare.error || '') && !(ag.get('lead').lessonDrafts || []).length, JSON.stringify(bare));
+    const sent = R.add('lead', 'Run the tests before saying done.', { n: 9, lessonAsked: ['rework'] }, 'I said the fix was done without running the tests; the user found it still broken.');
+    R.add('lead', 'Ask before renaming files.', null, 'I renamed a file the user still imported elsewhere.');
     const [d1, d2] = ag.get('lead').lessonDrafts;
+    ok('a lesson to review carries the agent\'s reasoning and what made the office ask', /without running the tests/.test(d1.reason) && /follow up/.test(d1.trigger || '') && d1.ticketN === 9 && !d2.trigger, JSON.stringify([d1, d2]));
     ok('with review on, a new lesson waits for the user instead of reaching the prompt', /review/.test(sent.message) && ag.get('lead').lessonDrafts.length === 2 && !(ag.get('lead').lessons || []).length && !R.promptBlock(ag.get('lead')).length, JSON.stringify(ag.get('lead')));
     const kept = R.approve('lead', d1.id, 'Run the tests before reporting a fix as done.');
     const dropped = R.drop('lead', d2.id);
@@ -173,6 +177,37 @@ async function check() {
     const ev = V.evidence({ commands: [{ command: 'npm test', exitCode: 1 }, { command: 'npm run lint', exitCode: 0 }, { command: 'npm test', exitCode: 0 }, { command: 'make', exitCode: 2 }] });
     ok('evidence keeps the last run of each command and flags the ones still failing', ev.commands.length === 3 && ev.failing.length === 1 && ev.failing[0].command === 'make', JSON.stringify(ev));
     ok('a job without checks is not held back', V.start(mk(3, []), 'lead') === false, '');
+  }
+  // The reviewer (lib/verify.js): a job without checks that changed files is read by a model before it closes.
+  {
+    const closed = [], sent = [], th = [], prompts = [];
+    let replies = [];
+    const mode = { reviewAnswers: 1 };
+    const R = require(path.join(ROOT, 'lib', 'verify')).install({ blockedCommand: () => null, broadcast: () => {}, changesOf: (t) => (t.changes || []).map((c) => ({ ...c, state: 'modified', added: 1, removed: 0, diff: '+changed line' })),
+      closeTicket: (t, failed) => { t.status = failed ? 'failed' : 'done'; closed.push([t.n, t.status]); }, enqueueResident: (k, item) => sent.push([k, item.text]), lessons: { ask: () => {} }, now: Date.now,
+      oneShot: async (p) => { prompts.push(p); return replies.shift() || { error: 'no reply' }; }, readJson: () => ({ defaults: { verifyRetries: 1, ...mode } }), spawn, thread: (t, e) => th.push(e), touchTicket: () => {}, workdirOf: () => work });
+    const mk = (n, extra) => ({ id: 'r' + n, n, status: 'open', pending: [], thread: [], verifyCmds: [], text: 'Fix the parser', answer: 'Fixed it; tests pass.', changes: [{ path: '/x/parser.js' }], ...extra });
+    ok('a job without checks that changed nothing is not reviewed (unless set to every job), nor are routines', R.start(mk(1, { changes: [] }), 'lead') === false && R.start(mk(2, { routine: 'r1' }), 'lead') === false, '');
+    replies = [{ text: 'PASS', costUsd: 0.02 }];
+    const good = mk(3);
+    const tookGood = R.start(good, 'lead');
+    await until(() => closed.length === 1, 3000);
+    ok('the reviewer reads the request, answer and diff; PASS closes the job done and adds its cost', tookGood && good.status === 'done' && good.reviewer.status === 'passed' && good.costUsd === 0.02 && /Fix the parser/.test(prompts[0]) && /tests pass/.test(prompts[0]) && /\+changed line/.test(prompts[0]), JSON.stringify(good.reviewer));
+    replies = [{ text: 'FAIL\n- parser.js: the empty-input case still throws\nsome chatter', costUsd: 0.02 }];
+    const bad = mk(4);
+    R.start(bad, 'lead');
+    await until(() => sent.length === 1, 3000);
+    ok('a FAIL goes back to the lead with the problems, and the job stays open', bad.status === 'open' && bad.reviewer.status === 'failed' && /empty-input case/.test(sent[0][1]) && !/chatter/.test(sent[0][1]), JSON.stringify({ r: bad.reviewer, sent }).slice(0, 300));
+    replies = [{ text: 'FAIL\n- parser.js: still throws', costUsd: 0.02 }];
+    R.start(bad, 'lead');
+    await until(() => closed.length === 2, 3000);
+    ok('a second FAIL after the retry closes the job done with the concerns flagged, not failed', bad.status === 'done' && bad.reviewer.status === 'flagged' && bad.reviewer.attempt === 2 && th.some((e) => e.kind === 'verify' && e.ok === false && /still has concerns/.test(e.text)), JSON.stringify(bad.reviewer));
+    replies = [{ error: 'model unavailable' }];
+    const broken = mk(5);
+    R.start(broken, 'lead');
+    await until(() => closed.length === 3, 3000);
+    mode.reviewAnswers = 0;
+    ok('a reviewer that cannot answer never holds the job, and the setting turns it off', broken.status === 'done' && broken.reviewer.status === 'skipped' && R.start(mk(6), 'lead') === false, JSON.stringify(broken.reviewer));
   }
   // Isolated workspaces (lib/workspaces.js): a git worktree per job, applied back without commits, or discarded.
   if (spawnSync('git', ['--version']).status === 0) {
@@ -332,6 +367,49 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
       await wp;
       const edited = await until(async () => tg.calls.find((c) => c.method === 'editMessageText' && /Decided in the window: plan rejected/.test(c.body.text)), 6000);
       ok('deciding in the window updates the Telegram message', edited, 'no edit');
+      // Running jobs from the chat: /new, a follow-up by number, a plain message offered as a job, the job card's
+      // buttons, and the status commands.
+      let mid = 50;
+      const say = (text, extra) => tg.push({ message: { message_id: mid++, chat: { id: 4242, first_name: 'Me' }, text, ...extra } });
+      const press = (data) => tg.push({ callback_query: { id: `cq${mid++}`, data, message: { message_id: 7, chat: { id: 4242 } } } });
+      const jobBy = async (text) => until(async () => ((await A('GET', '/api/state')).body.tickets || []).find((x) => x.text === text), 6000);
+      ok('linking sets the bot\'s command menu', tg.calls.some((c) => c.method === 'setMyCommands' && (c.body.commands || []).some((x) => x.command === 'new')), 'no setMyCommands');
+      say('/new telegram started job');
+      const tj = await jobBy('telegram started job');
+      const card = tj && await until(async () => sent(new RegExp(`#${tj.n} telegram started job`)).find((c) => JSON.stringify(c.body.reply_markup || {}).includes(`j|${tj.id}|`)), 4000);
+      ok('/new starts a job and answers with its card and buttons', tj && card, tj ? 'no card' : 'no job');
+      if (tj) {
+        say(`#${tj.n} telegram follow-up`);
+        const fu = await until(async () => ((await A('GET', '/api/state')).body.tickets.find((x) => x.id === tj.id).thread || []).some((e) => e.kind === 'followup' && e.text === 'telegram follow-up'), 4000);
+        ok('"#N message" follows up on that job', fu, 'no follow-up');
+        press(`j|${tj.id}|pause`);
+        const paused = await until(async () => (await A('GET', '/api/state')).body.tickets.find((x) => x.id === tj.id).status === 'paused', 4000);
+        press(`j|${tj.id}|resume`);
+        const resumed = await until(async () => (await A('GET', '/api/state')).body.tickets.find((x) => x.id === tj.id).status === 'open', 4000);
+        ok('Pause and Resume on the job card work', paused && resumed, `paused ${paused} resumed ${resumed}`);
+        press(`j|${tj.id}|stop`);
+        await sleep(800);
+        ok('Stop on the job card asks first', (await A('GET', '/api/state')).body.tickets.find((x) => x.id === tj.id).status === 'open' &&
+          tg.calls.some((c) => c.method === 'editMessageText' && JSON.stringify(c.body.reply_markup || {}).includes(`j|${tj.id}|stopyes`)), 'stopped without asking');
+        press(`j|${tj.id}|stopyes`);
+        ok('…and stops the job once confirmed', await until(async () => (await A('GET', '/api/state')).body.tickets.find((x) => x.id === tj.id).status === 'stopped', 4000), 'not stopped');
+      }
+      say('a plain telegram message');
+      const offer = await until(async () => sent(/Start this as a new job\?/)[0], 4000);
+      const go = offer && offer.body.reply_markup.inline_keyboard.flat().find((x) => /\|go$/.test(x.callback_data));
+      ok('a plain message is offered as a new job, not started', offer && go && !((await A('GET', '/api/state')).body.tickets || []).some((x) => x.text === 'a plain telegram message'), 'no offer');
+      if (go) {
+        press(go.callback_data);
+        const pj = await jobBy('a plain telegram message');
+        ok('…and Start the job starts it', pj, 'not started');
+        if (pj) await A('POST', `/api/tickets/${pj.id}/stop`);
+      }
+      for (const [cmd, re] of [['/ps', /Processes/], ['/usage', /Usage/], ['/jobs', /In progress|Nothing is in progress/], ['/help', /what I can do/]]) {
+        say(cmd);
+        ok(`${cmd} answers`, await until(async () => sent(re).length, 4000), 'no answer');
+      }
+      const back = await until(async () => ((await A('GET', '/api/state')).body.agents || []).filter((a) => a.resident).every((a) => a.status !== 'offline'), 15000);
+      ok('every lead is back in the office after jobs it was routing were stopped', back, JSON.stringify(((await A('GET', '/api/state')).body.agents || []).filter((a) => a.resident).map((a) => [a.id, a.status, a.current && a.current.ticketId, (a.inbox || []).length])));
       const off = (await A('DELETE', '/api/telegram')).body || {};
       ok('Telegram can be disconnected', off.configured === false && off.linked === false, JSON.stringify(off));
     }
@@ -387,12 +465,17 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     ok('undo puts the file back', fs.readFileSync(target, 'utf8') === 'before\n', fs.readFileSync(target, 'utf8'));
     const fbLead = ((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).feedback || [];
     ok('undoing a job\'s changes asks its lead for a lesson', fbLead.some((f) => /add_lesson/.test(f.text)), JSON.stringify(fbLead).slice(0, 200));
-    const les = (await A('POST', '/api/lessons', { agentId: lead, text: 'Check the target file is the one the user meant before editing.' })).body || {};
+    const les = (await A('POST', '/api/lessons', { agentId: lead, text: 'Check the target file is the one the user meant before editing.', reasoning: 'I edited the wrong file and the user undid it.' })).body || {};
     const draft = (((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).lessonDrafts || [])[0];
     const keepL = draft ? (await A('POST', `/api/agents/${lead}/lesson-drafts/${draft.id}`, {})).code : 0;
     const withLesson = ((await A('GET', '/api/state')).body.agents.find((a) => a.id === lead) || {}).lessons || [];
     const delL = withLesson[0] ? (await A('DELETE', `/api/agents/${lead}/lessons/${withLesson[0].id}`)).code : 0;
-    ok('an agent\'s lesson waits for review; the user keeps it through the API, and can remove it later', /review/.test(les.message || '') && keepL === 200 && withLesson.length === 1 && delL === 200, JSON.stringify({ les, draft, keepL, withLesson, delL }));
+    ok('an agent\'s lesson waits for review with its reasoning; the user keeps it through the API, and can remove it later', /review/.test(les.message || '') && draft && /wrong file/.test(draft.reason || '') && keepL === 200 && withLesson.length === 1 && delL === 200, JSON.stringify({ les, draft, keepL, withLesson, delL }));
+    const stAdd = (await A('POST', `/api/agents/${lead}/standing`, { text: 'When you fix a bug, end with a short brief on why this fix and a commit message like the recent ones.' })).body || {};
+    const stPrompt = stAdd.standing || [];
+    const stDel = stPrompt[0] ? (await A('DELETE', `/api/agents/${lead}/standing/${stPrompt[0].id}`)).body || {} : {};
+    const stEmpty = (await A('POST', `/api/agents/${lead}/standing`, { text: '  ' })).code;
+    ok('a lead keeps a standing instruction from the user until it is removed', stPrompt.length === 1 && Array.isArray(stDel.standing) && stDel.standing.length === 0 && stEmpty === 400, JSON.stringify({ stAdd, stDel, stEmpty }).slice(0, 300));
     ok('undoing a job\'s changes is recorded as a signal for model choice', ((await A('GET', '/api/state')).body.tickets.find((t) => t.id === t1.id) || {}).undone >= 1, 'not recorded');
     const tl = (await A('GET', `/api/tickets/${t1.id}/timeline`)).body || {};
     ok('the job timeline lists who worked on it', Array.isArray(tl.rows) && tl.rows.length > 0, JSON.stringify(tl).slice(0, 200));
@@ -420,6 +503,30 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     const asked = (await A('POST', '/api/ask-office', { question: 'What did Renko do today?' })).body || {};
     const askedEmpty = (await A('POST', '/api/ask-office', { question: '  ' })).body || {};
     ok('Ask the office answers from gathered facts, and refuses an empty question', asked.answer === 'ok' && Array.isArray(asked.sources) && asked.factsChars > 100 && askedEmpty.error, JSON.stringify({ asked, askedEmpty }).slice(0, 300));
+    // The office for outside Claude Code sessions (lib/mcp-office.js): read-only tools over MCP, no model called.
+    {
+      const mcp = spawn(process.execPath, [path.join(office, 'lib', 'mcp-office.js')], { env: { ...process.env, WORKPLACE_PORT: String(O.port) }, stdio: ['pipe', 'pipe', 'ignore'] });
+      const replies = new Map();
+      let buf = '';
+      mcp.stdout.on('data', (c) => { buf += c; let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); try { const m = JSON.parse(line); replies.set(m.id, m); } catch {} } });
+      const rpc = async (id, method, params) => { mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); await until(() => replies.has(id), 8000); return replies.get(id) || {}; };
+      const text = (m) => (((m.result || {}).content || [])[0] || {}).text || '';
+      await rpc(1, 'initialize', { protocolVersion: '2024-11-05' });
+      const names = (((await rpc(2, 'tools/list')).result || {}).tools || []).map((x) => x.name);
+      const recall = await rpc(3, 'tools/call', { name: 'office_recall', arguments: { query: 'what is Renko working on' } });
+      const proj = await rpc(4, 'tools/call', { name: 'office_project', arguments: { name: 'no such project' } });
+      const job = await rpc(5, 'tools/call', { name: 'office_job', arguments: { n: 99999 } });
+      mcp.kill();
+      ok('outside Claude Code sessions get read-only office tools over MCP: recall from gathered facts, projects, jobs', names.join() === 'office_recall,office_job,office_project' &&
+        /The office now/.test(text(recall)) && !recall.result.isError && proj.result.isError && /Office projects:/.test(text(proj)) && job.result.isError && /No job/.test(text(job)), JSON.stringify({ names, recall: text(recall).slice(0, 120), proj: text(proj).slice(0, 120), job: text(job) }));
+      const down = spawn(process.execPath, [path.join(office, 'lib', 'mcp-office.js')], { env: { ...process.env, WORKPLACE_PORT: String(await freePort()) }, stdio: ['pipe', 'pipe', 'ignore'] });
+      let downOut = '';
+      down.stdout.on('data', (c) => (downOut += c));
+      down.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'office_recall', arguments: { query: 'x' } } }) + '\n');
+      await until(() => /not running/.test(downOut), 5000);
+      down.kill();
+      ok('with the office stopped, the MCP tools say how to start it instead of failing obscurely', /not running/.test(downOut), downOut.slice(0, 200));
+    }
     const team = (await A('POST', '/api/config/team', { persona: 'Vera', room: 'Research Desk', description: 'Owns research questions.' })).body || {};
     ok('a new team can be created from Teams & roles', team.ok && !team.error, JSON.stringify(team).slice(0, 200));
     // The new-lead wizard: a draft from the user's words (the stand-in model answers "ok", so the template is used), then a full lead.
@@ -511,8 +618,11 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
       ok('with leadTwins 0 a job waits in the lead\'s inbox and shows what it is queued behind',
         set0.leadTwins === 0 && q && q.q.position === 1 && q.q.behindTicketN === q.n1 && q.q.agentPersona === q.lead.persona && q.lead.inboxTickets.includes(q.n3),
         JSON.stringify(q && { q: q.q, n1: q.n1, n3: q.n3, inbox: q.lead.inboxTickets, set0: set0.leadTwins }));
-      await A('POST', '/api/office-settings', { leadTwins: 1 });
       for (const j of [j1, j2, j3]) if (j.id) await A('POST', `/api/tickets/${j.id}/stop`);
+      // With its job stopped and no second desks allowed, the twin retires, and says when and why (not just "offline").
+      const gone = await until(async () => { const s = (await A('GET', '/api/state')).body; const x = s.agents.find((y) => y.twinOf === lead); return x && x.retired && !x.retiring && x.status === 'offline' ? x : null; }, 40000);
+      ok('a twin with nothing to do retires with when and why, and stops retiring once its process is gone', gone && gone.retired.t && /second desks/.test(gone.retired.why || ''), JSON.stringify(gone && { retired: gone.retired, retiring: gone.retiring, status: gone.status }));
+      await A('POST', '/api/office-settings', { leadTwins: 1 });
     }
     ok('a lead can be given a fresh session', (await A('POST', `/api/agents/${lead}/refresh`)).code === 200, 'refused');
 
