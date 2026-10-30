@@ -807,3 +807,7 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 button.updchip.go { border: 1px solid rgba(var(--accent-rgb), .30); font: inherit; font-size: 12px; cursor: pointer; }
 button.updchip.go:hover { background: rgba(var(--accent-rgb), .26); }
 button.updchip.go b { font-weight: 600; color: var(--accent); }
+
+/* A wide table inside a card scrolls sideways in the card; its sticky header can't spill over the next card. */
+.tscroll { overflow-x: auto; max-width: 100%; }
+.card table.ps th { position: static; }

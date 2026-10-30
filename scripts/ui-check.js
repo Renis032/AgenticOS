@@ -75,7 +75,7 @@ async function check(opt) {
     const now = await call(port, T, 'GET', '/api/state');
     const waiting = (now.tickets || []).find((t) => t.plan && t.plan.status === 'pending') || job;
     const done = (state.tickets || []).filter((t) => t.status === 'done' && t.answer).sort((a, b) => b.createdAt - a.createdAt)[0];
-    const apps = (opt.quick ? ['today', 'brain', 'processes', 'jobs', 'projects', 'newjob'] : ['today', 'brain', 'processes', 'jobs', 'newjob', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings', 'inbox']);
+    const apps = (opt.quick ? ['today', 'brain', 'processes', 'jobs', 'projects', 'newjob'] : ['today', 'brain', 'processes', 'jobs', 'newjob', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings', 'inbox', 'review']);
     const steps = [
       ...apps.map((a) => ({ name: `app-${a}`, js: `openApp('${a}')`, wait: a === 'tokens' || a === 'usage' ? 1800 : 800 })),
       { name: 'job-waiting', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'thread'; openApp('jobs')`, wait: 1000 },
@@ -166,6 +166,18 @@ async function check(opt) {
         }, 700);
       })()`, wait: 1100 },
       // The eval grid, with runs that pass, fail, change instructions and could not run.
+      // A table header inside a card must scroll away with its card, not float over the page (ARMS routing table).
+      { name: 'arms-scrolled-table', js: `(() => {
+        openApp('arms');
+        setTimeout(() => {
+          const body = document.getElementById('armsBody');
+          if (body && !body.querySelector('.card table.ps')) body.insertAdjacentHTML('beforeend', '<div class="cards" style="margin-top:14px"><div class="card"><h3>S2 · Model routing</h3><table class="ps" style="table-layout:auto;margin:8px 0"><thead><tr><th>How picks turned out (30 d)</th><th class="num">Tasks</th></tr></thead><tbody>' + Array.from({ length: 8 }, (_, i) => '<tr><td>row ' + i + '</td><td class="num">' + i + '</td></tr>').join('') + '</tbody></table>' + '<div style="height:600px"></div></div><div class="card"><h3>M2 · Cache</h3><div style="height:900px"></div></div></div>');
+          const th = body.querySelector('.card table.ps th');
+          const page = th.closest('.page') || body;
+          page.scrollTop = th.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop + 120;
+          setTimeout(() => { const t = th.closest('table').getBoundingClientRect(), h = th.getBoundingClientRect(); if (h.top < t.top - 1 || h.bottom > t.bottom + 1) __uiErrors.push('a card table header floats outside its table'); }, 200);
+        }, 2500);
+      })()`, wait: 3200 },
       { name: 'health-evals', js: `(() => {
         openApp('health');
         const r = (d, res, extra) => ({ t: Date.now() - d * 86400000, ms: 190000, model: 'haiku', cost: 0.06, results: res.map(([name, pass]) => ({ name, pass, detail: pass ? '' : 'tools: Read, Read' })), passed: res.filter((x) => x[1]).length, total: res.length, ...extra });

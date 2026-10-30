@@ -15,6 +15,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   Preferences → Notifications → *Ask me to rate answers* to turn them off.
 - The *Update ready* chip in the title bar is one button: click it and the office restarts onto the new version as soon as
   every agent is idle (after checking it), and the window reloads by itself.
+- Review opens inside the main window instead of a separate one, in the window's theme; its *open in Agentic OS*
+  link opens the job there.
 - Every toast has an × to dismiss it (on an undo toast it runs the action now).
 - Undo/Redo in every message box (job thread, new job, agent chat, team chat, Ask the office): buttons, Ctrl+Z and
   Ctrl+Shift+Z / Ctrl+Y. It also brings back a message the box cleared on Send.
@@ -78,6 +80,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   and respect for the system's reduce-motion setting.
 
 ### Fixed
+- ARMS: the "How picks turned out" table header no longer floats over the next card when the page scrolls; the
+  Model routing card is full width when it has the table, and a table header inside a card no longer sticks.
 - A retired second desk stayed in Processes for good, shown as *down* and *restarting…* like a crashed lead. It now
   shows **retiring…** while its process stops, then **retired** with when and why, and leaves the tree after three
   minutes (`lib/residents.js`, `lib/state.js`, `public/ui/os/processes.js`).

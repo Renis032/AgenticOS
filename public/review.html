@@ -64,7 +64,7 @@ async function open(jobId) {
   rev.comments = rev.comments || { answer: '', files: {} };
   const changes = (current.changes || []).length ? await api('GET', `/api/tickets/${jobId}/changes`).catch(() => []) : [];
   const main = document.getElementById('main');
-  main.innerHTML = `<div class="head"><h2>#${current.n} ${esc(current.title)}</h2><span class="p-pill ok">done</span><span style="color:var(--muted)">${money(current.costUsd)} · ${ago(current.closedAt || current.createdAt)}</span><a href="/#jobs&job=${current.id}" target="_blank" style="color:var(--run)">open in Agentic OS</a></div>`;
+  main.innerHTML = `<div class="head"><h2>#${current.n} ${esc(current.title)}</h2><span class="p-pill ok">done</span><span style="color:var(--muted)">${money(current.costUsd)} · ${ago(current.closedAt || current.createdAt)}</span><a href="/#jobs&job=${current.id}" target="_blank" data-job="${current.id}" style="color:var(--run)">open in Agentic OS</a></div>`;
   main.appendChild(reviewCard({ title: 'Answer', pill: ['answer', 'info'], body: `<div class="p-md">${md(current.answer)}</div>`, comment: rev.comments.answer, placeholder: 'What is wrong or missing in the answer?', onComment: (v) => { rev.comments.answer = v; persist(); } }));
   for (const c of changes.filter((x) => x.state !== 'unchanged')) {
     main.appendChild(reviewCard({ title: c.path, meta: `+${c.added} −${c.removed}`, pill: [c.state, c.state === 'deleted' ? 'bad' : 'ok'], body: diff(c.diff), comment: rev.comments.files[c.path] || '', placeholder: 'Comment on this change…', onComment: (v) => { rev.comments.files[c.path] = v; persist(); } }));
@@ -84,6 +84,9 @@ function commentsText() {
   return lines.join('\n');
 }
 document.addEventListener('click', async (e) => {
+  // Inside the Agentic OS window, the job opens there instead of in a new window.
+  const j = e.target.closest('a[data-job]');
+  if (j && window.parent !== window && window.parent.openJobFromReview) { e.preventDefault(); return window.parent.openJobFromReview(j.dataset.job); }
   const q = e.target.closest('.q');
   if (q) return open(q.dataset.id);
   const f = e.target.closest('[data-f]');

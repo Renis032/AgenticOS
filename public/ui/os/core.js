@@ -219,7 +219,7 @@ const APP_LIST = [
   { id: 'usage', ic: 'usage', name: 'Usage', key: 'u', grp: 'Insights', fold: true },
   { id: 'tokens', ic: 'tokens', name: 'Tokens', key: 'k' },
   { id: 'health', ic: 'health', name: 'Health', key: 'h' },
-  { id: 'review', ic: 'review', name: 'Review', key: 'v', external: '/review' },
+  { id: 'review', ic: 'review', name: 'Review', key: 'v' },
   { id: 'recos', ic: 'recos', name: 'Recos', key: 'c' },
   { id: 'arms', ic: 'arms', name: 'ARMS', key: 'a', grp: 'Tools', fold: true },
   { id: 'skills', ic: 'skills', name: 'Skills', key: 's' },

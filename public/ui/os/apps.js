@@ -366,6 +366,30 @@ APPS.usage = {
 };
 
 // ================================================================ app: Health
+// ================================================================ app: Review
+// The review page (public/review.html) inside the window rather than a separate one. It takes the window's theme
+// colours and font, and its "open in Agentic OS" link opens the job here.
+const REVIEW_VARS = ['--bg', '--panel', '--panel2', '--panel3', '--line', '--line2', '--text', '--muted', '--faint', '--accent', '--run', '--deleg', '--done', '--fail', '--stop', '--code', '--sel', '--mono'];
+function reviewTheme() {
+  const f = $('#rvFrame'), doc = f && f.contentDocument;
+  if (!doc || !doc.body) return;
+  const cs = getComputedStyle(document.documentElement), bs = getComputedStyle(document.body);
+  for (const v of REVIEW_VARS) { const x = cs.getPropertyValue(v).trim(); if (x) doc.documentElement.style.setProperty(v, x); }
+  doc.body.style.fontFamily = bs.fontFamily;
+  S.rvTheme = themeStamp();
+}
+const themeStamp = () => { const cs = getComputedStyle(document.documentElement); return cs.getPropertyValue('--bg') + cs.getPropertyValue('--accent') + cs.getPropertyValue('--text'); };
+window.openJobFromReview = (id) => { if (S.tickets[id]) { S.job = id; S.jtab = 'thread'; openApp('jobs'); } };
+APPS.review = {
+  mount(root) {
+    root.innerHTML = `<div class="app"><iframe id="rvFrame" title="Review" src="/review${S.rvJob ? '#' + encodeURIComponent(S.rvJob) : ''}" style="flex:1;width:100%;height:100%;border:0;background:var(--bg)"></iframe></div>`;
+    S.rvJob = null;
+    $('#rvFrame').onload = reviewTheme;
+  },
+  update() {
+    if (S.rvTheme !== themeStamp()) reviewTheme();
+  },
+};
 APPS.health = {
   mount(root) { root.innerHTML = `<div class="app"><div class="toolbar"><h1>Health</h1><span class="hint" id="hSub"></span><span class="sp"></span><button class="btn sm" data-act="healthRefresh">Refresh</button><button class="btn pri sm" data-act="selftest">Run self-test</button></div><div class="page" id="hBody"></div></div>`; S.hKey = null; S.evals = null; refreshHealth(); },
   update() {
