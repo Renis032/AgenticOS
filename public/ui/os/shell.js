@@ -382,6 +382,7 @@ const PREF_BODY = {
     pGroup('Message box', [
       prow('Send with', 'The other key combination adds a new line.', pSeg('sendKey', 'enter', [['enter', 'Enter'], ['ctrl', 'Ctrl+Enter']])),
       prow('Edit a queued message', 'Messages send right away. While the agent has not picked yours up yet, press ↑ in the empty message box to take it back and edit it.', '<kbd>↑</kbd>'),
+      prow('Send a queued message now', 'A queued message waits for the agent to finish its current turn. Click <b>send now</b> on it: if the agent is working on this job it reads your message after its next step; otherwise it jumps to the front of the line.', ''),
     ]) +
     pGroup('Conversation', [
       prow('Show behind-the-scenes steps open', 'Assignments, reports and teammate chat are folded by default.', pSwitch('bgOpen', '0')),

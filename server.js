@@ -139,9 +139,9 @@ const { PERSONAS, baseAgent, startResident, enqueueResident, pumpResident, resta
 });
 // ---------------------------------------------------------------- tickets (lib/tickets.js)
 
-const { newTicket, stopTicket, cleanAttachments, attachText, saveUpload, rawBody, createTicket, dispatchTicket, runSchedule, askUser, answerUser, followUp, recallFollowup, rateTicket, searchTickets, searchText, pauseTicket, resumeTicket } = require('./lib/tickets').install({
+const { newTicket, stopTicket, cleanAttachments, attachText, saveUpload, rawBody, createTicket, dispatchTicket, runSchedule, askUser, answerUser, followUp, recallFollowup, sendFollowupNow, rateTicket, searchTickets, searchText, pauseTicket, resumeTicket } = require('./lib/tickets').install({
   ACTIVE, EFFORTS, UPLOADS, addEvent, agents, broadcast, checkHold, enqueueResident, fs, giveFeedback, limits, newId, nextTicketN, now, path, planWaiters,
-  probeLimits, pumpResident, quickEffort, readJson, releaseBudget, restartResident, routeByRules, thread, ticketBudget, tickets, touch, touchTicket, userAskWaiters,
+  mail, probeLimits, pumpResident, quickEffort, readJson, releaseBudget, restartResident, routeByRules, thread, ticketBudget, tickets, touch, touchTicket, userAskWaiters,
   endAccess: (...a) => endAccess(...a), endCommands: (...a) => endCommands(...a), lessons: live(() => lessons),
   maybeWeeklyReviews: (...a) => maybeWeeklyReviews(...a), stopTree: (...a) => stopTree(...a), ticketOfAgent: (...a) => ticketOfAgent(...a),
   verify: live(() => verify), workspaces: live(() => workspaces), briefExtras: (...a) => briefExtras(...a),
@@ -330,7 +330,8 @@ const { ask, colleagues, sendMail, takeUnread, officeNote } = require('./lib/mai
   procs,
   thread: (...a) => thread(...a),
   ticketOfAgent: (...a) => ticketOfAgent(...a),
-  tickets
+  tickets,
+  touch,
 });
 
 // ---------------------------------------------------------------- shared files (lib/shared-files.js)
@@ -583,7 +584,7 @@ const shutdown = () => {
 const routeModules = [
   require('./lib/routes-tickets').install({
     UPLOADS, agents, askUser, broadcast, changesOf, cleanAttachments, createTicket, decidePlan, dispatchTicket, followUp, fs, lessons,
-    path, pauseTicket, proposePlan, rateTicket, rawBody, readJson, recallFollowup, releaseBudget, resumeTicket, revertChanges, saveState,
+    path, pauseTicket, proposePlan, rateTicket, rawBody, readJson, recallFollowup, sendFollowupNow, releaseBudget, resumeTicket, revertChanges, saveState,
     saveUpload, searchText, searchTickets, stopTicket, thread, ticketBudget, tickets, timelineOf, touch, touchTicket,
   }),
   require('./lib/routes-agents').install({

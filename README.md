@@ -97,7 +97,7 @@ Run `./agentos setup` again any time.
 
 - **Start a job**: `N` (or Ctrl+N), write the task, pick a project or let routing decide. Name a personal project
   (e.g. "continue recipe-box") and the lead starts from where its last chat ended.
-- **Talk to it** in the job: Enter sends; ↑ in the empty box takes back a message the agent hasn't picked up yet.
+- **Talk to it** in the job: Enter sends; ↑ in the empty box takes back a message the agent hasn't picked up yet, and *send now* on it delivers it mid-task.
   The strip under the conversation shows who is working on what and what it has cost so far.
 - **When an agent needs you** (a question, a plan, a command to run) the job says *needs you*, you get a notification,
   and reminders follow if it waits. Questions come with one-click answers (keys 1–5). Plans under an amount you choose

@@ -84,8 +84,11 @@ function wireUndo(box, key) {
   if (!box) return;
   let h = TEXT_HIST.get(key);
   if (!h) TEXT_HIST.set(key, (h = { past: [], future: [], last: box.value, at: 0 }));
-  else if (h.last !== box.value) histNote(box, false, h);
-  if (!box._hist) {
+  const fresh = !box._hist;
+  // Set before histNote: it ends in histBtns, which reads box._hist (a re-rendered box has none yet).
+  box._hist = h;
+  if (h.last !== box.value) histNote(box, false, h);
+  if (fresh) {
     box.addEventListener('input', () => histNote(box, true));
     box.addEventListener('keydown', (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -93,7 +96,6 @@ function wireUndo(box, key) {
       if (k === 'z' || k === 'y') { e.preventDefault(); histStep(box, k === 'z' && !e.shiftKey); }
     });
   }
-  box._hist = h;
   histBtns(box);
 }
 // Typing within a second of the last keystroke is one step; a change the page made is always its own step.
@@ -467,6 +469,7 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
     showSendBar();
   },
   sendNow: () => flushSend(),
+  sendQueuedNow: () => api('POST', `/api/tickets/${S.job}/send-now`).then((r) => notifyQuiet(r.error || r.message)).catch((e) => alert(e.message)),
   recallMsg: async () => {
     const t = S.tickets[S.job];
     if (!t) return;

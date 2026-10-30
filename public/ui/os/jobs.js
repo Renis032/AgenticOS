@@ -125,7 +125,7 @@ function entryHtml(list, t) {
     const files = (e.attachments || []).length ? `<div class="files">${e.attachments.map((p) => fileChip(p)).join('')}</div>` : '';
     switch (e.kind) {
       case 'user': return `<div class="ev user"><div class="h">You${e.to ? ' → ' + esc(who(e.to)) : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
-      case 'followup': if (e.fid && e.fid === queuedFid(t)) return `<div class="ev user queued"><div class="h">You · follow-up · <span class="qtag">queued</span> <a data-act="recallMsg">edit (↑)</a>${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
+      case 'followup': if (e.fid && e.fid === queuedFid(t)) return `<div class="ev user queued"><div class="h">You · follow-up · <span class="qtag">queued</span> <a data-act="recallMsg">edit (↑)</a> · <a data-act="sendQueuedNow" title="Deliver it now instead of after the agent's current turn">send now</a>${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
         return `<div class="ev user"><div class="h">You · follow-up${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
       case 'assign': return `<div class="ev assign"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))} · assigned${ts}</div><details><summary>brief</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
       case 'team': return `<div class="ev team"><div class="h">${esc(who(e.from))} started${ts}</div><div class="b">${esc(e.text)}</div></div>`;

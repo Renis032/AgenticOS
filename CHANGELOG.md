@@ -18,6 +18,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Review opens inside the main window instead of a separate one, in the window's theme; its *open in Agentic OS*
   link opens the job there.
 - Every toast has an × to dismiss it (on an undo toast it runs the action now).
+- **Send now** on a queued follow-up: if its agent is busy on that job, the message reaches it after its next step
+  instead of after the whole turn; if the agent is on another job, it moves to the front of the line.
+  API: `POST /api/tickets/<id>/send-now`.
 - Undo/Redo in every message box (job thread, new job, agent chat, team chat, Ask the office): buttons, Ctrl+Z and
   Ctrl+Shift+Z / Ctrl+Y. It also brings back a message the box cleared on Send.
 - Standing instructions for a lead: in Processes, **Keep as instruction** saves something you tell a lead once
