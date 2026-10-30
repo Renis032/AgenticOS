@@ -56,7 +56,7 @@ function notify(kind, title, text, ticketId) {
   if (NATIVE && pref('notify', '1') === '1') native('notify', { kind, title, body: short(text || '', 280), ticket: ticketId || null });
   const el = document.createElement('div');
   el.className = 'toast';
-  el.innerHTML = `<span class="tic k-${esc(kind)}">${ic(NOTE_ICON[kind] || 'info')}</span><div><b>${esc(title)}</b><span class="hint">${esc(short(text || '', 150))}</span>${kind === 'answer' && ticketId && S.tickets[ticketId] ? `<div class="tacts"><button class="btn sm pri" data-t="open">Open</button><button class="btn sm" data-t="1" title="Good answer">${thumb(true)}</button><button class="btn sm" data-t="-1" title="Not good">${thumb(false)}</button></div>` : ''}</div>`;
+  el.innerHTML = `<span class="tic k-${esc(kind)}">${ic(NOTE_ICON[kind] || 'info')}</span><div><b>${esc(title)}</b><span class="hint">${esc(short(text || '', 150))}</span>${kind === 'answer' && ticketId && S.tickets[ticketId] ? `<div class="tacts"><button class="btn sm pri" data-t="open">Open</button>${rateAsked(S.tickets[ticketId]) ? `<button class="btn sm" data-t="1" title="Good answer">${thumb(true)}</button><button class="btn sm" data-t="-1" title="Not good">${thumb(false)}</button>` : ''}</div>` : ''}</div>`;
   // A finished job's toast rates it in one click (the lead gets it as feedback); Open or anywhere else opens the job.
   el.addEventListener('click', (e) => {
     const b = e.target.closest('[data-t]');
@@ -65,12 +65,60 @@ function notify(kind, title, text, ticketId) {
     api('POST', `/api/tickets/${ticketId}/rate`, { score: Number(b.dataset.t), note: '' }).then(() => notifyQuiet(Number(b.dataset.t) > 0 ? 'Thanks for rating it good.' : 'Rated not good. Open the job to say what was missing.')).catch((er) => alert(er.message));
     el.classList.add('out'); setTimeout(() => el.remove(), 200);
   }, true);
-  el.onclick = () => { if (ticketId && S.tickets[ticketId]) { S.job = ticketId; openApp('jobs'); } else if (kind === 'limit') openApp('usage'); else if (kind === 'lesson') openApp('today'); else if (/proposes a skill/.test(title)) openApp('skills'); el.remove(); };
+  el.onclick = () => { if (ticketId && S.tickets[ticketId]) { S.job = ticketId; openApp('jobs'); } else if (kind === 'limit') openApp('usage'); else if (kind === 'lesson') openApp('inbox'); else if (/proposes a skill/.test(title)) openApp('skills'); el.remove(); };
+  toastX(el);
   $('#toasts').appendChild(el);
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 200); }, Number(pref('toastSecs', '8')) * 1000);
   if (!NATIVE && pref('notify', '0') === '1' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
     try { const n = new Notification(title, { body: short(text || '', 200), tag: ticketId || kind, icon: '/icon.svg' }); n.onclick = () => { window.focus(); if (ticketId) { S.job = ticketId; openApp('jobs'); } }; } catch {}
   }
+}
+// Undo/Redo in the message boxes. The browser's own undo forgets anything the page sets (Send clearing the box, a
+// recalled message), so each box keeps its own history per job, agent or team while the window is open:
+// Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y, or the buttons from undoBtns().
+const TEXT_HIST = new Map();
+function undoBtns(id) {
+  return `<button class="btn sm ibtn" data-act="tUndo" data-for="${id}" title="Undo · Ctrl+Z" aria-label="Undo" disabled>${ic('undo')}</button><button class="btn sm ibtn" data-act="tRedo" data-for="${id}" title="Redo · Ctrl+Shift+Z" aria-label="Redo" disabled>${ic('redo')}</button>`;
+}
+function wireUndo(box, key) {
+  if (!box) return;
+  let h = TEXT_HIST.get(key);
+  if (!h) TEXT_HIST.set(key, (h = { past: [], future: [], last: box.value, at: 0 }));
+  else if (h.last !== box.value) histNote(box, false, h);
+  if (!box._hist) {
+    box.addEventListener('input', () => histNote(box, true));
+    box.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' || k === 'y') { e.preventDefault(); histStep(box, k === 'z' && !e.shiftKey); }
+    });
+  }
+  box._hist = h;
+  histBtns(box);
+}
+// Typing within a second of the last keystroke is one step; a change the page made is always its own step.
+function histNote(box, typing, h = box._hist) {
+  if (box.value === h.last) return;
+  const now = Date.now();
+  if (!typing || now - h.at > 1000 || !h.past.length) h.past.push(h.last);
+  if (h.past.length > 200) h.past.shift();
+  h.last = box.value; h.future = []; h.at = typing ? now : 0;
+  histBtns(box);
+}
+function histStep(box, back) {
+  const h = box && box._hist;
+  if (!h) return;
+  histNote(box, false);
+  const from = back ? h.past : h.future, to = back ? h.future : h.past;
+  if (!from.length) return;
+  to.push(box.value); box.value = h.last = from.pop(); h.at = 0;
+  box.dispatchEvent(new Event('input'));
+  box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+  histBtns(box);
+}
+function histBtns(box) {
+  const h = box._hist;
+  for (const b of document.querySelectorAll(`[data-for="${box.id}"]`)) b.disabled = b.dataset.act === 'tUndo' ? !h.past.length && box.value === h.last : !h.future.length;
 }
 let tipEl = null, tipTimer = null, tipXY = [0, 0];
 document.addEventListener('mouseover', (ev) => { const t = ev.target.closest && ev.target.closest('[title]'); if (t && t.title) { t.dataset.tip = t.title; t.removeAttribute('title'); } }, true);
@@ -222,6 +270,13 @@ function jobKeys(e) {
   }
   return false;
 }
+// Talking a lesson over: Enter sends, Escape closes the chat box.
+document.addEventListener('keydown', (e) => {
+  const el = e.target.closest && e.target.closest('.lcin');
+  if (!el) return;
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); ACT.lessonSay(el.dataset); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); S.lessonChat = null; lessonRedraw(); }
+}, true);
 // Editing a lesson draft: Enter keeps it, Escape cancels the edit.
 document.addEventListener('keydown', (e) => {
   const el = e.target.closest && e.target.closest('.lrin');
@@ -280,6 +335,22 @@ document.addEventListener('keydown', (e) => {
 
 // ================================================================ actions (clicks)
 const ACT = {
+  rateSkip: (d) => { skipRating([d.id]); notifyQuiet('Won\'t ask to rate this job.'); },
+  rateSkipAll: (d, ev) => { if (ev) ev.stopPropagation(); const ids = Object.values(S.tickets).filter((t) => t.status === 'done' && t.answer && !t.rating).map((t) => t.id); skipRating(ids); notifyQuiet(`Cleared ${ids.length} rating request${ids.length === 1 ? '' : 's'}.`); },
+  lessonChat: (d) => { S.lessonChat = S.lessonChat === d.lid ? null : d.lid; lessonRedraw(); setTimeout(() => { const i = $(`#lc-${d.lid}`); if (i) i.focus(); }, 0); },
+  lessonSay: async (d) => {
+    const inp = $(`#lc-${d.lid}`); const text = inp && inp.value.trim();
+    if (!text || S.lessonBusy) return;
+    S.lessonBusy = { lid: d.lid, text }; lessonRedraw();
+    const r = await api('POST', `/api/agents/${d.id}/lesson-drafts/${d.lid}/chat`, { text }).catch((e) => ({ error: e.message }));
+    S.lessonBusy = null;
+    const a = S.agents[d.id];
+    if (r.draft && a) a.lessonDrafts = (a.lessonDrafts || []).map((l) => (l.id === d.lid ? r.draft : l));
+    if (r.error) notify('warn', 'Lesson chat', r.error);
+    lessonRedraw(); setTimeout(() => { const i = $(`#lc-${d.lid}`); if (i) i.focus(); }, 0);
+  },
+  tUndo: (d) => histStep($('#' + d.for), true),
+  tRedo: (d) => histStep($('#' + d.for), false),
   armsTick: (d, ev) => api('POST', '/api/arms/tick', { id: d.id, done: ev.target.checked }),
   armsDiff: async () => { S.diffOpen = !S.diffOpen; if (S.diffOpen) { S.mapDiff = (await api('GET', '/api/arms/proposal/memory-map')).diff; } S.armsKey = null; APPS.arms.update(); },
   armsApprove: async (d) => {

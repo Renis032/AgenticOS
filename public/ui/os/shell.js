@@ -66,8 +66,8 @@ function renderTitlebar(running, open) {
   const upd = S.down ? `<span class="updchip warn">${ic('reload')}Reconnecting…</span>`
     : R.pending && R.pending.checking ? `<span class="updchip on" data-tip="The new version is being tested in a throwaway copy before the office switches to it.">${ic('reload')}${esc(R.pending.checking)} <a data-act="restartCancel">Cancel</a></span>`
     : R.pending ? `<span class="updchip on" data-tip="New work waits; running work finishes first. The window reloads by itself.">${ic('reload')}Restarting when idle${R.busy && R.busy.length ? ` · waiting for ${esc(R.busy.slice(0, 3).join(', '))}` : '…'} <a data-act="restartCancel">Cancel</a></span>`
-    : R.codeChanged ? `<span class="updchip">${ic('reload')}Update ready <a data-act="restartIdle">Restart when idle</a></span>`
-    : R.uiStamp && S.uiAtLoad && R.uiStamp > S.uiAtLoad ? `<span class="updchip">${ic('reload')}Update ready <a data-act="reloadUi">Reload</a></span>` : '';
+    : R.codeChanged ? `<button class="updchip go" data-act="restartIdle" data-tip="Click to update: the office waits until every agent is idle, checks the new version, then restarts. The window reloads by itself.">${ic('reload')}Update ready <b>Restart when idle</b></button>`
+    : R.uiStamp && S.uiAtLoad && R.uiStamp > S.uiAtLoad ? `<button class="updchip go" data-act="reloadUi" data-tip="Click to reload the window onto the new version. Agents keep working.">${ic('reload')}Update ready <b>Reload</b></button>` : '';
   if ($('#upd').dataset.h !== upd) { $('#upd').innerHTML = upd; $('#upd').dataset.h = upd; }
 }
 
@@ -207,8 +207,17 @@ function copyText(text) {
 function notifyQuiet(title) {
   const el = document.createElement('div');
   el.className = 'toast'; el.innerHTML = `<span class="tic">${ic('check')}</span><div><b>${esc(title)}</b></div>`;
+  toastX(el);
   $('#toasts').appendChild(el);
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 200); }, 1600);
+}
+
+// Every toast gets an × that dismisses it without opening anything. On an undo toast it runs the action now.
+function toastX(el, onClose) {
+  const b = document.createElement('button');
+  b.className = 'tx'; b.setAttribute('aria-label', 'Dismiss'); b.dataset.tip = 'Dismiss'; b.innerHTML = ic('close');
+  b.addEventListener('click', (e) => { e.stopPropagation(); if (onClose) return onClose(); el.classList.add('out'); setTimeout(() => el.remove(), 200); }, true);
+  el.appendChild(b);
 }
 
 // Undo instead of "are you sure?": the action waits UNDO_MS behind a toast with an Undo button, then runs. Closing the
@@ -229,6 +238,7 @@ function undoable(label, run, undo) {
   job.finish = finish;
   job.timer = setTimeout(() => finish(true), UNDO_MS);
   el.querySelector('button').onclick = () => finish(false);
+  toastX(el, () => finish(true));
   pendingUndo.add(job);
 }
 addEventListener('beforeunload', () => { for (const j of [...pendingUndo]) j.finish(true); });
@@ -359,6 +369,7 @@ const PREF_BODY = {
       prow('Desktop notifications', NATIVE ? 'Ubuntu notifications while the window is in the background. Click one to open the job.' : 'Browser notifications while the window is hidden.', pSwitch('notify', NATIVE ? '1' : '0')),
       prow('Sounds', 'A short chime; questions and warnings sound different from answers.', pSwitch('sound', '0')),
       prow('While you were away', `When the office opens, or the window comes back after ${AWAY_MIN} minutes, show one card with what finished, what waits for you and what changed. Ctrl K → "While you were away" shows it any time.`, pSwitch('awayCard', '1')),
+      prow('Ask me to rate answers', 'Thumbs on finished jobs and the "Rate recent answers" reminder on Today. Off clears them everywhere.', pSwitch('askRate', '1')),
       prow('Keep toasts on screen for', '', pSelect('toastSecs', '8', [['4', '4 seconds'], ['8', '8 seconds'], ['15', '15 seconds'], ['30', '30 seconds']])),
     ]) +
     pGroup('Tell me about', [

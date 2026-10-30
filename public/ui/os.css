@@ -788,3 +788,22 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 /* Cost per successful job (Usage) */
 .ostats { display: flex; gap: 28px; flex-wrap: wrap; margin: 4px 0; }
 .otab { width: 100%; margin-top: 4px; } .otab td.num, .otab th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Toast dismiss button, and the Undo/Redo buttons beside message boxes. */
+.toast .tx { flex: none; margin: -4px -6px 0 auto; width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; padding: 0; }
+.toast .tx:hover { background: var(--panel3); color: var(--text); }
+.toast .tx svg.i { width: 13px; height: 13px; }
+.toast.undo .tx { margin-top: 0; }
+.btn.ibtn[data-for] { padding-left: 6px; padding-right: 6px; }
+
+/* Talking a lesson draft over with its lead. */
+.lchat { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--panel2); display: flex; flex-direction: column; gap: 6px; }
+.lchat .lm { font-size: 13px; line-height: 1.45; }
+.lchat .lm.user b { color: var(--accent); }
+.lchat .lcrow { display: flex; gap: 6px; margin-top: 2px; }
+.lchat .lcin { flex: 1; min-width: 0; }
+
+/* The "Update ready" chip is one button. */
+button.updchip.go { border: 1px solid rgba(var(--accent-rgb), .30); font: inherit; font-size: 12px; cursor: pointer; }
+button.updchip.go:hover { background: rgba(var(--accent-rgb), .26); }
+button.updchip.go b { font-weight: 600; color: var(--accent); }

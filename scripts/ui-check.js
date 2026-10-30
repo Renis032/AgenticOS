@@ -75,7 +75,7 @@ async function check(opt) {
     const now = await call(port, T, 'GET', '/api/state');
     const waiting = (now.tickets || []).find((t) => t.plan && t.plan.status === 'pending') || job;
     const done = (state.tickets || []).filter((t) => t.status === 'done' && t.answer).sort((a, b) => b.createdAt - a.createdAt)[0];
-    const apps = (opt.quick ? ['today', 'brain', 'processes', 'jobs', 'projects', 'newjob'] : ['today', 'brain', 'processes', 'jobs', 'newjob', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings']);
+    const apps = (opt.quick ? ['today', 'brain', 'processes', 'jobs', 'projects', 'newjob'] : ['today', 'brain', 'processes', 'jobs', 'newjob', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings', 'inbox']);
     const steps = [
       ...apps.map((a) => ({ name: `app-${a}`, js: `openApp('${a}')`, wait: a === 'tokens' || a === 'usage' ? 1800 : 800 })),
       { name: 'job-waiting', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'thread'; openApp('jobs')`, wait: 1000 },
@@ -152,6 +152,19 @@ async function check(opt) {
         S.memAgent = lead.id; S.memKey = null; openApp('memory');
         setTimeout(() => { if (!document.querySelector('#memBody .lessons')) __uiErrors.push('lessons are not shown in Memory'); }, 900);
       })()`, wait: 1300 },
+      // Needs you: a lesson draft being talked over with its lead, a toast with its close button, Undo/Redo in a composer.
+      { name: 'needs-you-lesson-chat', js: `(() => {
+        const lead = Object.values(S.agents).find((a) => a.resident && a.id !== S.root);
+        lead.lessonDrafts = [{ id: 'uichat', t: Date.now() - 300000, ticketN: 3, text: 'Ask before adding a dependency.', original: 'Avoid new dependencies.', reason: 'I added a library the user did not want.', trigger: 'the user rated the answer 👎',
+          chat: [{ from: 'user', t: Date.now() - 200000, text: 'Dependencies are fine when they save real work; I just want to hear about it first.' }, { from: 'agent', t: Date.now() - 190000, text: 'Understood: the problem was not telling you, not the library itself. I rewrote the lesson.' }] }];
+        S.lessonChat = 'uichat'; openApp('inbox'); renderChrome();
+        notify('answer', 'Toast with a close button', 'Click the x to dismiss it.');
+        setTimeout(() => {
+          if (!document.querySelector('#nyBody .lchat .lcin')) __uiErrors.push('the lesson chat is not shown in Needs you');
+          if (!document.querySelector('#toasts .toast .tx')) __uiErrors.push('toasts have no close button');
+          if (!document.querySelector('.app-link[data-app="inbox"] .bd')) __uiErrors.push('the Needs you sidebar entry has no badge');
+        }, 700);
+      })()`, wait: 1100 },
       // The eval grid, with runs that pass, fail, change instructions and could not run.
       { name: 'health-evals', js: `(() => {
         openApp('health');

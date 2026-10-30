@@ -6,6 +6,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Needs you** in the sidebar (key `W`): every plan, question, command, edit access, budget stop, change to apply,
+  skill proposal and lesson waiting for you, with a badge counting them. Anything newly waiting that the server did not
+  already announce (changes to apply, an interrupted job) now raises a notification too.
+- Talk a lesson over: **Discuss** on a lesson draft lets you explain what you mean; the lead answers and rewrites the
+  line, and gets your explanation as feedback once you keep it. API: `POST /api/agents/<id>/lesson-drafts/<lid>/chat`.
+- Rating requests can be cleared: *Don't ask for this job* under the rating box, *clear* on Today's reminder, or
+  Preferences → Notifications → *Ask me to rate answers* to turn them off.
+- The *Update ready* chip in the title bar is one button: click it and the office restarts onto the new version as soon as
+  every agent is idle (after checking it), and the window reloads by itself.
+- Every toast has an × to dismiss it (on an undo toast it runs the action now).
+- Undo/Redo in every message box (job thread, new job, agent chat, team chat, Ask the office): buttons, Ctrl+Z and
+  Ctrl+Shift+Z / Ctrl+Y. It also brings back a message the box cleared on Send.
 - Standing instructions for a lead: in Processes, **Keep as instruction** saves something you tell a lead once
   ("when you fix a bug, add a short brief on why this fix and a commit message like the others"); it goes into their
   system prompt on every job until you remove it from the new *Instructions* tab. A lead mid-session gets the change on

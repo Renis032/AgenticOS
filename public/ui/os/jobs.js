@@ -132,7 +132,7 @@ function entryHtml(list, t) {
       case 'report': return `<div class="ev report"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))} · report${ts}</div><details><summary>read</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
       case 'chat': return `<div class="ev chat"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))}${e.ask ? ' · question' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'note': return `<div class="ev"><div class="h">${esc(who(e.from))}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
-      case 'answer': return `<div class="ev answer"><div class="h">${esc(who(e.from))} · answer${t && !t.rating && ['done', 'failed', 'interrupted'].includes(t.status) && e === [...t.thread].reverse().find((x) => x.kind === 'answer') ? `<span class="quickrate"><button class="xbtn" data-act="rate" data-s="1" title="Good answer">${thumb(true)}</button><button class="xbtn" data-act="rate" data-s="-1" title="Not what I needed">${thumb(false)}</button></span>` : ''}${t && t.rework ? '<span class="hint"> · followed up</span>' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
+      case 'answer': return `<div class="ev answer"><div class="h">${esc(who(e.from))} · answer${t && rateAsked(t) && ['done', 'failed', 'interrupted'].includes(t.status) && e === [...t.thread].reverse().find((x) => x.kind === 'answer') ? `<span class="quickrate"><button class="xbtn" data-act="rate" data-s="1" title="Good answer">${thumb(true)}</button><button class="xbtn" data-act="rate" data-s="-1" title="Not what I needed">${thumb(false)}</button></span>` : ''}${t && t.rework ? '<span class="hint"> · followed up</span>' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'question': return `<div class="ev question"><div class="h">${esc(who(e.from))} asks you${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'reply': return `<div class="ev reply"><div class="h">You → ${esc(who(e.to))}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'plan': return `<div class="ev plan"><div class="h">${esc(who(e.from))} · plan · est. ${money(e.estimateUsd)}${ts}</div><details><summary>read the plan</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
@@ -153,6 +153,10 @@ const pendingAccess = (t) => (t.access || []).find((r) => r.status === 'pending'
 const wsToReview = (t) => !!(t.workspace && t.workspace.status === 'active' && !['open', 'paused', 'scheduled'].includes(t.status));
 const needsYou = (t) => !!(t.waiting || (t.plan && t.plan.status === 'pending') || (t.overBudget && t.status === 'open') || pendingCmd(t) || pendingAccess(t)
   || (t.status === 'interrupted' && !t.archived && Date.now() - (t.closedAt || 0) < 3 * 86400000) || wsToReview(t) || (t.stuck && t.status === 'open'));
+// Rating prompts can be cleared per job ("don't ask") or all at once, or turned off in Preferences → Jobs & chat.
+function rateSkipped() { return new Set(prefObj('rateSkip') || []); }
+const rateAsked = (t) => pref('askRate', '1') === '1' && !t.rating && !rateSkipped().has(t.id);
+function skipRating(ids) { setPref('rateSkip', JSON.stringify([...new Set([...rateSkipped(), ...ids])].slice(-500))); S.tdKey = null; S.jbodyKey = null; dirty(); }
 function jobLiveHtml(t) {
   if (t.status !== 'open' || needsYou(t)) return '';
   const busy = busyOn(t);
@@ -389,10 +393,11 @@ function renderJob() {
   if (S.jviewFor !== t.id) {
     S.jviewFor = t.id; S.jbodyFor = null; S.jbodyKey = null; S.followFiles = []; S.rerate = false;
     v.innerHTML = `<div class="jhead" id="jhead"></div><div id="jban"></div><div class="tabs" id="jtabs"></div><div class="jbody" id="jbody"></div><div class="jlive" id="jlive" aria-live="polite"></div><div id="jneed" role="region" aria-label="Needs you"></div>
-      <div class="composer"><textarea id="jtext"></textarea><div class="files" id="jfiles"></div><div class="row"><button class="btn sm ibtn" data-act="attachJob" title="Attach files" aria-label="Attach files">${ic('clip')}</button><span class="hint" id="jhint" style="flex:1"></span><span id="jsend" class="hint"></span><button class="btn pri sm" data-act="jobSend">Send</button></div></div>`;
+      <div class="composer"><textarea id="jtext"></textarea><div class="files" id="jfiles"></div><div class="row"><button class="btn sm ibtn" data-act="attachJob" title="Attach files" aria-label="Attach files">${ic('clip')}</button>${undoBtns('jtext')}<span class="hint" id="jhint" style="flex:1"></span><span id="jsend" class="hint"></span><button class="btn pri sm" data-act="jobSend">Send</button></div></div>`;
     wireDrop($('#jtext'), () => S.followFiles, () => { $('#jfiles').innerHTML = S.followFiles.map((p) => fileChip(p, true)).join(''); });
     const box = $('#jtext');
     box.value = S.compose[t.id] || '';
+    wireUndo(box, 'jtext:' + t.id);
     box.oninput = () => { if (box.value) S.compose[t.id] = box.value; else delete S.compose[t.id]; setPref('compose', JSON.stringify(S.compose)); };
     box.onkeydown = (e) => {
       if (e.key === 'ArrowUp' && !box.value && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); ACT.recallMsg(); return; }
@@ -434,8 +439,8 @@ function renderJob() {
   const body = $('#jbody');
   if (S.jtab === 'thread') {
     const closed = ['done', 'failed', 'interrupted', 'stopped'].includes(t.status) && t.answer;
-    const rate = closed ? (t.rating && !S.rerate ? `<div class="sec">You rated this ${t.rating.score > 0 ? thumb(true) : thumb(false)}${t.rating.note ? `: “${esc(t.rating.note)}”` : ''} <a class="hint" data-act="rerate">change</a></div>`
-      : `<div class="sec"><div class="label">How was this answer?</div><div class="row" style="margin-top:0"><input class="in" id="rateNote" placeholder="Optional: what was good or missing" style="flex:1;min-width:160px"><button class="btn sm" data-act="rate" data-s="1">${thumb(true)}</button><button class="btn sm" data-act="rate" data-s="-1">${thumb(false)}</button></div><div class="hint" style="margin-top:4px">Goes to the lead as feedback.</div></div>`) : '';
+    const rate = !closed || (!t.rating && !S.rerate && !rateAsked(t)) ? '' : (t.rating && !S.rerate ? `<div class="sec">You rated this ${t.rating.score > 0 ? thumb(true) : thumb(false)}${t.rating.note ? `: “${esc(t.rating.note)}”` : ''} <a class="hint" data-act="rerate">change</a></div>`
+      : `<div class="sec"><div class="label">How was this answer?</div><div class="row" style="margin-top:0"><input class="in" id="rateNote" placeholder="Optional: what was good or missing" style="flex:1;min-width:160px"><button class="btn sm" data-act="rate" data-s="1">${thumb(true)}</button><button class="btn sm" data-act="rate" data-s="-1">${thumb(false)}</button></div><div class="hint" style="margin-top:4px">Goes to the lead as feedback. <a data-act="rateSkip" data-id="${t.id}">Don't ask for this job</a></div></div>`);
     const same = S.jbodyFor === t.id;
     const prevLen = S.jbodyLen || 0;
     const fresh = same ? t.thread.slice(prevLen) : [];

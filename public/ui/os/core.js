@@ -210,6 +210,7 @@ function tick() {
 // The daily apps are always shown; Insights and Tools fold away (remembered per window) so the sidebar stays short.
 const APP_LIST = [
   { id: 'today', ic: 'home', name: 'Today', key: 'd', grp: 'Home' },
+  { id: 'inbox', ic: 'bell', name: 'Needs you', key: 'w' },
   { id: 'jobs', ic: 'jobs', name: 'Jobs', key: 'j' },
   { id: 'newjob', ic: 'newjob', name: 'New job', key: 'n' },
   { id: 'projects', ic: 'projects', name: 'Projects', key: 'o' },
@@ -240,7 +241,8 @@ function renderChrome() {
   const openJobs = Object.values(S.tickets).filter((t) => ['open', 'paused'].includes(t.status));
   const asks = Object.values(S.tickets).filter(needsYou).length;
   const unread = Object.values(S.tickets).filter(isUnread).length;
-  const badges = { skills: S.skPending ? [`${S.skPending} new`, 'ask'] : null, processes: running ? [running, 'run'] : null, jobs: asks ? [`${asks}<span class="bdl"> need${asks === 1 ? 's' : ''} you</span>`, 'ask'] : unread ? [`${unread} new`, 'run'] : openJobs.length ? [openJobs.length, 'run'] : null };
+  const waiting = needsCount();
+  const badges = { inbox: waiting ? [waiting, 'ask'] : null, skills: S.skPending ? [`${S.skPending} new`, 'ask'] : null, processes: running ? [running, 'run'] : null, jobs: asks ? [`${asks}<span class="bdl"> need${asks === 1 ? 's' : ''} you</span>`, 'ask'] : unread ? [`${unread} new`, 'run'] : openJobs.length ? [openJobs.length, 'run'] : null };
   const open = navOpen();
   let grp = null;
   const groupBadge = (g) => APP_LIST.some((x, i) => badges[x.id] && groupOf(i) === g);

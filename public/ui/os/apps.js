@@ -84,7 +84,7 @@ APPS.newjob = {
         <textarea id="njText" style="min-height:200px" placeholder="What should the agents do?"></textarea>
         <div class="files" id="njFiles"></div>
         <div class="row"><select id="njProject"></select><select id="njEffort" title="How hard the lead thinks on this job"><option value="">lead effort: auto</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>
-          <button class="btn ibtn" data-act="attachNew">${ic('clip')} Attach files</button><label class="chk"><input type="checkbox" id="njAfter"> start after the 5-hour limit resets</label><span style="flex:1"></span><button class="btn pri" data-act="sendJob">Start job</button></div>
+          <button class="btn ibtn" data-act="attachNew">${ic('clip')} Attach files</button>${undoBtns('njText')}<label class="chk"><input type="checkbox" id="njAfter"> start after the 5-hour limit resets</label><span style="flex:1"></span><button class="btn pri" data-act="sendJob">Start job</button></div>
         <details class="njmore" id="njMore"><summary>Checks and workspace</summary>
           <label class="njf">Done when these pass <span class="hint">the office runs them itself after the lead answers; one command per line</span><textarea id="njVerify" style="min-height:44px" placeholder="e.g. npm test"></textarea></label>
           <label class="chk"><input type="checkbox" id="njIsolate"> work in a separate copy of the project (git worktree); you review and apply the changes at the end</label></details>
@@ -99,6 +99,7 @@ APPS.newjob = {
     const txt = $('#njText');
     if (S.quickText) { txt.value = S.quickText; S.quickText = ''; }
     txt.oninput = () => routePreview();
+    wireUndo(txt, 'njText');
     // Checks default to the project's (Teams & roles → Projects); editing them sets this job's own.
     const ver = $('#njVerify');
     const fillChecks = () => { if (ver.dataset.dirty) return; const p = S.projects.find((x) => x.name === sel.value); ver.value = ((p && p.verify) || []).join('\n'); if (ver.value) $('#njMore').open = true; };
@@ -189,7 +190,7 @@ APPS.messages = {
     root.innerHTML = `<div class="app"><div class="two"><div class="list" id="mtList"></div><div style="flex:1;display:flex;flex-direction:column;min-width:0">
       <div class="toolbar"><h1 id="mtTitle"></h1><span class="hint">What teammates say to each other while they work, and your questions to a whole team.</span></div>
       <div class="body" id="mtBody" style="padding:6px 18px"></div>
-      <div class="composer"><textarea id="mtText"></textarea><div class="row"><span class="hint" id="mtHint" style="flex:1"></span><button class="btn pri sm" data-act="askTeam">Ask the team</button></div></div></div></div></div>`;
+      <div class="composer"><textarea id="mtText"></textarea><div class="row">${undoBtns('mtText')}<span class="hint" id="mtHint" style="flex:1"></span><button class="btn pri sm" data-act="askTeam">Ask the team</button></div></div></div></div></div>`;
     S.chat = null;
   },
   update() {
@@ -200,6 +201,7 @@ APPS.messages = {
     $('#mtHint').textContent = `Opens a job on ${who(k)}'s desk.`;
     if (!S.chat || S.chat.k !== k) {
       S.chat = { k, list: null };
+      wireUndo($('#mtText'), 'mtText:' + k);
       api('GET', `/api/teams/${k}/chat`).then((l) => { S.chat = { k, list: l }; S.chatKey = null; dirty(); });
     }
     const list = S.chat.list;
@@ -232,9 +234,9 @@ APPS.memory = {
     if (!a) { $('#memBody').innerHTML = '<div class="empty">Pick an agent to read what they have learned. Each agent rewrites its memory at the end of a task, and sees it at the start of the next.</div>'; return; }
     const L = a.lessons || [];
     const drafts = lessonDrafts().filter((x) => x.a.id === a.id);
-    const key = a.id + '|' + a.memoryVersion + '|' + L.map((l) => l.id).join() + '|' + drafts.map((x) => x.l.id).join() + '|' + S.lessonEdit;
+    const key = a.id + '|' + a.memoryVersion + '|' + L.map((l) => l.id).join() + '|' + lessonKey();
     if (key === S.memKey) return;
-    if (document.activeElement && document.activeElement.classList.contains('lrin') && S.lessonEdit) return;
+    if (lessonTyping()) return;
     S.memKey = key;
     $('#memTitle').textContent = `${a.persona} · memory`;
     $('#memSub').textContent = a.memoryVersion ? `version ${a.memoryVersion}${a.memoryUpdatedAt ? ' · updated ' + ago(a.memoryUpdatedAt) : ''}` : '';
@@ -478,8 +480,8 @@ function suggestions(tickets, finished) {
   for (const c of stale) out.push(`<div class="li" data-act="boardContinue" data-name="${esc(c.name)}" data-lead="${esc(c.lead)}">${ic('projects')}<span style="flex:1"><b>${esc(c.name)}</b> hasn't moved since ${esc(c.handoff.updated)}</span><span class="hint">continue</span></div>`);
   const failed = tickets.filter((t) => ['failed', 'interrupted'].includes(t.status) && t.closedAt > Date.now() - 3 * 86400000).slice(0, 2);
   for (const t of failed) out.push(`<div class="li" data-act="openJob" data-id="${t.id}">${ic('reload')}<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Retry <b>#${t.n}</b> ${esc(short(t.title, 50))}</span><span class="hint">${esc(t.status)}</span></div>`);
-  const unrated = tickets.filter((t) => t.status === 'done' && t.answer && !t.rating && t.closedAt > Date.now() - 7 * 86400000);
-  if (unrated.length) out.push(`<div class="li" data-act="openJob" data-id="${unrated[0].id}">${ic('check')}<span style="flex:1">Rate ${unrated.length} recent answer${unrated.length === 1 ? '' : 's'}: it teaches your team what you like</span><span class="hint">rate</span></div>`);
+  const unrated = tickets.filter((t) => t.status === 'done' && t.answer && rateAsked(t) && t.closedAt > Date.now() - 7 * 86400000);
+  if (unrated.length) out.push(`<div class="li" data-act="openJob" data-id="${unrated[0].id}">${ic('check')}<span style="flex:1">Rate ${unrated.length} recent answer${unrated.length === 1 ? '' : 's'}: it teaches your team what you like</span><a class="hint" data-act="rateSkipAll" title="Stop asking about these answers">clear</a><span class="hint">rate</span></div>`);
   if (!tickets.length) out.push(`<div class="li" data-act="tour">${ic('info')}<span style="flex:1">New here? Take the 1-minute tour</span><span class="hint">start</span></div>`);
   return out.length ? out.join('') : '<div class="hint">Nothing to suggest. You\'re all caught up.</div>';
 }
@@ -504,13 +506,28 @@ function lessonDrafts() {
   const hid = S.hiddenDrafts || new Set();
   return Object.values(S.agents).flatMap((a) => (a.lessonDrafts || []).filter((l) => !hid.has(l.id)).map((l) => ({ a, l }))).sort((x, y) => y.l.t - x.l.t);
 }
+// Changes whenever the review cards must redraw; the apps that show them put it in their render key.
+function lessonKey() { return JSON.stringify([lessonDrafts().map((x) => [x.l.id, x.l.text, (x.l.chat || []).length]), S.lessonEdit, S.lessonChat, S.lessonBusy && S.lessonBusy.lid]); }
+function lessonRedraw() { S.tdKey = null; S.memKey = null; S.nyKey = null; dirty(); }
+// Don't redraw over a lesson being edited or a message being typed to its lead.
+function lessonTyping() { const el = document.activeElement; return !!(el && ((el.classList.contains('lrin') && S.lessonEdit) || (el.classList.contains('lcin') && el.value))); }
+function lessonChatHtml(a, l) {
+  const busy = S.lessonBusy && S.lessonBusy.lid === l.id;
+  const msgs = [...(l.chat || []), ...(busy ? [{ from: 'user', text: S.lessonBusy.text }] : [])];
+  const open = S.lessonChat === l.id || busy;
+  if (!msgs.length && !open) return '';
+  return `<div class="lchat">${msgs.map((m) => `<div class="lm ${m.from}"><b>${m.from === 'user' ? 'You' : esc(a.persona)}</b> ${esc(m.text)}</div>`).join('')}
+    ${busy ? `<div class="lm agent"><b>${esc(a.persona)}</b> <span class="dots"><i></i><i></i><i></i></span></div>` : ''}
+    ${l.original ? `<div class="hint">First draft: ${esc(l.original)}</div>` : ''}
+    ${open ? `<div class="row lcrow"><input id="lc-${l.id}" class="in lcin" maxlength="1500" placeholder="Explain what you mean; ${esc(a.persona)} answers and rewrites the lesson" data-id="${a.id}" data-lid="${l.id}" aria-label="Message to ${esc(a.persona)} about this lesson" ${busy ? 'disabled' : ''}><button class="btn sm pri" data-act="lessonSay" data-id="${a.id}" data-lid="${l.id}" ${busy ? 'disabled' : ''}>Send</button></div>` : ''}</div>`;
+}
 function lessonReviewHtml(list, wide) {
   if (!list.length) return '';
   return `<div class="card ${wide ? 'wide' : ''} lreview"><h3>${ic('memory')} Lessons to review <span class="pill s-ask">${list.length}</span></h3><div class="hint">Written by the leads after a job went wrong. They reach the agents only once you keep them.</div>
     ${list.map(({ a, l }) => `<div class="lr"><div class="lh"><b>${esc(a.persona)}</b> <span class="hint">${l.ticketN ? `after <a data-act="openJobN" data-n="${l.ticketN}">#${l.ticketN}</a> · ` : ''}${ago(l.t)}</span></div>
       ${S.lessonEdit === l.id ? `<input id="lr-${l.id}" class="in lrin" maxlength="220" value="${esc(l.text)}" data-id="${a.id}" data-lid="${l.id}" aria-label="Lesson text">` : `<div class="lt">${esc(l.text)}</div>`}
       ${l.reason || l.trigger ? `<div class="hint lwhy">${l.trigger ? `<b>Asked because</b> ${esc(l.trigger)}.` : ''}${l.reason ? ` <b>${esc(a.persona)}'s reasoning:</b> ${esc(l.reason)}` : ''}</div>` : ''}
-      <div class="row"><button class="btn sm pri" data-act="lessonKeep" data-id="${a.id}" data-lid="${l.id}">${S.lessonEdit === l.id ? 'Keep as edited' : 'Keep'}</button>${S.lessonEdit === l.id ? '' : `<button class="btn sm" data-act="lessonEdit" data-lid="${l.id}">Edit</button>`}<button class="btn sm danger" data-act="lessonDrop" data-id="${a.id}" data-lid="${l.id}">Drop</button></div></div>`).join('')}</div>`;
+      <div class="row"><button class="btn sm pri" data-act="lessonKeep" data-id="${a.id}" data-lid="${l.id}">${S.lessonEdit === l.id ? 'Keep as edited' : 'Keep'}</button>${S.lessonEdit === l.id ? '' : `<button class="btn sm" data-act="lessonEdit" data-lid="${l.id}">Edit</button>`}<button class="btn sm" data-act="lessonChat" data-lid="${l.id}" title="Explain your idea to ${esc(a.persona)} instead of only keeping or dropping it">${ic('messages')} Discuss</button><button class="btn sm danger" data-act="lessonDrop" data-id="${a.id}" data-lid="${l.id}">Drop</button></div>${lessonChatHtml(a, l)}</div>`).join('')}</div>`;
 }
 // The new-lead wizard (lib/lead-wizard.js): explain the purpose, get a full draft, review every field, create.
 function leadWizardHtml() {
@@ -542,6 +559,8 @@ function leadWizardHtml() {
     <div class="row" style="margin-top:6px"><a class="hint" data-act="lwRoleAdd">+ Add a specialist</a></div>
     <div class="row" style="margin-top:12px"><button class="btn pri sm" data-act="lwCreate" ${W.busy ? 'disabled' : ''}>${W.busy ? 'Creating…' : `Create ${esc(W.draft.persona || 'the lead')}`}</button><button class="btn sm" data-act="lwBack">Back</button><span class="hint">The lead starts as a permanent process under God, with its own library and message room.</span></div></div>`;
 }
+// What a job that needs the user is waiting for, in a few words.
+const needWhy = (t) => (t.status === 'interrupted' ? 'interrupted · resume' : wsToReview(t) ? 'changes to apply' : t.stuck ? `${t.stuck.persona} looks stuck` : t.waiting ? 'a question' : t.plan && t.plan.status === 'pending' ? `a plan · ${money(t.plan.estimateUsd)}${ticketShare(t.plan.estimateUsd) ? ` · ${ticketShare(t.plan.estimateUsd).replace(/^≈ /, '').split(' · ')[0]}` : ''}` : pendingCmd(t) ? 'a command to run' : 'budget stop');
 APPS.today = {
   mount(root) {
     root.innerHTML = `<div class="app"><div class="toolbar"><h1>Today</h1><span class="hint" id="tdHint"></span><span class="sp"></span><button class="btn sm" data-act="app" data-app="newjob">${ic('newjob')} New job</button></div><div class="page" id="tdBody"></div></div>`;
@@ -560,14 +579,14 @@ APPS.today = {
     const projects = (S.board || []).filter((c) => c.handoff).slice(0, 4);
     const props = S.tdProps || [];
     const R = S.restart || {};
-    const key = JSON.stringify([need.map((t) => t.id + t.thread.length), busy.map((a) => a.id + (S.live[a.id] || {}).t), finished.map((t) => t.id), projects.length, props.length, R.codeChanged, Math.floor(Date.now() / 30000), tickets.length, tickets.filter((t) => t.rating).length, !!(S.tg && S.tg.linked), pref('toured', '0'), pref('setupHidden', '0'), lessonDrafts().map((x) => x.l.id), S.lessonEdit]);
+    const key = JSON.stringify([need.map((t) => t.id + t.thread.length), busy.map((a) => a.id + (S.live[a.id] || {}).t), finished.map((t) => t.id), projects.length, props.length, R.codeChanged, Math.floor(Date.now() / 30000), tickets.length, tickets.filter((t) => t.rating).length, !!(S.tg && S.tg.linked), pref('toured', '0'), pref('setupHidden', '0'), lessonKey(), pref('askRate', '1'), (prefObj('rateSkip') || []).length]);
     if (key === S.tdKey) return;
-    if (document.activeElement && document.activeElement.classList.contains('lrin') && S.lessonEdit) return; // don't wipe an edit in progress
+    if (lessonTyping()) return; // don't wipe an edit in progress
     S.tdKey = key;
     const h = new Date().getHours();
     $('#tdHint').textContent = `${h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'} · ${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}`;
     const jobLink = (t, extra) => `<div class="li" data-act="openJob" data-id="${t.id}"><span class="hint mono">#${t.n}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>${extra || ''}</div>`;
-    const why = (t) => (t.status === 'interrupted' ? 'interrupted · resume' : wsToReview(t) ? 'changes to apply' : t.stuck ? `${t.stuck.persona} looks stuck` : t.waiting ? 'a question' : t.plan && t.plan.status === 'pending' ? `a plan · ${money(t.plan.estimateUsd)}${ticketShare(t.plan.estimateUsd) ? ` · ${ticketShare(t.plan.estimateUsd).replace(/^≈ /, '').split(' · ')[0]}` : ''}` : pendingCmd(t) ? 'a command to run' : 'budget stop');
+    const why = needWhy;
     const meters = ['five_hour', 'seven_day'].map((k) => { const w = windowOf(k); if (!w) return ''; const u = live(w); return `<div class="hbar"><span class="n">${k === 'five_hour' ? '5-hour window' : 'This week'}</span><span class="t"><i style="width:${Math.min(100, u * 100)}%;background:${meterColor(u)}"></i></span><span class="v">${pct(u)}</span></div>`; }).join('');
     $('#tdBody').innerHTML = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">${setupChecklist(tickets)}${lessonReviewHtml(lessonDrafts(), true)}
       <div class="card"><h3>${ic('bell')} Needs you ${need.length ? `<span class="pill s-ask">${need.length}</span>` : ''}</h3>${need.length ? need.map((t) => jobLink(t, `<span class="hint">${why(t)}</span>`) + (t.waiting ? qoptsHtml(t.waiting, t.id) : '')).join('') : '<div class="hint">Nothing is waiting for you.</div>'}
@@ -582,3 +601,43 @@ APPS.today = {
     </div>`;
   },
 };
+
+// ================================================================ app: Needs you
+// Everything waiting on the user in one place: lessons to review (and talk over with their lead), plans, questions,
+// commands and edit access to approve, budget stops, changes to apply, and skill proposals. The sidebar badge counts them.
+function needsCount() {
+  return Object.values(S.tickets).filter((t) => !t.archived && needsYou(t)).length + lessonDrafts().length + (S.skPending || 0) + (S.restart && S.restart.codeChanged ? 1 : 0);
+}
+APPS.inbox = {
+  mount(root) {
+    root.innerHTML = `<div class="app"><div class="toolbar"><h1>Needs you</h1><span class="hint">Approvals, questions and lessons waiting for you.</span></div><div class="page" id="nyBody"></div></div>`;
+    S.nyKey = null;
+  },
+  update() {
+    const need = Object.values(S.tickets).filter((t) => !t.archived && needsYou(t)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const R = S.restart || {};
+    const key = JSON.stringify([need.map((t) => t.id + needWhy(t) + t.thread.length), lessonKey(), S.skPending, R.codeChanged]);
+    if (key === S.nyKey || lessonTyping()) return;
+    S.nyKey = key;
+    const jobs = need.map((t) => `<div class="li" data-act="openJob" data-id="${t.id}"><span class="hint mono">#${t.n}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span><span class="pill s-ask">${esc(needWhy(t))}</span></div>` + (t.waiting ? qoptsHtml(t.waiting, t.id) : '')).join('');
+    const other = (S.skPending ? `<div class="li" data-act="app" data-app="skills">${ic('skills')}<span style="flex:1">${S.skPending} skill proposal${S.skPending === 1 ? '' : 's'} to approve or reject</span><span class="hint">review</span></div>` : '')
+      + (R.codeChanged ? `<div class="li" data-act="restartIdle">${ic('reload')}<span style="flex:1">An update is ready</span><span class="hint">restart when idle</span></div>` : '');
+    const lessons = lessonReviewHtml(lessonDrafts(), true);
+    $('#nyBody').innerHTML = !jobs && !other && !lessons ? `<div class="empty">${ic('check')}<div style="margin-top:8px">Nothing is waiting for you.</div></div>`
+      : `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">
+        ${jobs || other ? `<div class="card wide"><h3>${ic('bell')} Jobs and approvals ${need.length ? `<span class="pill s-ask">${need.length}</span>` : ''}</h3>${jobs}${other}</div>` : ''}${lessons}</div>`;
+  },
+};
+// A notification for anything newly waiting on the user that the server didn't already announce (changes to apply,
+// an interrupted job). Questions, plans, commands, access, lessons and skill proposals notify from the server.
+let needSeen = null;
+setInterval(() => {
+  if (!Object.keys(S.tickets).length) return;
+  const now = new Set(Object.values(S.tickets).filter((t) => !t.archived && needsYou(t)).map((t) => t.id));
+  if (needSeen) for (const id of now) {
+    if (needSeen.has(id)) continue;
+    const t = S.tickets[id];
+    if (!S.notes.some((n) => n.ticketId === id && Date.now() - n.t < 15000)) notify('question', `Job #${t.n} needs you`, needWhy(t), id);
+  }
+  needSeen = now;
+}, 4000);

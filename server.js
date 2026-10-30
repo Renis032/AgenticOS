@@ -387,7 +387,7 @@ const skillProposals = require('./lib/skills').install({
 const lessons = require('./lib/lessons').install({
   agents, readJson, now, newId, findSecret: require('./lib/secrets').findSecret,
   touch: (...a) => touch(...a), addEvent: (...a) => addEvent(...a), giveFeedback: (...a) => giveFeedback(...a),
-  broadcast: (...a) => broadcast(...a),
+  broadcast: (...a) => broadcast(...a), oneShot: (...a) => askOffice.oneShot(...a),
 });
 
 const onCall = require('./lib/on-call').install({ agents, tickets, now, DATA, touch: (...a) => touch(...a) });

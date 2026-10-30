@@ -119,7 +119,8 @@ function renderInspector() {
   if (S.inspFor !== a.id) {
     S.inspFor = a.id; S.itabKey = null;
     el.innerHTML = `<div class="insp-head" id="inspHead"></div><div class="tabs" id="inspTabs"></div><div class="body" id="inspBody"></div>
-      <div class="composer"><textarea id="inspText" placeholder=""></textarea><div class="row"><span class="hint" id="inspHint" style="flex:1"></span><span id="inspBtns"></span></div></div>`;
+      <div class="composer"><textarea id="inspText" placeholder=""></textarea><div class="row">${undoBtns('inspText')}<span class="hint" id="inspHint" style="flex:1"></span><span id="inspBtns"></span></div></div>`;
+    wireUndo($('#inspText'), 'inspText:' + a.id);
     if (!S.events[a.id]) loadEvents(a.id).then(() => { S.itabKey = null; dirty(); });
   }
   const busy = ACTIVE.includes(a.status) || (a.resident && a.current);

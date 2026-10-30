@@ -26,10 +26,11 @@ function renderAsk() {
   const keep = $('#askIn') ? $('#askIn').value : '';
   el.innerHTML = `<div class="ph"><h3>Ask the office</h3>${S.ask.msgs.length ? '<button class="btn sm" data-act="askClear">New chat</button>' : ''}<button class="tb-ic" data-act="askClose" data-tip="Close · Esc">${ic('close')}</button></div>
     <div class="pl" id="askList" aria-live="polite">${msgs || empty}</div>
-    <div class="aform"><textarea id="askIn" rows="2" placeholder="e.g. What did Renko do yesterday?" ${S.ask.busy ? 'disabled' : ''}></textarea><button class="btn pri sm" data-act="askSend" ${S.ask.busy ? 'disabled' : ''}>Ask</button></div>
+    <div class="aform"><textarea id="askIn" rows="2" placeholder="e.g. What did Renko do yesterday?" ${S.ask.busy ? 'disabled' : ''}></textarea>${undoBtns('askIn')}<button class="btn pri sm" data-act="askSend" ${S.ask.busy ? 'disabled' : ''}>Ask</button></div>
     <div class="hint afoot">Answered on Haiku from facts the office gathers · about a cent each</div>`;
   const box = $('#askIn');
   box.value = keep;
+  wireUndo(box, 'askIn');
   box.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendAsk(); } if (e.key === 'Escape') closeAsk(); };
   const list = $('#askList'); list.scrollTop = list.scrollHeight;
 }
