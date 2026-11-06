@@ -63,7 +63,7 @@ function checkAway(force) {
 }
 
 setInterval(() => markSeen(), 60000);
-document.addEventListener('visibilitychange', () => { if (document.hidden) markSeen(true); else if (S.tickets && Object.keys(S.tickets).length) checkAway(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) markSeen(true); else if (S.tickets && Object.keys(S.tickets).length) { if (nightReportDue()) openApp('overnight'); else checkAway(); } });
 window.addEventListener('beforeunload', () => markSeen(true));
 $('#away').addEventListener('click', (e) => { if (e.target.id === 'away') closeAway(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#away').classList.contains('on')) { e.stopImmediatePropagation(); closeAway(); } }, true);

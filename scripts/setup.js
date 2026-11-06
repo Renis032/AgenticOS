@@ -15,6 +15,10 @@ const tilde = (p) => (p.startsWith(HOME) ? `~${p.slice(HOME.length)}` : p);
 const expand = (p) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : path.resolve(p));
 const ok = (s) => console.log(`  \x1b[32m✓\x1b[0m ${s}`);
 const bad = (s, fix) => console.log(`  \x1b[31m✗\x1b[0m ${s}${fix ? `\n      ${fix}` : ''}`);
+const MAC = process.platform === 'darwin';
+const WSL = process.platform === 'linux' && /microsoft/i.test((() => { try { return fs.readFileSync('/proc/version', 'utf8'); } catch { return ''; } })());
+// Ubuntu-style desktops get the GTK window and the applications menu; macOS and WSL use the browser.
+const DESKTOP_LINUX = process.platform === 'linux' && !WSL;
 const opt = (s) => console.log(`  \x1b[33m–\x1b[0m ${s}`);
 
 function checks() {
@@ -23,12 +27,17 @@ function checks() {
   if (major >= 18) ok(`Node.js ${process.versions.node}`); else bad(`Node.js ${process.versions.node} is too old`, 'Install Node.js 18 or newer.');
   const claude = spawnSync('claude', ['--version'], { encoding: 'utf8' });
   if (claude.status === 0) ok(`Claude Code ${claude.stdout.trim()}`);
-  else bad('Claude Code (`claude`) is not on your PATH', 'Install it from https://claude.com/claude-code and log in once with `claude`.');
-  const gi = spawnSync('python3', ['-c', "import gi; gi.require_version('WebKit2', '4.0')"]);
-  if (gi.status === 0) ok('The window (python3-gi, WebKitGTK)');
-  else bad('The window needs python3-gi and WebKitGTK', 'sudo apt install python3-gi gir1.2-webkit2-4.0');
-  if (spawnSync('which', ['Xvfb']).status === 0) ok('Xvfb, for `npm run test:ui` (optional)'); else opt('Xvfb is missing: only needed for `npm run test:ui` (sudo apt install xvfb)');
-  if (spawnSync('which', ['rsync']).status === 0) ok('rsync, for the checks and the demo'); else opt('rsync is missing: needed for `npm test` and `./agentos demo` (sudo apt install rsync)');
+  else bad('Claude Code (`claude`) is not on your PATH', 'Install it: curl -fsSL https://claude.ai/install.sh | bash (or see https://claude.com/claude-code), then log in once with `claude` or add an API key later in Preferences → Account.');
+  if (DESKTOP_LINUX) {
+    const gi = spawnSync('python3', ['-c', "import gi; gi.require_version('WebKit2', '4.0')"]);
+    if (gi.status === 0) ok('The window (python3-gi, WebKitGTK)');
+    else opt('The desktop window needs python3-gi and WebKitGTK (sudo apt install python3-gi gir1.2-webkit2-4.0); until then the office opens in your browser');
+    if (spawnSync('which', ['Xvfb']).status === 0) ok('Xvfb, for `npm run test:ui` (optional)'); else opt('Xvfb is missing: only needed for `npm run test:ui` (sudo apt install xvfb)');
+  } else {
+    ok(`${MAC ? 'macOS' : 'WSL'}: the office opens in your browser (or use the desktop app in desktop/)`);
+  }
+  const pkg = MAC ? 'brew install' : 'sudo apt install';
+  if (spawnSync('which', ['rsync']).status === 0) ok('rsync, for the checks and the demo'); else opt(`rsync is missing: needed for \`npm test\` and \`./agentos demo\` (${pkg} rsync)`);
   return claude.status === 0;
 }
 
@@ -68,6 +77,11 @@ async function main() {
     ok(`projects.json: ${tilde(abs)}${subs.length ? ` (${subs.length} projects: ${subs.slice(0, 6).join(', ')}${subs.length > 6 ? ', …' : ''})` : ''}. Jobs that name one go straight to Renko.`);
   }
 
+  if (!DESKTOP_LINUX) {
+    if (rl) rl.close();
+    console.log(`\nDone. Next:\n  ./agentos          open the office in your browser\n  ./agentos demo     look around a throwaway office first (nothing spent)\n  docs/agents.md     how jobs, plans and teams work`);
+    return;
+  }
   console.log('\nOn this computer:');
   const desktop = path.join(HOME, '.local', 'share', 'applications', 'agentos.desktop');
   if (fs.existsSync(desktop)) ok('Already in your applications menu.');

@@ -11,8 +11,11 @@ maximize, window buttons) and talks to this process through the `agentos` messag
 handler. This process also remembers the window's size and position, sends desktop
 notifications, and keeps the browser's own right-click menu out of the way.
 """
+import base64
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -22,6 +25,11 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.0')
 from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2  # noqa: E402
+
+try:  # screenshots for the job's preview; optional
+    import cairo
+except ImportError:
+    cairo = None
 
 try:  # the tray icon (StatusNotifier on KDE, AppIndicator elsewhere); optional
     gi.require_version('AppIndicator3', '0.1')
@@ -48,6 +56,39 @@ TEXT_ACTIONS = {getattr(WebKit2.ContextMenuAction, n) for n in (
 def token():
     with open(os.path.join(ROOT, 'data', 'app-token')) as f:
         return f.read().strip()
+
+
+def capture_for_page(view, msg):
+    """A screenshot of part of the page, for the job's preview (the page can't see into another origin's frame).
+
+    Answers through window.osCaptured; an empty answer makes the page send the rest without a screenshot.
+    """
+    rect, shot_id = msg.get('rect') or {}, int(msg.get('id', 0))
+
+    def answer(url):
+        view.run_javascript('window.osCaptured && osCaptured(%d, %s)' % (shot_id, json.dumps(url)), None, None, None)
+
+    if cairo is None:
+        answer('')
+        return
+
+    def done(v, result):
+        url = ''
+        try:
+            surface = v.get_snapshot_finish(result)
+            zoom = v.get_zoom_level()
+            crop = cairo.ImageSurface(cairo.FORMAT_ARGB32, max(1, int(rect['w'] * zoom)), max(1, int(rect['h'] * zoom)))
+            ctx = cairo.Context(crop)
+            ctx.set_source_surface(surface, -rect['x'] * zoom, -rect['y'] * zoom)
+            ctx.paint()
+            buf = io.BytesIO()
+            crop.write_to_png(buf)
+            url = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+        except Exception as err:  # noqa: BLE001
+            print('capture failed:', err, file=sys.stderr)
+        answer(url)
+
+    view.get_snapshot(WebKit2.SnapshotRegion.VISIBLE, WebKit2.SnapshotOptions.NONE, None, done)
 
 
 def ours(uri):
@@ -84,6 +125,7 @@ class AgenticOS(Gtk.Application):
         self.main = None
         self.main_view = None
         self.last_press = None
+        self.preview_origins = set()
         self.prefs = {}
         self.geometry_timer = None
         self.tray = None
@@ -267,6 +309,12 @@ class AgenticOS(Gtk.Application):
             self.about()
         elif cmd == 'autostart':
             self.set_autostart(bool(msg.get('on')))
+        elif cmd == 'previewOrigin':
+            origin = str(msg.get('origin', ''))
+            if re.fullmatch(r'http://localhost:\d+', origin):
+                self.preview_origins.add(origin)
+        elif cmd == 'capture':
+            capture_for_page(self.main_view, msg)
         elif cmd == 'openPath':
             path = os.path.realpath(os.path.expanduser(str(msg.get('path', ''))))
             if path.startswith(os.path.expanduser('~') + os.sep) and os.path.exists(path):
@@ -540,7 +588,7 @@ class AgenticOS(Gtk.Application):
     def policy(self, _view, decision, kind):
         if kind in (WebKit2.PolicyDecisionType.NAVIGATION_ACTION, WebKit2.PolicyDecisionType.NEW_WINDOW_ACTION):
             uri = decision.get_navigation_action().get_request().get_uri()
-            if uri and not ours(uri):
+            if uri and not ours(uri) and not uri.startswith(tuple(o + '/' for o in self.preview_origins)):
                 decision.ignore()
                 self.external(uri)
                 return True

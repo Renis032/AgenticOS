@@ -39,6 +39,12 @@ it's doing or what it costs. Agentic OS gives you a standing team instead:
   the office's jobs, memories, libraries, project memory and handoffs, read-only and free
 - **Recovery**: a job interrupted by a restart or a crash resumes with what already happened, so nothing is done
   twice; a stuck agent is flagged; stopping a job stops everything it started
+- **Overnight mode**: queue jobs, press *Work while I sleep*, and the office works through them around your usage limits
+  and a spending cap. Anything that needs you waits without blocking the rest, and in the morning there's one report
+- **Live preview**: see the app a job is building on its page, click what looks wrong, say what to change; the element
+  and a screenshot go to the lead
+- **Jobs that follow from jobs**: chain them ("then do this", with the result passed along), fork one from any moment
+  of its thread to try another way, and get a guided walkthrough of what a job changed
 - **Separate workspaces**: two jobs on the same git project each work in their own git worktree; you review the diff
   and apply it, nothing is committed
 - **Project memory**: your instructions, decisions and known failures per project; each job gets only what is
@@ -73,9 +79,20 @@ is busy. Close the window and the demo is gone.
 
 ## Install
 
-You need Ubuntu (or another Linux with GTK), **Node.js 18+**, **[Claude Code](https://claude.com/claude-code)** logged
-in (`claude` on your `PATH`), and for the window `sudo apt install python3-gi gir1.2-webkit2-4.0`. Nothing to
-`npm install`: the app has no dependencies.
+One command on Linux, macOS or WSL. It checks what's needed, offers to install Claude Code with Anthropic's own
+installer, clones the office into `~/agent-workplace`, runs the setup and opens it (it never uses `sudo`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Renis032/AgenticOS/main/install.sh | bash
+```
+
+On Windows, use the [desktop app](#desktop-app-macos-windows-linux). Or install by hand:
+
+You need **Node.js 18+** and **[Claude Code](https://claude.com/claude-code)** (`claude` on your `PATH`), signed in
+with your Claude login or given an Anthropic API key in Preferences → Account. On Ubuntu (or another Linux with GTK) the
+desktop window needs `sudo apt install python3-gi gir1.2-webkit2-4.0`; on macOS, WSL or a Linux without it, the office
+opens in your default browser instead (`./agentos --browser` asks for that anywhere). Nothing to `npm install`: the
+app has no dependencies.
 
 ```bash
 ./agentos          # first run: a short setup (checks what's missing, asks where your projects live), then the window
@@ -86,12 +103,30 @@ them, along with `data/` (jobs, conversations, logs) and `teams/` (each team's l
 Run `./agentos setup` again any time.
 
 ```bash
+./agentos --browser            # open the office in your default browser (a one-time link; the token never goes in a URL)
 ./agentos status               # is it running, how many processes and jobs
 ./agentos restart --when-idle  # finish running work, check the new version, then restart; the window reloads
 ./agentos stop [-f]            # stop; refuses while agents work unless -f
 ./agentos install              # add it to the applications menu (uninstall removes it)
 ./agentos autostart on         # start at login, in the tray
 ```
+
+### Desktop app (macOS, Windows, Linux)
+
+`desktop/` is an Electron app with the office's server and window in one program: no Node install needed, a tray
+icon, notifications, closing to the background and start at login, like the Ubuntu window. Claude Code still has to
+be installed (the app tells you if it is missing).
+
+```bash
+cd desktop && npm install      # needs Node 22.12+ to build (Electron 45); the office itself still runs on Node 18
+npm start                      # run it from this checkout: the office is this folder, as with ./agentos
+npm run dist:linux             # AppImage and .deb in desktop/dist; dist:mac (on a Mac) and dist:win build the others
+```
+
+An installed app keeps the office in your app-data folder (`~/.config/Agentic OS/office`, `~/Library/Application
+Support/Agentic OS/office`, `%APPDATA%\Agentic OS\office`) and refreshes its code on each update; your `data/`,
+`teams/`, `roster.json` and `projects.json` there are never touched. Releases for macOS and Windows need code
+signing (an Apple Developer ID and notarization; a Windows code-signing certificate) so they open without warnings.
 
 ## Day to day
 

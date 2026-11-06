@@ -3,6 +3,25 @@ cd "$(dirname "$0")/.."
 PORT="${WORKPLACE_PORT:-4747}"
 HERE="$(pwd)"
 
+# No /proc (macOS): ask the office itself to shut down, the way the window's "Stop them and quit" does.
+if [ ! -d /proc/self ]; then
+  tok="$(cat data/app-token 2>/dev/null)"
+  state="$(curl -s -m 3 -H "x-agentos-token: $tok" "http://127.0.0.1:$PORT/api/state")"
+  [ -n "$state" ] || { echo "Not running (port $PORT)."; exit 0; }
+  busy=$(printf '%s' "$state" | node -e '
+    try { const s = JSON.parse(require("fs").readFileSync(0));
+      console.log(s.agents.filter((a) => ["running", "queued", "delegating"].includes(a.status) || (a.resident && a.current)).map((a) => a.persona).join(", "));
+    } catch { console.log(""); }' 2>/dev/null)
+  if [ -n "$busy" ] && [ "$1" != "-f" ]; then
+    echo "Still working: $busy"
+    echo "Their tickets will be marked interrupted. Stop anyway? Run ./agentos stop -f"
+    exit 1
+  fi
+  curl -s -m 10 -X POST -H "x-agentos-token: $tok" -H 'content-type: application/json' -d '{}' "http://127.0.0.1:$PORT/api/shutdown" >/dev/null
+  echo "Stopped the office (port $PORT). Leads keep their memory and inboxes."
+  exit 0
+fi
+
 pids=()
 for p in $(pgrep -f "^node (\S*/)?server\.js$"); do
   [ "$(readlink -f /proc/$p/cwd)" = "$HERE" ] || [[ "$(tr '\0' ' ' < /proc/$p/cmdline)" == *"$HERE/server.js"* ]] || continue

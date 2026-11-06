@@ -133,6 +133,7 @@ table.ps tr.dim td { opacity: .55; }
 .xbtn { flex: none; border: 1px solid var(--line); background: var(--panel2); color: var(--muted); border-radius: 6px; font-size: 11px; line-height: 1; padding: 3px 6px; cursor: pointer; }
 .xbtn:hover { color: var(--fail); border-color: var(--fail); }
 details.bg { margin: 6px 0; }
+.threadmore { display: block; margin: 8px auto 4px; }
 details.bg > summary::-webkit-details-marker { display: none; }
 details.bg > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 4px 0; list-style: none; }
 details.bg > summary::before { content: '▸ '; } details.bg[open] > summary::before { content: '▾ '; }
@@ -517,9 +518,10 @@ html[data-motion=reduced] *, html[data-motion=reduced] *::before, html[data-moti
 .cmdline .copy { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); }
 pre.cmdout { max-height: 320px; overflow: auto; margin: 6px 0 0; padding: 8px 10px; border-radius: 7px; background: var(--code); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
 /* "new message" jump button */
-.newpill { position: absolute; left: 50%; transform: translate(-50%, 8px); z-index: 6; display: flex; align-items: center; gap: 6px; padding: 6px 14px 6px 10px; border-radius: 99px; border: 1px solid rgba(var(--accent-rgb), .60); background: var(--panel); color: var(--text); font-size: 12.5px; font-weight: 600; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; }
+/* Centred by margin, not translate(-50%): a half-pixel transform on this glass (backdrop-filter) layer blurs its text. */
+.newpill { position: absolute; left: 0; right: 0; width: max-content; margin: 0 auto; transform: translateY(8px); z-index: 6; display: flex; align-items: center; gap: 6px; padding: 6px 14px 6px 10px; border-radius: 99px; border: 1px solid rgba(var(--accent-rgb), .60); background: var(--panel); color: var(--text); font-size: 12.5px; font-weight: 600; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; }
 .newpill svg.i { width: 15px; height: 15px; color: var(--accent); }
-.newpill.on { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.newpill.on { opacity: 1; pointer-events: auto; transform: none; }
 .newpill:hover { background: var(--panel2); }
 .updchip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; font-size: 12px; white-space: nowrap; background: rgba(var(--accent-rgb), .14); color: var(--text); }
 .updchip svg.i { width: 14px; height: 14px; color: var(--accent); }
@@ -776,6 +778,29 @@ html[data-sidebar=collapsed] .app-link .bd .bdl { display: none; }
 .vcard .vrow .vic { width: 14px; text-align: center; color: var(--muted); }
 .vcard .vrow.ok .vic { color: var(--done); } .vcard .vrow.bad .vic { color: var(--fail); }
 .vcard .vrow .hint { margin-left: auto; }
+.vcard .vev { margin: 0 0 4px 22px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.donewhen { margin-top: 8px; } .donewhen ul { margin: 4px 0 0; padding-left: 20px; }
+.forkat { margin-left: 6px; font-size: 11px; opacity: 0; color: var(--muted); }
+.ev:hover .forkat, .forkat:focus { opacity: 1; }
+.joblinks { margin: 6px 0; font-size: 12.5px; }
+.wtcard { margin: 10px 0; padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--panel); }
+.wtintro, .wtwhy { margin: 6px 0; } .wtlook { margin: 6px 0; font-size: 13px; }
+.wtcard .p { margin-top: 6px; font-size: 12.5px; overflow-wrap: anywhere; } .wtcard pre.diff { max-height: 420px; overflow: auto; }
+.nightform { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 8px; }
+.nightform .njf { display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; margin: 0; min-width: 0; } .nightform .in, .nightform select { width: 100%; min-width: 0; box-sizing: border-box; }
+.nightsec { margin-top: 12px; } .nightsec h3 { margin: 0 0 4px; font-size: 13px; }
+.nightq .awt, .nightsec .awt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nightq, .nightsec .li { display: flex; align-items: center; gap: 8px; }
+.nightbar { height: 6px; margin: 10px 0 6px; border-radius: 3px; background: var(--panel3); overflow: hidden; } .nightbar i { display: block; height: 100%; background: var(--accent); }
+.pvwrap.on { display: flex; flex-direction: column; height: 100%; }
+.pvbar { display: flex; align-items: center; gap: 8px; padding: 6px 0; flex-wrap: wrap; } .pvaddr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+#pvPick.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+#pvFrame { flex: 1; width: 100%; min-height: 160px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.pvcomment { margin-bottom: 8px; padding: 8px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); }
+.pvel { font-size: 13px; overflow-wrap: anywhere; } .pvrow { display: flex; gap: 8px; margin-top: 6px; } .pvrow textarea { flex: 1; min-height: 56px; }
+.pvshot { width: 160px; height: 72px; object-fit: contain; object-position: left top; background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; }
+.pvnote { margin-bottom: 6px; } .pvlog { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+.pvsetup .njf { display: block; margin-top: 8px; }
 .vcard .vout pre { max-height: 260px; overflow: auto; font-size: 12px; background: var(--code); padding: 8px; border-radius: 6px; white-space: pre-wrap; }
 .wcard .wfile { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
 .wcard .row { margin-top: 8px; gap: 6px; }
@@ -811,3 +836,52 @@ button.updchip.go b { font-weight: 600; color: var(--accent); }
 /* A wide table inside a card scrolls sideways in the card; its sticky header can't spill over the next card. */
 .tscroll { overflow-x: auto; max-width: 100%; }
 .card table.ps th { position: static; }
+/* Team templates (lib/team-templates.js): a grid of ready-made teams in the new-lead card. */
+.card h3:has(> .sp) { display: flex; align-items: center; gap: 8px; }
+.card h3 > .sp { flex: 1; }
+.card h3 > .btn { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.tplgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 6px; }
+.tplcard { position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.tplcard:hover { border-color: var(--accent); }
+.tplcard > .lnk { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px 12px; text-align: left; color: var(--text); background: none; border: 0; cursor: pointer; font: inherit; }
+.tplcard > .lnk span { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.tplcard > .x { position: absolute; top: 4px; right: 6px; background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 15px; }
+.tplcard > .x:hover { color: var(--fail); }
+/* Routine schedule: only the fields for the chosen kind of schedule show (public/ui/os/arms.js). */
+.rtsched { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rtsched > .hint { flex-basis: 100%; }
+.rtsched .rt-weekly, .rtsched .rt-hourly, .rtsched .rt-trigger { display: none; }
+.rtsched[data-type="weekly"] .rt-weekly, .rtsched[data-type="hourly"] .rt-hourly, .rtsched[data-type="trigger"] .rt-trigger { display: initial; }
+.rtsched[data-type="hourly"] .rt-time, .rtsched[data-type="trigger"] .rt-time { display: none; }
+.rtsched[data-type="trigger"][data-on="files-changed"] .rt-onjob, .rtsched[data-type="trigger"]:not([data-on="files-changed"]) .rt-onfiles { display: none; }
+.rtsched #rt_folder { min-width: 320px; flex: 1; }
+/* Share a report (public/ui/os/report.js): the options, then the report page itself as the preview. */
+.modal.away.report { width: min(980px, calc(100vw - 32px)); max-height: min(88vh, 900px); }
+.rpform { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; padding: 14px 22px 4px; }
+.rpform label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.rpform label.wide { grid-column: span 2; }
+.rpform label.chk { flex-direction: row; align-items: center; gap: 6px; align-self: end; padding-bottom: 8px; }
+.rpview { flex: 1; min-height: 360px; margin: 10px 22px 0; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+@media (max-width: 640px) { .rpform { grid-template-columns: 1fr; } .rpform label.wide { grid-column: auto; } }
+/* Hardware (public/ui/os/hardware.js): stat tiles, line charts with a crosshair tooltip, and a table view. */
+.hwstats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.hwstat { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel); }
+.hwstat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; } .hwstat span { color: var(--muted); font-size: 12px; }
+.hwcard { margin-bottom: 12px; }
+.hwchart { position: relative; } .hwchart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.hwgrid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.hwax, .hwend { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; } .hwend { fill: var(--text); font-weight: 600; }
+.hwx { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.hwtip { position: absolute; top: 4px; display: none; min-width: 150px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); font-size: 12px; pointer-events: none; z-index: 2; }
+.hwchart.hover .hwtip { display: block; }
+.hwtip div { display: flex; align-items: center; gap: 6px; } .hwtip i, .hwlegend i { display: inline-block; width: 12px; height: 2px; border-radius: 1px; }
+.hwtip b { font-variant-numeric: tabular-nums; }
+.hwlegend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; } .hwlegend span { display: inline-flex; align-items: center; gap: 6px; }
+.hwtable { margin: 4px 0 12px; } .hwtable summary { cursor: pointer; color: var(--muted); font-size: 12px; } .hwscroll { max-height: 280px; overflow: auto; margin-top: 6px; }
+/* Connectors (public/ui/os/connectors.js): one row of controls per linked project. */
+.prow:has(> .ghlink) { flex-direction: column; align-items: stretch; gap: 8px; }
+.ghlink { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ghlink > .in:first-child { width: 180px; } .ghlink .chk { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.ghlink .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+.pjsand { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pvok { font-weight: 500; color: var(--done); }

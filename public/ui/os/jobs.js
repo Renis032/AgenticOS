@@ -23,7 +23,7 @@ APPS.jobs = {
       const team = Object.values(S.agents).filter((a) => (a.tickets || []).includes(t.id)).length;
       const unread = isUnread(t);
       return `<div class="jl ${S.job === t.id ? 'on' : ''} ${unread ? 'unread' : ''}" data-act="openJob" data-id="${t.id}"><div class="t1">${unread ? '<span class="newdot" title="New reply"></span>' : ''}<span class="n">#${t.n}</span><span class="t">${esc(t.title)}</span>${jobPill(t)}</div>
-        ${listProgress(t)}<div class="meta">${t.waiting ? '<span class="pill s-ask">needs your answer</span>' : ''}${t.plan && t.plan.status === 'pending' ? '<span class="pill s-delegating">plan needs OK</span>' : ''}${t.overBudget && t.status === 'open' ? '<span class="pill s-paused">budget stop</span>' : ''}${t.status === 'scheduled' ? `starts ${whenAt(t.scheduledFor)} · ` : ''}${people.map((a) => esc(a.persona)).join(', ') || 'routing'}${team ? ` +${team}` : ''} · ${money(t.costUsd)}${(t.changes || []).length ? ` · ${t.changes.length} file${t.changes.length === 1 ? '' : 's'}` : ''} · ${ago(t.createdAt)}${t.rating ? (t.rating.score > 0 ? ` · ${thumb(true)}` : ` · ${thumb(false)}`) : ''}</div>${t.answer && t.status !== 'open' && pref('previews', '1') === '1' ? `<div class="prev">${esc(short(plainText(t.answer), 140))}</div>` : ''}</div>`;
+        ${listProgress(t)}<div class="meta">${t.waiting ? '<span class="pill s-ask">needs your answer</span>' : ''}${t.plan && t.plan.status === 'pending' ? '<span class="pill s-delegating">plan needs OK</span>' : ''}${t.overBudget && t.status === 'open' ? '<span class="pill s-paused">budget stop</span>' : ''}${t.status === 'scheduled' ? `${heldWord(t)} · ` : ''}${people.map((a) => esc(a.persona)).join(', ') || 'routing'}${team ? ` +${team}` : ''} · ${money(t.costUsd)}${(t.changes || []).length ? ` · ${t.changes.length} file${t.changes.length === 1 ? '' : 's'}` : ''} · ${ago(t.createdAt)}${t.rating ? (t.rating.score > 0 ? ` · ${thumb(true)}` : ` · ${thumb(false)}`) : ''}</div>${t.answer && t.status !== 'open' && pref('previews', '1') === '1' ? `<div class="prev">${esc(short(plainText(t.answer), 140))}</div>` : ''}</div>`;
     }).join('') || (q.length ? '<div class="empty">No jobs match your search.</div>'
       : `<div class="empty welcome"><b>No jobs yet.</b><div>Ask your team for anything: a bug to fix, a feature, research, a summary.</div><div class="row" style="justify-content:center"><button class="btn pri sm" data-act="app" data-app="newjob">Start a job</button><button class="btn sm" data-act="tour">Take the 1-minute tour</button></div></div>`);
     $('#jobsWrap').classList.toggle('withjob', !!S.job);
@@ -83,22 +83,50 @@ const isImg = (p) => /\.(png|jpe?g|gif|webp)$/i.test(p);
 function fileChip(p, removable) { return `<span class="file">${isImg(p) ? `<img src="${fileUrl(p)}" alt="">` : ic('file')}<a href="${fileUrl(p)}" target="_blank" rel="noopener">${esc(p.split('/').pop())}</a>${removable ? `<span class="x" data-act="unfile" data-path="${esc(p)}">✕</span>` : ''}</span>`; }
 // What you and the leads say stays in view; the work between (assignments, reports, teammates talking, system notes) folds into one line.
 const FOREGROUND = ['user', 'followup', 'answer', 'question', 'reply', 'plan', 'plandecision', 'rating', 'command', 'access'];
+// Long threads open on their latest blocks only (a block is one message or one folded group); earlier ones render
+// when you scroll to the top or click "Show earlier", so a job with hundreds of entries opens at once.
+// S.threadFrom holds how many blocks are hidden; it stays put as new messages arrive, so the view never jumps.
+const THREAD_PAGE = 30;
+function threadBlocks(t) {
+  let n = 0, inGrp = false;
+  for (const e of t.thread) { if (FOREGROUND.includes(e.kind)) { n++; inGrp = false; } else if (!inGrp) { n++; inGrp = true; } }
+  return n;
+}
+function threadFrom(t) {
+  if (S.threadFrom[t.id] == null) S.threadFrom[t.id] = Math.max(0, threadBlocks(t) - THREAD_PAGE);
+  return S.threadFrom[t.id];
+}
+function threadMore(id) {
+  const body = $('#jbody'), t = S.tickets[id];
+  if (!body || !t || !threadFrom(t)) return;
+  const fromEnd = body.scrollHeight - body.scrollTop;
+  S.threadFrom[id] = Math.max(0, threadFrom(t) - THREAD_PAGE);
+  S.jbodyKey = null;
+  renderJob();
+  body.scrollTop = body.scrollHeight - fromEnd;
+}
 function threadHtml(t, upTo) {
   const out = [];
   let grp = [];
   const flush = () => {
     if (!grp.length) return;
-    const k = `${t.id}:${grp[0].t}`;
-    const people = [...new Set(grp.map((e) => e.from).filter((f) => f && !['system', 'user', 'script'].includes(f)))].map(who);
-    const span = grp[grp.length - 1].t - grp[0].t;
-    out.push(`<details class="bg" ${(pref('bgOpen', '0') === '1') !== S.openGroups.has(k) ? 'open' : ''}><summary data-act="bgGroup" data-k="${esc(k)}"><b>${esc(people.length ? (people.length > 3 ? `${people.slice(0, 3).join(', ')} +${people.length - 3}` : people.join(', ')) : 'The office')}</b> worked${span >= 1000 ? ` ${dur(span)}` : ''} · ${grp.length} step${grp.length === 1 ? '' : 's'} <span class="hint">behind the scenes</span></summary>${entryHtml(grp, t)}</details>`);
+    const g = grp;
+    out.push(() => {
+      const k = `${t.id}:${g[0].t}`;
+      const people = [...new Set(g.map((e) => e.from).filter((f) => f && !['system', 'user', 'script'].includes(f)))].map(who);
+      const span = g[g.length - 1].t - g[0].t;
+      return `<details class="bg" ${(pref('bgOpen', '0') === '1') !== S.openGroups.has(k) ? 'open' : ''}><summary data-act="bgGroup" data-k="${esc(k)}"><b>${esc(people.length ? (people.length > 3 ? `${people.slice(0, 3).join(', ')} +${people.length - 3}` : people.join(', ')) : 'The office')}</b> worked${span >= 1000 ? ` ${dur(span)}` : ''} · ${g.length} step${g.length === 1 ? '' : 's'} <span class="hint">behind the scenes</span></summary>${entryHtml(g, t)}</details>`;
+    });
     grp = [];
   };
   for (const e of t.thread.filter((x) => !upTo || x.t <= upTo)) {
-    if (FOREGROUND.includes(e.kind)) { flush(); out.push(entryHtml([e], t)); } else grp.push(e);
+    if (FOREGROUND.includes(e.kind)) { flush(); out.push(() => entryHtml([e], t)); } else grp.push(e);
   }
   flush();
-  return out.join('');
+  // Replay shows the whole history up to its moment; the live thread shows a window.
+  const from = upTo ? 0 : Math.min(threadFrom(t), out.length);
+  const more = from ? `<button class="btn sm threadmore" data-act="threadMore" data-id="${t.id}">Show earlier · ${from} more</button>` : '';
+  return more + out.slice(from).map((f) => f()).join('');
 }
 const CMD_STATE = { pending: 'waiting for your OK', running: 'running', done: 'done', failed: 'failed', denied: 'not run', stopped: 'stopped', 'timed out': 'timed out' };
 function commandHtml(e, t) {
@@ -124,18 +152,18 @@ function entryHtml(list, t) {
     }
     const files = (e.attachments || []).length ? `<div class="files">${e.attachments.map((p) => fileChip(p)).join('')}</div>` : '';
     switch (e.kind) {
-      case 'user': return `<div class="ev user"><div class="h">You${e.to ? ' → ' + esc(who(e.to)) : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
+      case 'user': return `<div class="ev user"><div class="h">You${e.to ? ' → ' + esc(who(e.to)) : ''}${forkLink(e, t)}${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
       case 'followup': if (e.fid && e.fid === queuedFid(t)) return `<div class="ev user queued"><div class="h">You · follow-up · <span class="qtag">queued</span> <a data-act="recallMsg">edit (↑)</a> · <a data-act="sendQueuedNow" title="Deliver it now instead of after the agent's current turn">send now</a>${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
-        return `<div class="ev user"><div class="h">You · follow-up${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
+        return `<div class="ev user"><div class="h">You · follow-up${forkLink(e, t)}${ts}</div><div class="b md">${mdRich(e.text)}</div>${files}</div>`;
       case 'assign': return `<div class="ev assign"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))} · assigned${ts}</div><details><summary>brief</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
       case 'team': return `<div class="ev team"><div class="h">${esc(who(e.from))} started${ts}</div><div class="b">${esc(e.text)}</div></div>`;
-      case 'report': return `<div class="ev report"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))} · report${ts}</div><details><summary>read</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
+      case 'report': return `<div class="ev report"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))} · report${forkLink(e, t)}${ts}</div><details><summary>read</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
       case 'chat': return `<div class="ev chat"><div class="h">${esc(who(e.from))} → ${esc(who(e.to))}${e.ask ? ' · question' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'note': return `<div class="ev"><div class="h">${esc(who(e.from))}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
-      case 'answer': return `<div class="ev answer"><div class="h">${esc(who(e.from))} · answer${t && rateAsked(t) && ['done', 'failed', 'interrupted'].includes(t.status) && e === [...t.thread].reverse().find((x) => x.kind === 'answer') ? `<span class="quickrate"><button class="xbtn" data-act="rate" data-s="1" title="Good answer">${thumb(true)}</button><button class="xbtn" data-act="rate" data-s="-1" title="Not what I needed">${thumb(false)}</button></span>` : ''}${t && t.rework ? '<span class="hint"> · followed up</span>' : ''}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
+      case 'answer': return `<div class="ev answer"><div class="h">${esc(who(e.from))} · answer${t && rateAsked(t) && ['done', 'failed', 'interrupted'].includes(t.status) && e === [...t.thread].reverse().find((x) => x.kind === 'answer') ? `<span class="quickrate"><button class="xbtn" data-act="rate" data-s="1" title="Good answer">${thumb(true)}</button><button class="xbtn" data-act="rate" data-s="-1" title="Not what I needed">${thumb(false)}</button></span>` : ''}${t && t.rework ? '<span class="hint"> · followed up</span>' : ''}${forkLink(e, t)}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'question': return `<div class="ev question"><div class="h">${esc(who(e.from))} asks you${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
       case 'reply': return `<div class="ev reply"><div class="h">You → ${esc(who(e.to))}${ts}</div><div class="b md">${mdRich(e.text)}</div></div>`;
-      case 'plan': return `<div class="ev plan"><div class="h">${esc(who(e.from))} · plan · est. ${money(e.estimateUsd)}${ts}</div><details><summary>read the plan</summary><div class="b md">${mdRich(e.text)}</div></details></div>`;
+      case 'plan': return `<div class="ev plan"><div class="h">${esc(who(e.from))} · plan · est. ${money(e.estimateUsd)}${ts}</div><details><summary>read the plan</summary><div class="b md">${mdRich(e.text)}${doneWhenHtml(e.criteria)}</div></details></div>`;
       case 'plandecision': if (e.auto) return `<div class="line-ev">Plan ${esc(e.auto)} · ${clock(e.t)}</div>`;
         return `<div class="line-ev">You ${e.decision === 'rejected' ? 'rejected' : e.decision === 'changed' ? 'approved with changes' : 'approved'} the plan${e.text ? `: “${esc(e.text)}”` : ''} · ${clock(e.t)}</div>`;
       case 'rating': return `<div class="line-ev">You rated this ${e.score > 0 ? thumb(true) : thumb(false)}${e.text ? `: “${esc(e.text)}”` : ''} · ${clock(e.t)}</div>`;
@@ -303,6 +331,39 @@ function stuckBanner(t) {
   if (!s || t.status !== 'open') return '';
   return `<div class="banner"><b>${esc(s.persona)} has shown no activity for ${dur(Date.now() - s.since)}.</b> ${s.nudgedAt ? `Nudged ${ago(s.nudgedAt)}.` : 'It may be stuck, or thinking through something long.'}<div class="row"><button class="btn sm pri" data-act="jobNudge">Ask for a status</button><button class="btn sm danger" data-act="jobRestartStuck" title="Stop its turn; the job becomes interrupted and can be resumed">Restart ${esc(s.persona)}</button></div></div>`;
 }
+// Why a job hasn't started, in the list and on its page.
+const heldWord = (t) => (t.heldBy === 'night' ? 'overnight queue' : t.afterJob && !t.afterMet ? `after #${t.afterJob.n}` : t.scheduledFor ? `starts ${whenAt(t.scheduledFor)}` : 'waiting');
+function heldText(t) {
+  if (t.heldBy === 'night') return t.afterJob && !t.afterMet ? `It runs with the queue once #${t.afterJob.n} is done.` : 'It starts when you press Work while I sleep.';
+  if (t.heldBy === 'chain') return `It starts when #${t.afterJob.n} is done${t.afterNote ? `, and ${esc(t.afterNote)} for now` : ''}.`;
+  return `Starts ${whenAt(t.scheduledFor)}${t.heldBy === 'daily' ? ': today\'s spending limit is reached' : ', after the 5-hour limit resets'}.`;
+}
+// Where this job sits among the jobs it starts from: a fork's origin, and the chain before and after it.
+function linksHtml(t) {
+  const before = [];
+  for (let p = t, guard = 0; p && p.afterJob && guard < 50; guard++) { p = S.tickets[p.afterJob.id]; if (p) before.unshift(p); }
+  const after = [];
+  for (let c = t, guard = 0; c && guard < 50; guard++) { const id = c.id; c = Object.values(S.tickets).find((x) => x.afterJob && x.afterJob.id === id); if (c) after.push(c); }
+  const link = (x) => `<a data-act="openJob" data-id="${x.id}" title="${esc(x.title)}">#${x.n}</a> <span class="hint">${esc(stateLabel(x.status))}</span>`;
+  const chain = before.length || after.length ? `<span class="hint">Chain:</span> ${[...before.map(link), `<b>#${t.n}</b>`, ...after.map(link)].join(' → ')}` : '';
+  const P = t.forkOf && S.tickets[t.forkOf.id];
+  const fork = P ? `<span class="hint">Forked from</span> <a data-act="openJob" data-id="${P.id}">#${P.n}</a> <span class="hint">at ${clock(t.forkOf.at)}</span>` : '';
+  return chain || fork ? `<div class="joblinks">${[fork, chain].filter(Boolean).join(' &nbsp;·&nbsp; ')}</div>` : '';
+}
+const forkLink = (e, t) => (t && t.status !== 'scheduled' ? ` <a class="forkat" data-act="forkAt" data-at="${e.t}" title="Start a new job from this moment, with a different instruction. This job stays as it is.">⑂ fork</a>` : '');
+// A plan's acceptance criteria, as the user sees them before approving.
+const doneWhenHtml = (list) => ((list || []).length ? `<div class="donewhen"><b>Done when</b><ul>${list.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>` : '');
+// The approved plan's acceptance criteria with the lead's evidence (lib/plans.js) and what the reviewer made of them.
+function criteriaCard(t) {
+  const list = t.plan && ['approved', 'changed'].includes(t.plan.status) ? t.plan.criteria || [] : [];
+  if (!list.length) return '';
+  const met = list.filter((c) => c.met === true).length;
+  const state = list.some((c) => c.met === false) ? 'failed' : met === list.length ? 'passed' : 'running';
+  const R = t.reviewer && t.reviewer.status;
+  const who = R === 'passed' ? 'reported by the lead, reviewer found no problems' : R === 'flagged' ? 'reported by the lead, reviewer has concerns' : R === 'failed' ? 'reported by the lead, reviewer sent it back' : R === 'running' ? 'reported by the lead, reviewer is reading' : 'reported by the lead, not reviewed';
+  const rows = list.map((c) => `<div class="vrow ${c.met === true ? 'ok' : c.met === false ? 'bad' : ''}"><span class="vic">${c.met === true ? '✓' : c.met === false ? '✕' : '–'}</span><span>${esc(c.text)}</span></div><div class="hint vev">${c.met == null ? 'No evidence reported.' : esc(c.evidence)}</div>`).join('');
+  return `<div class="vcard s-${state}"><div class="vh"><span class="vbig">${state === 'passed' ? '✓' : state === 'failed' ? '✕' : '⋯'}</span><b>Acceptance criteria · ${met} of ${list.length} met</b><span class="hint">${who}</span></div>${rows}</div>`;
+}
 // The job's checks (lib/verify.js): running, passed or failed, with the failing output.
 function verifyCard(t) {
   const V = t.verify;
@@ -367,7 +428,7 @@ function needYouHtml(t) {
     const noteOpen = (S.planNoteOpen || {})[t.id];
     items.push(`<div class="need plan"><div class="nh"><span class="nt"><b>${esc(who(t.plan.from))} wants your OK on a plan</b> · estimated <b>${money(t.plan.estimateUsd)}</b>${ticketShare(t.plan.estimateUsd) ? ` <span class="hint">(${ticketShare(t.plan.estimateUsd)})</span>` : ''}${steps ? ` · ${steps} steps` : ''}</span>
       <button class="btn pri sm" data-act="plan" data-d="approve">Approve</button><button class="btn sm" data-act="plan" data-d="always" title="Approve this one and every later plan on this job">Approve, don't ask again here</button><button class="btn sm danger" data-act="plan" data-d="reject">Reject</button></div>
-      <div class="md plantext ${full ? 'full' : ''}">${md(shown)}</div>
+      <div class="md plantext ${full ? 'full' : ''}">${md(shown)}</div>${doneWhenHtml((t.plan.criteria || []).map((c) => c.text))}
       <div class="nfoot">${full || lines.length <= PLAN_PREVIEW ? '' : `<a data-act="planFull">Show all ${steps || lines.length} ${steps ? 'steps' : 'lines'}</a>`}${noteOpen ? '' : `<a data-act="planNoteOpen">Suggest changes…</a>`}</div>
       ${noteOpen ? '<textarea id="planNote" placeholder="What should change? Then press Approve." style="min-height:40px;margin-top:6px"></textarea>' : ''}</div>`);
   }
@@ -391,9 +452,10 @@ function renderJob() {
   const t = S.tickets[S.job];
   if (!t) { if (S.jviewFor !== '') { S.jviewFor = ''; v.innerHTML = `<div class="empty">Select a job, or start one with <kbd>N</kbd>.</div>`; } return; }
   if (S.jviewFor !== t.id) {
-    S.jviewFor = t.id; S.jbodyFor = null; S.jbodyKey = null; S.followFiles = []; S.rerate = false;
+    S.jviewFor = t.id; S.jbodyFor = null; S.jbodyKey = null; S.followFiles = []; S.rerate = false; S.threadFrom = {};
     v.innerHTML = `<div class="jhead" id="jhead"></div><div id="jban"></div><div class="tabs" id="jtabs"></div><div class="jbody" id="jbody"></div><div class="jlive" id="jlive" aria-live="polite"></div><div id="jneed" role="region" aria-label="Needs you"></div>
       <div class="composer"><textarea id="jtext"></textarea><div class="files" id="jfiles"></div><div class="row"><button class="btn sm ibtn" data-act="attachJob" title="Attach files" aria-label="Attach files">${ic('clip')}</button>${undoBtns('jtext')}<span class="hint" id="jhint" style="flex:1"></span><span id="jsend" class="hint"></span><button class="btn pri sm" data-act="jobSend">Send</button></div></div>`;
+    $('#jbody').addEventListener('scroll', (e) => { if (S.jtab === 'thread' && !S.replay && e.target.scrollTop < 80 && e.target.querySelector(':scope > .threadmore')) threadMore(S.job); }, { passive: true });
     wireDrop($('#jtext'), () => S.followFiles, () => { $('#jfiles').innerHTML = S.followFiles.map((p) => fileChip(p, true)).join(''); });
     const box = $('#jtext');
     box.value = S.compose[t.id] || '';
@@ -412,12 +474,13 @@ function renderJob() {
   const people = [...new Set([t.direct, ...t.assignees].filter((k) => k && k !== S.root))];
   $('#jhead').innerHTML = `<h2><button class="btn sm jback" data-act="jobBack" aria-label="Back to the job list">‹ Jobs</button><span class="hint mono">#${t.n}</span><span class="jt" title="${esc(t.title)}">${esc(t.title)}</span>${pill(t.status)}<span style="flex:1"></span>
       ${t.status === 'open' ? '<button class="btn sm" data-act="pause">Pause</button><button class="btn sm danger" data-act="stop">Stop</button>' : ''}${t.status === 'paused' ? '<button class="btn sm pri" data-act="resume">Resume</button><button class="btn sm danger" data-act="stop">Stop</button>' : ''}
-      ${!['open', 'paused'].includes(t.status) ? `<button class="btn sm" data-act="archive">${t.archived ? 'Unarchive' : 'Archive'}</button>` : ''}${canWrap ? `<button class="btn sm" data-act="wrapUp" title="Ask ${esc(who(owner))} to save the project handoff and sum up">Wrap up</button>` : ''}<button class="btn sm" data-act="delJob">Delete</button></h2>
+      ${!['stopped', 'failed'].includes(t.status) ? '<button class="btn sm" data-act="thenJob" title="Start another job when this one is done, with its result">Then…</button>' : ''}${jobGithubHtml(t)}${!['open', 'paused'].includes(t.status) ? `<button class="btn sm" data-act="archive">${t.archived ? 'Unarchive' : 'Archive'}</button>` : ''}${canWrap ? `<button class="btn sm" data-act="wrapUp" title="Ask ${esc(who(owner))} to save the project handoff and sum up">Wrap up</button>` : ''}<button class="btn sm" data-act="delJob">Delete</button></h2>
     <div class="kv"><span>cost <b>${money(t.costUsd)}</b>${t.budgetUsd != null ? ` of ${money(t.budgetUsd)}` : ''}</span>${t.costUsd && ticketShare(t.costUsd) ? `<span>limits <b>${ticketShare(t.costUsd)}</b></span>` : ''}<span>owner <b>${esc(people.map(who).join(', ') || 'routing')}</b></span>${t.project ? `<span>project <b>${esc(t.project)}</b></span>` : ''}<span>lead effort <b>${esc(t.leadEffort || 'high')}</b></span><span>opened <b>${ago(t.createdAt)}</b></span>${t.closedAt ? `<span>took <b>${dur(t.closedAt - t.createdAt)}</b></span>` : ''}</div>`;
   const q = t.waiting;
   const banHtml = failBanner(t) + stuckBanner(t) + handoffBanner(t) + (t.overBudget && t.status === 'open' ? `<div class="banner"><b>Paused at the budget.</b> ${money(t.costUsd)} of ${money(t.budgetUsd)} spent. <div class="row"><button class="btn pri sm" data-act="budget" data-add="5">+ $5</button><button class="btn sm" data-act="budget" data-add="10">+ $10</button><button class="btn sm danger" data-act="stop">Stop job</button></div></div>` : '')
     + (t.status === 'paused' ? '<div class="banner"><b>Paused.</b> Nothing runs on this job until you resume it.</div>' : '')
-    + (t.status === 'scheduled' ? `<div class="banner"><b>Scheduled.</b> Starts ${whenAt(t.scheduledFor)}${t.heldBy === 'daily' ? ': today\'s spending limit is reached' : ', after the 5-hour limit resets'}. <div class="row"><button class="btn pri sm" data-act="startNow">Start now</button></div></div>` : '');
+    + (t.status === 'scheduled' ? `<div class="banner"><b>${t.heldBy === 'night' ? 'In the overnight queue.' : t.heldBy === 'chain' ? 'Waiting.' : 'Scheduled.'}</b> ${heldText(t)} <div class="row"><button class="btn pri sm" data-act="startNow">Start now</button></div></div>` : '')
+    + linksHtml(t);
   const ban = $('#jban');
   if (ban.dataset.h !== banHtml) { ban.innerHTML = banHtml; ban.dataset.h = banHtml; }
   const need = $('#jneed');
@@ -430,10 +493,10 @@ function renderJob() {
     [...need.querySelectorAll('.plantext, .md')].forEach((x, k) => { x.scrollTop = scrolls[k] || 0; });
   }
   const nCh = (t.changes || []).length;
-  $('#jtabs').innerHTML = [['thread', 'Thread'], ['tree', 'Process tree'], ['changes', `Changes${nCh ? ` (${nCh})` : ''}`], ['timeline', 'Timeline']].map(([k, l]) => `<button class="${S.jtab === k ? 'on' : ''}" data-act="jtab" data-tab="${k}">${l}</button>`).join('');
+  $('#jtabs').innerHTML = [['thread', 'Thread'], ['tree', 'Process tree'], ['changes', `Changes${nCh ? ` (${nCh})` : ''}`], ['preview', 'Preview'], ['timeline', 'Timeline'], ['hardware', 'Hardware']].map(([k, l]) => `<button class="${S.jtab === k ? 'on' : ''}" data-act="jtab" data-tab="${k}">${l}</button>`).join('');
   $('#jtext').placeholder = q ? `Answer ${who(q.from)}…` : t.status === 'open' ? 'Add to this job…' : 'Reply to reopen this job…';
   $('#jhint').textContent = (q ? `Answers ${who(q.from)}.` : `Goes to ${who(t.direct || (t.assignees.length === 1 ? t.assignees[0] : S.root))}.`) + (pref('sendKey', 'enter') === 'ctrl' ? ' Ctrl+Enter sends.' : ' Enter sends, Shift+Enter adds a line.') + (queuedFid(t) ? ' ↑ edits your queued message.' : '');
-  const key = `${t.id}|${S.jtab}|${t.thread.length}|${t.verify ? t.verify.status + (t.verify.runs || []).length : ''}|${t.workspace ? t.workspace.status : ''}|${S.ws && S.ws.id === t.id && S.ws.r ? 'w' : ''}|${queuedFid(t)}|${t.status}|${(t.commands || []).map((c) => c.status).join()}|${(t.access || []).map((r) => r.status).join()}|${nCh}|${(t.changes || []).map((c) => c.revertedAt || 0).join()}|${t.rating ? t.rating.score : 0}|${S.rerate}|${S.replay ? Math.round(S.replay.t / 1000) : ''}|${S.jtab === 'tree' || S.jtab === 'timeline' ? Math.floor(Date.now() / 5000) + Object.values(S.agents).map((a) => a.status).join('') : ''}`;
+  const key = `${t.id}|${S.jtab}|${t.thread.length}|${threadFrom(t)}|${t.verify ? t.verify.status + (t.verify.runs || []).length : ''}|${t.plan && t.plan.criteria ? t.plan.criteria.map((c) => c.at || 0).join() : ''}|${t.reviewer ? t.reviewer.status : ''}|${t.walkthrough ? t.walkthrough.status + t.walkthrough.at : ''}|${t.workspace ? t.workspace.status : ''}|${S.ws && S.ws.id === t.id && S.ws.r ? 'w' : ''}|${queuedFid(t)}|${t.status}|${(t.commands || []).map((c) => c.status).join()}|${(t.access || []).map((r) => r.status).join()}|${nCh}|${(t.changes || []).map((c) => c.revertedAt || 0).join()}|${t.rating ? t.rating.score : 0}|${S.rerate}|${S.replay ? Math.round(S.replay.t / 1000) : ''}|${S.jtab === 'hardware' ? Math.floor(Date.now() / 4000) : ''}${S.jtab === 'tree' || S.jtab === 'timeline' ? Math.floor(Date.now() / 5000) + Object.values(S.agents).map((a) => a.status).join('') : ''}`;
   if (key === S.jbodyKey) return;
   S.jbodyKey = key;
   const body = $('#jbody');
@@ -445,14 +508,41 @@ function renderJob() {
     const prevLen = S.jbodyLen || 0;
     const fresh = same ? t.thread.slice(prevLen) : [];
     const mine = fresh.some((e) => ['user', 'followup', 'reply'].includes(e.kind));
-    const jump = stickyRender(body, same && !mine, () => { body.innerHTML = threadHtml(t) + '<div id="jdraft"></div>' + verifyCard(t) + workspaceCard(t) + changesCard(t) + rate; });
+    const jump = stickyRender(body, same && !mine, () => { body.innerHTML = threadHtml(t) + '<div id="jdraft"></div>' + criteriaCard(t) + verifyCard(t) + workspaceCard(t) + changesCard(t) + rate; });
     if (!same) body.scrollTop = q ? 0 : body.scrollHeight;
     else if (jump && fresh.some((e) => FOREGROUND.includes(e.kind) && !['user', 'followup', 'reply'].includes(e.kind))) newPill(body, fresh.length);
     S.jbodyFor = t.id; S.jbodyLen = t.thread.length;
   } else if (S.jtab === 'tree') {
     getTimeline(t).then((tl) => { if (S.job === t.id && S.jtab === 'tree') body.innerHTML = `<div class="hint" style="margin:10px 0">Who started whom on this job, with each process's state and its cost here. Click a process to inspect it.</div>${jobTreeHtml(t, tl)}`; });
   } else if (S.jtab === 'changes') renderChanges(t, body);
+  else if (S.jtab === 'preview') renderPreview(t, body);
+  else if (S.jtab === 'hardware') renderHardware(t, body);
   else renderTimeline(t, body);
+}
+// The guided tour of a job's changes (lib/walkthrough.js).
+function walkthroughHtml(t, list) {
+  const shown = list.filter((c) => c.state !== 'unchanged');
+  if (!shown.length) return '';
+  const W = t.walkthrough;
+  const startBtn = (label) => `<button class="btn sm" data-act="wtStart" title="One Sonnet call, usually a few cents">${label}</button>`;
+  if (!W) return `<div class="wtcard"><div class="row" style="margin:0"><span class="hint" style="flex:1">Reviewing this? Get the files in a sensible reading order, with why each one changed.</span>${startBtn('Walk me through it')}</div></div>`;
+  if (W.status === 'running') return '<div class="wtcard"><b>Reading the changes…</b> <span class="hint">the tour appears here in a moment.</span></div>';
+  if (W.status === 'failed') return `<div class="wtcard"><div class="row" style="margin:0"><span style="flex:1">The walkthrough didn't work: ${esc(W.error || 'unknown problem')}</span>${startBtn('Try again')}</div></div>`;
+  const sig = shown.map((c) => `${c.path}:${c.added}:${c.removed}`).join('|');
+  const steps = W.steps;
+  const i = Math.max(0, Math.min(steps.length - 1, (S.wtStep || {})[t.id] || 0));
+  const s = steps[i];
+  const c = list.find((x) => x.path === s.path);
+  const stale = W.sig !== sig;
+  return `<div class="wtcard"><div class="row" style="margin:0 0 6px"><b style="flex:1">Walkthrough · step ${i + 1} of ${steps.length}</b><button class="btn sm" data-act="wtGo" data-to="${i - 1}" ${i ? '' : 'disabled'}>← Back</button><button class="btn sm ${i < steps.length - 1 ? 'pri' : ''}" data-act="wtGo" data-to="${i + 1}" ${i < steps.length - 1 ? '' : 'disabled'}>Next →</button></div>
+    ${i === 0 && W.intro ? `<div class="wtintro">${esc(W.intro)}</div>` : ''}
+    ${stale ? `<div class="banner" style="margin:6px 0">The changes have moved on since this tour. ${startBtn('Make a new one')}</div>` : ''}
+    <div class="p mono"><bdi>${esc(s.path)}</bdi></div>
+    ${s.missed ? '<div class="hint">The tour left this file out, so you get its diff with no explanation.</div>' : `<div class="wtwhy">${esc(s.why)}</div>`}
+    ${s.look ? `<div class="wtlook"><b>Worth checking:</b> ${esc(s.look)}</div>` : ''}
+    ${(W.cut || []).includes(s.path) ? '<div class="hint">This file\'s diff was too long to read in full, so the explanation may be partial.</div>' : ''}
+    ${c && c.diff ? `<pre class="diff">${diffHtml(c.diff)}</pre>` : '<div class="hint">No diff to show for this file now.</div>'}
+    <div class="hint" style="margin-top:6px">Tour cost ${money(W.costUsd || 0)}, added to this job.</div></div>`;
 }
 async function renderChanges(t, body) {
   const list = await api('GET', `/api/tickets/${t.id}/changes`).catch((e) => ({ error: e.message }));
@@ -460,7 +550,7 @@ async function renderChanges(t, body) {
   if (list.error) { body.innerHTML = `<div class="empty">${esc(list.error)}</div>`; return; }
   if (!list.length) { body.innerHTML = '<div class="empty">No files changed on this job.</div>'; return; }
   const live = list.filter((c) => c.state !== 'unchanged').length;
-  body.innerHTML = `<div class="row"><span class="hint" style="flex:1">${live} of ${list.length} file${list.length === 1 ? '' : 's'} differ from before this job. Undo restores the copy saved before the first edit here (it never touches git).</span>${live ? '<button class="btn sm danger" data-act="revert" data-path="">Undo all</button>' : ''}</div>` +
+  body.innerHTML = walkthroughHtml(t, list) + `<div class="row"><span class="hint" style="flex:1">${live} of ${list.length} file${list.length === 1 ? '' : 's'} differ from before this job. Undo restores the copy saved before the first edit here (it never touches git).</span>${live ? '<button class="btn sm danger" data-act="revert" data-path="">Undo all</button>' : ''}</div>` +
     list.map((c) => {
       const diff = diffHtml(c.diff);
       return `<div class="diffhead">${pill(c.state === 'unchanged' ? 'queued' : c.state === 'deleted' ? 'failed' : 'done', c.state === 'unchanged' ? (c.revertedAt ? 'undone' : 'same') : c.state)}<span class="p" title="${esc(c.path)}"><bdi>${esc(c.path)}</bdi></span><span class="hint mono">+${c.added} −${c.removed}</span>${c.state !== 'unchanged' ? `<button class="btn sm" data-act="revert" data-path="${esc(c.path)}">Undo</button>` : ''}</div>

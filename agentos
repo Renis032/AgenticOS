@@ -59,8 +59,9 @@ EOF
     printf '[Desktop Entry]\nType=Application\nName=Agentic OS\nComment=Your permanent team of Claude agents\nExec=%s --background\nIcon=%s\nTerminal=false\nX-GNOME-Autostart-enabled=true\n' "$HERE/agentos" "$HERE/app/icon.png" > "$f"
     echo "Agentic OS starts at login, in the tray (./agentos autostart off to undo)."; exit 0 ;;
   -h|--help|help)
-    echo "usage: ./agentos [--background|status|stop [-f]|restart [--when-idle|--cancel]|setup|demo|install|uninstall|autostart on|off]"
+    echo "usage: ./agentos [--background|--browser|status|stop [-f]|restart [--when-idle|--cancel]|setup|demo|install|uninstall|autostart on|off]"
     echo "  (no argument)                      start the backend if needed and open the Agentic OS window (first run: setup)"
+    echo "  --browser, -b                      open the office in your default browser instead (macOS, WSL, any Linux)"
     echo "  setup [--yes]                      check requirements and set up your team and projects"
     echo "  demo [--no-window] [--keep]        a throwaway office with stand-in agents: no Claude account, nothing spent"
     echo "  restart --when-idle [--no-check]   finish running work, hold new work, check the new version, then restart; the window reloads"
@@ -73,6 +74,24 @@ if ! up; then
   up || { echo "The server did not start; see data/server.log"; exit 1; }
 fi
 
-python3 -c "import gi; gi.require_version('WebKit2', '4.0')" 2>/dev/null || { echo "Needs python3-gi and gir1.2-webkit2-4.0 (sudo apt install python3-gi gir1.2-webkit2-4.0)."; exit 1; }
+# The office in your default browser: macOS, WSL, or Linux without the GTK window. A one-time launch code lets the
+# browser in, so the app token never lands in a URL or the browser's history.
+open_browser() {
+  link="$(curl -s -m 3 -X POST -H "x-agentos-token: $(cat data/app-token)" "http://127.0.0.1:$PORT/__launch" | node -e 'try { process.stdout.write(JSON.parse(require("fs").readFileSync(0)).url || ""); } catch {}')"
+  [ -n "$link" ] || { echo "Could not get a launch link from the server; see data/server.log"; exit 1; }
+  if [ "$(uname)" = "Darwin" ]; then open "$link"
+  elif grep -qi microsoft /proc/version 2>/dev/null && command -v cmd.exe >/dev/null; then cmd.exe /c start "" "$link" >/dev/null 2>&1
+  elif command -v xdg-open >/dev/null; then xdg-open "$link" >/dev/null 2>&1 &
+  else echo "Open this link in your browser within a minute (it works once): $link"; exit 0; fi
+  echo "Agentic OS is open in your browser. The office keeps running when you close the tab; ./agentos stop ends it."
+  exit 0
+}
+[ "$1" = "--browser" ] || [ "$1" = "-b" ] && open_browser
+if ! python3 -c "import gi; gi.require_version('WebKit2', '4.0')" 2>/dev/null; then
+  if [ "$(uname)" = "Linux" ] && ! grep -qi microsoft /proc/version 2>/dev/null; then
+    echo "The desktop window needs python3-gi and gir1.2-webkit2-4.0 (sudo apt install python3-gi gir1.2-webkit2-4.0); opening your browser instead."
+  fi
+  open_browser
+fi
 WORKPLACE_PORT="$PORT" nohup python3 app/agentos-window.py $([ "$1" = "--background" ] && echo --background) >/dev/null 2>&1 &
 [ "$1" = "--background" ] && echo "Agentic OS is running in the tray." || echo "Agentic OS is open."

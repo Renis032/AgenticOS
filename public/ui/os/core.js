@@ -50,7 +50,7 @@ const S = {
   app: pref('startApp', 'today') === 'last' ? pref('app', 'today') : pref('startApp', 'today'), sel: null, job: null, jtab: 'thread', itab: 'mind', collapsed: new Set(), showIdle: pref('showIdle', '1') === '1', showOnCall: pref('showOnCall', '0') === '1',
   pq: '', pjob: '', jq: '', showArchived: false, events: {}, live: {}, newFiles: [], followFiles: [], chatTeam: null, libTeam: null, libPage: null,
   memAgent: null, term: { out: [], hist: [], hi: -1 }, timeline: {}, replay: null, spend: null, cfg: null, scripts: [], rerate: false,
-  drafts: {}, seen: prefObj('seen'), compose: prefObj('compose'), openGroups: new Set(), handoffDocs: {},
+  drafts: {}, seen: prefObj('seen'), compose: prefObj('compose'), openGroups: new Set(), threadFrom: {}, handoffDocs: {},
   board: null, boardAt: 0, boardQ: '', boardOpen: null, chg: {}, planOpen: false, pendingSend: null,
 };
 const who = (id) => (id === 'user' ? 'You' : id === 'script' ? 'Office script' : id === 'system' ? 'System' : S.agents[id] ? S.agents[id].persona : id);
@@ -106,7 +106,7 @@ function toolStep(name, i) {
   if (name === 'WebSearch') return `Searching the web: ${cut(i.query)}`;
   if (name === 'WebFetch') return `Reading ${cut(i.url)}`;
   const n = String(name).replace(/^mcp__workplace__/, '');
-  const words = { delegate: 'Handing work to teammates', wait_for_team: 'Waiting for teammates', ask_user: 'Asking you a question', propose_plan: 'Proposing a plan',
+  const words = { delegate: 'Handing work to teammates', wait_for_team: 'Waiting for teammates', ask_user: 'Asking you a question', propose_plan: 'Proposing a plan', report_evidence: 'Reporting evidence for the plan',
     search_tickets: `Checking past jobs for ${cut(i.query)}`, script: `Running script ${cut(i.name)}`, ask: `Asking ${i.to || 'a colleague'}`, update_memory: 'Updating its memory',
     add_to_team_docs: 'Writing team notes', save_project_handoff: `Saving the ${i.project || 'project'} handoff`, report_progress: cut(i.status) };
   return words[n] || `Using ${n.replace(/^mcp__[^_]+__/, '').replace(/_/g, ' ')}`;
@@ -115,7 +115,7 @@ function toolStep(name, i) {
 // ================================================================ boot + live updates
 async function init() {
   const st = await api('GET', '/api/state');
-  S.roles = st.roles; S.projects = st.projects; S.residents = st.residents; S.root = st.root; S.limits = st.limits;
+  S.roles = st.roles; S.projects = st.projects; S.residents = st.residents; S.root = st.root; S.limits = st.limits; S.overnight = st.overnight;
   S.restart = st.restart || {}; S.uiAtLoad = S.restart.uiStamp || 0;
   api('GET', '/api/skill-proposals').then((l) => { S.skPending = l.filter((x) => x.status === 'pending').length; dirty(); }).catch(() => {});
   S.agents = Object.fromEntries(st.agents.map((a) => [a.id, a]));
@@ -128,7 +128,7 @@ async function init() {
   await Promise.all(Object.values(S.agents).filter((a) => a.resident || ACTIVE.includes(a.status)).map((a) => loadEvents(a.id)));
   readHash();
   openApp(S.app, true);
-  checkAway();
+  if (nightReportDue()) openApp('overnight'); else checkAway();
   if (!/[?&]nosse/.test(location.search)) connect();
   setInterval(tick, 1000);
   tick();
@@ -185,6 +185,11 @@ function connect() {
       delete S.tickets[m.id];
       if (S.job === m.id) S.job = null;
     } else if (m.type === 'limits') S.limits = m.limits;
+    else if (m.type === 'overnight') S.overnight = m.overnight;
+    else if (m.type === 'preview') { if (PV.id === m.ticketId && S.tickets[m.ticketId]) pvLoad(S.tickets[m.ticketId]); }
+    else if (m.type === 'sandbox') { S.sbx = null; if ($('#prefs').classList.contains('on') && S.prefSec === 'agents') renderPrefs(); }
+    else if (m.type === 'connectors') { S.gm = null; S.gh = null; if ($('#prefs').classList.contains('on') && S.prefSec === 'connectors') renderPrefs(); }
+    else if (m.type === 'auth') { S.auth = m.auth; if ($('#prefs').classList.contains('on') && S.prefSec === 'account') renderPrefs(); }
     else if (m.type === 'notify') notify(m.kind, m.title, m.text, m.ticketId);
     else if (m.type === 'selftest') S.selftest = m.selftest;
     else if (m.type === 'evals') { S.evals = null; S.hKey = null; }
@@ -213,6 +218,7 @@ const APP_LIST = [
   { id: 'inbox', ic: 'bell', name: 'Needs you', key: 'w' },
   { id: 'jobs', ic: 'jobs', name: 'Jobs', key: 'j' },
   { id: 'newjob', ic: 'newjob', name: 'New job', key: 'n' },
+  { id: 'overnight', ic: 'moon', name: 'Overnight', key: 'z' },
   { id: 'projects', ic: 'projects', name: 'Projects', key: 'o' },
   { id: 'brain', ic: 'brain', name: 'Brain', key: 'b' },
   { id: 'processes', ic: 'processes', name: 'Processes', key: 'p' },
@@ -232,7 +238,8 @@ const APP_LIST = [
 ];
 function groupOf(i) { for (let j = i; j >= 0; j--) if (APP_LIST[j].grp) return APP_LIST[j].grp; return null; }
 function navOpen() { return new Set(prefObj('navOpen') || []); }
-function windowOf(k) { return (S.limits && S.limits.windows && S.limits.windows[k]) || null; }
+// With an API key there are no plan windows: billing is per use, so every plan meter hides.
+function windowOf(k) { return (S.limits && S.limits.billing !== 'api' && S.limits.windows && S.limits.windows[k]) || null; }
 const live = (w) => (w.resetsAt && w.resetsAt < Date.now() ? 0 : w.utilization || 0);
 const meterColor = (u) => (u >= 0.85 ? 'var(--fail)' : u >= 0.7 ? 'var(--stop)' : 'var(--done)');
 function renderChrome() {
@@ -254,7 +261,7 @@ function renderChrome() {
       : `<div class="dock-sec">${esc(x.grp)}</div>`;
     return `${head}<div class="app-link ${S.app === x.id ? 'on' : ''} ${folded ? 'folded' : ''}" data-act="app" data-app="${x.id}" data-tip="${esc(x.name)} · ${esc(x.key)}" role="link" aria-label="${esc(x.name)}"><span class="ic">${ic(x.ic)}</span><span class="lbl">${esc(x.name)}</span>${badges[x.id] ? `<span class="bd ${badges[x.id][1]}">${badges[x.id][0]}</span>` : ''}</div>`;
   }).join('');
-  $('#meters').innerHTML = ['five_hour', 'seven_day'].map((k) => { const w = windowOf(k); if (!w) return ''; const u = live(w); return `<span class="meter" data-act="app" data-app="usage" title="${k === 'five_hour' ? '5-hour' : 'Weekly'} limit${w.resetsAt ? ', resets ' + whenAt(w.resetsAt) : ''}"><span class="lbl">${k === 'five_hour' ? '5h' : 'week'}</span><i><b style="width:${Math.min(100, u * 100)}%;background:${meterColor(u)}"></b></i><span>${pct(u)}</span></span>`; }).join('');
+  $('#meters').innerHTML = S.limits && S.limits.billing === 'api' ? `<span class="meter" data-act="app" data-app="usage" title="Agents use your Anthropic API key, billed per use (Preferences → Account)"><span class="lbl">API</span><span>${money(S.limits.today || 0)} today</span></span>` : ['five_hour', 'seven_day'].map((k) => { const w = windowOf(k); if (!w) return ''; const u = live(w); return `<span class="meter" data-act="app" data-app="usage" title="${k === 'five_hour' ? '5-hour' : 'Weekly'} limit${w.resetsAt ? ', resets ' + whenAt(w.resetsAt) : ''}"><span class="lbl">${k === 'five_hour' ? '5h' : 'week'}</span><i><b style="width:${Math.min(100, u * 100)}%;background:${meterColor(u)}"></b></i><span>${pct(u)}</span></span>`; }).join('');
   $('#hdot').className = 'dot ' + (S.health ? S.health.level : '');
   renderTitlebar(running, openJobs.length);
   const h = S.limits && S.limits.hold;

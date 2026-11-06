@@ -16,7 +16,7 @@ const MAX_RUNNING = Number(process.env.WORKPLACE_MAX_RUNNING || 8);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 const DATA = path.join(ROOT, 'data');
 const EVENTS_DIR = path.join(DATA, 'events');
-const EVENTS_IN_MEMORY = 1500;
+const EVENTS_IN_MEMORY = Number(process.env.AGENTOS_EVENTS_IN_MEMORY) || 1500;
 const SNAP_DIR = path.join(DATA, 'snapshots');
 const UPLOADS = path.join(DATA, 'uploads');
 const HOST = '127.0.0.1';
@@ -26,6 +26,8 @@ const libraryCheck = require('./scripts/library-check');
 const weeklyReport = require('./scripts/weekly-report');
 const { choose: chooseModel } = require('./scripts/choose-model');
 const usageIndex = require('./scripts/usage-index');
+// The usage index's queries run in a worker thread, so adding up every transcript never holds up the office (lib/usage-worker.js).
+const usageQueries = require('./lib/usage-worker').create();
 fs.mkdirSync(EVENTS_DIR, { recursive: true });
 
 const home = (p) => (p && p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p);
@@ -71,14 +73,27 @@ let shuttingDown = false;
 
 // ---------------------------------------------------------------- state on disk (lib/state.js)
 
-const { assignPids, summary, loadState, saveNow, saveState, eventsOf, getTeamState, nextTicketN } = require('./lib/state').install({
+const { assignPids, summary, loadState, saveNow, saveState, eventsOf, eventLimit, slimEvent, getTeamState, nextTicketN } = require('./lib/state').install({
   ACTIVE, DATA, EVENTS_DIR, EVENTS_IN_MEMORY, agents, fs, path, readJson, tickets,
 });
+
+// ---------------------------------------------------------------- other model providers for one-shot tasks (lib/providers.js)
+
+const providers = require('./lib/providers').install({ DATA, now });
+
+// ---------------------------------------------------------------- sandboxed projects: jobs worked on inside Docker (lib/sandbox.js)
+
+const sandbox = require('./lib/sandbox').install({ CLAUDE_BIN, DATA, PORT, ROOT, UPLOADS, broadcast: (...a) => broadcast(...a), home, readJson, tickets });
+
+// ---------------------------------------------------------------- how agents sign in: Claude Code login or an API key (lib/auth.js)
+
+const auth = require('./lib/auth').install({ DATA, broadcast: (...a) => broadcast(...a),
+  onChange: () => { checkHold(); broadcast({ type: 'limits', limits: limitsView() }); } });
 
 // ---------------------------------------------------------------- plan usage limits (lib/limits.js)
 
 const { LIMITS_FILE, limits, noteSpend, onRateLimit, checkHold, continuePastLimit, limitsView, probeLimits } = require('./lib/limits').install({
-  DATA, fs, os, path, spawn, CLAUDE_BIN, now, readJson, agents,
+  DATA, fs, os, path, spawn, CLAUDE_BIN, now, readJson, agents, billing: auth.billing,
   broadcast: (...a) => broadcast(...a), childEnv: (...a) => childEnv(...a), readLines: (...a) => readLines(...a),
   pump: () => pump(), pumpResident: (a) => pumpResident(a),
 });
@@ -102,11 +117,14 @@ function touchTicket(t) {
 }
 function addEvent(a, ev) {
   ev.t = now();
-  const list = eventsOf(a);
-  list.push(ev);
-  if (list.length > EVENTS_IN_MEMORY * 1.2) list.splice(0, list.length - EVENTS_IN_MEMORY);
+  // The whole event goes to the log on disk; memory and the window get a copy with very long fields trimmed.
   fs.appendFileSync(path.join(EVENTS_DIR, a.id + '.jsonl'), JSON.stringify(ev) + '\n');
-  broadcast({ type: 'event', agentId: a.id, event: ev });
+  const mem = slimEvent(ev);
+  const list = eventsOf(a);
+  list.push(mem);
+  const limit = eventLimit(a);
+  if (list.length > limit * 1.2) list.splice(0, list.length - limit);
+  broadcast({ type: 'event', agentId: a.id, event: mem });
 }
 function thread(t, entry) {
   entry.t = now();
@@ -117,7 +135,7 @@ function thread(t, entry) {
 // ---------------------------------------------------------------- roster, memory, prompts and the agent command line (lib/prompts.js)
 
 const { expandTools, defOf, childRolesFor, MEMORY_DIR, readMemory, writeMemory, giveFeedback, pendingFeedback, standingLines, standingVersion, setStanding, teamOf, modelOf, promptSizes, buildArgs, claudeSkillsFor, childEnv } = require('./lib/prompts').install({
-  DATA, PORT, ROOT, UPLOADS, addEvent, agents, fs, home, now, os, path, readJson, spawn, touch,
+  DATA, PORT, ROOT, UPLOADS, addEvent, agents, authEnv: auth.applyEnv, fs, home, now, os, path, readJson, spawn, touch,
   canRunCommands: (...a) => canRunCommands(...a), commandMode: (...a) => commandMode(...a),
   handoffsOf: (...a) => handoffsOf(...a), savedHandoffs: (...a) => savedHandoffs(...a),
   lessons: live(() => lessons), skillProposals: live(() => skillProposals),
@@ -132,6 +150,7 @@ const { readLines, onStreamMessage, ticketBudget, waitForBudget, releaseBudget }
 // ---------------------------------------------------------------- residents, the always-alive agents (lib/residents.js)
 
 const { PERSONAS, baseAgent, startResident, enqueueResident, pumpResident, restartResident } = require('./lib/residents').install({
+  sandbox,
   CLAUDE_BIN, addEvent, agents, broadcast, buildArgs, childEnv, fs, home, limits, modelOf, now, onStreamMessage, path, pendingFeedback, procs, readJson, readLines, spawn, standingLines, standingVersion, thread, tickets, touch, touchTicket,
   isShuttingDown: () => shuttingDown, arms: live(() => arms), lessons: live(() => lessons), verify: live(() => verify), closeTicket: (...a) => closeTicket(...a), recovery: live(() => recovery),
   handoffBrief: (...a) => handoffBrief(...a), handoffsOf: (...a) => handoffsOf(...a), projectsMentioned: (...a) => projectsMentioned(...a),
@@ -139,16 +158,19 @@ const { PERSONAS, baseAgent, startResident, enqueueResident, pumpResident, resta
 });
 // ---------------------------------------------------------------- tickets (lib/tickets.js)
 
-const { newTicket, stopTicket, cleanAttachments, attachText, saveUpload, rawBody, createTicket, dispatchTicket, runSchedule, askUser, answerUser, followUp, recallFollowup, sendFollowupNow, rateTicket, searchTickets, searchText, pauseTicket, resumeTicket } = require('./lib/tickets').install({
+const { newTicket, stopTicket, cleanAttachments, attachText, saveUpload, rawBody, createTicket, dispatchTicket, holdForDailyCap, runSchedule, askUser, answerUser, followUp, recallFollowup, sendFollowupNow, rateTicket, searchTickets, searchText, pauseTicket, resumeTicket } = require('./lib/tickets').install({
+  providers,
   ACTIVE, EFFORTS, UPLOADS, addEvent, agents, broadcast, checkHold, enqueueResident, fs, giveFeedback, limits, newId, nextTicketN, now, path, planWaiters,
   mail, probeLimits, pumpResident, quickEffort, readJson, releaseBudget, restartResident, routeByRules, thread, ticketBudget, tickets, touch, touchTicket, userAskWaiters,
   endAccess: (...a) => endAccess(...a), endCommands: (...a) => endCommands(...a), lessons: live(() => lessons),
   maybeWeeklyReviews: (...a) => maybeWeeklyReviews(...a), stopTree: (...a) => stopTree(...a), ticketOfAgent: (...a) => ticketOfAgent(...a),
   verify: live(() => verify), workspaces: live(() => workspaces), briefExtras: (...a) => briefExtras(...a),
+  links: live(() => jobLinks), overnight: live(() => overnight),
 });
 // ---------------------------------------------------------------- staff: sub-agents and delegation (lib/staff.js)
 
 const { pump, staffList, ticketOfAgent, enqueue, stopTree, delegate, waitForTeam, assign } = require('./lib/staff').install({
+  sandbox,
   ACTIVE, CLAUDE_BIN, EFFORTS, MAX_RUNNING, MODELS, PERSONAS, addEvent, agents, assignPids, attachText, baseAgent, batches, broadcast, buildArgs, childEnv,
   childRolesFor, chooseModel, crypto, enqueueResident, home, inWorkRepo, limits, mail, mailWake, modelOf, newId, now, onStreamMessage, pendingFeedback, procs,
   queue, readJson, readLines, readMemory, restartResident, spawn, thread, tickets, touch, waitForBudget, waiters,
@@ -157,7 +179,8 @@ const { pump, staffList, ticketOfAgent, enqueue, stopTree, delegate, waitForTeam
 });
 // ---------------------------------------------------------------- terminal commands (lib/commands.js)
 
-const { commandMode, canRunCommands, blockedCommand, runCommand, decideCommand, stopCommand, endCommands, running: commandsRunning } = require('./lib/commands').install({
+const { commandMode, canRunCommands, blockedCommand, runCommand, decideCommand, stopCommand, endCommands, running: commandsRunning, procOf: commandProc } = require('./lib/commands').install({
+  sandbox,
   agents, tickets, readJson, home, now, newId, broadcast, addEvent,
   touch: (a) => touch(a), touchTicket: (t) => touchTicket(t), thread: (t, e) => thread(t, e), ticketOfAgent: (a) => ticketOfAgent(a),
   defOf: (r, a) => defOf(r, a), expandTools: (r, p) => expandTools(r, p),
@@ -165,7 +188,7 @@ const { commandMode, canRunCommands, blockedCommand, runCommand, decideCommand, 
 
 // ---------------------------------------------------------------- tickets: code changes and undo (lib/changes.js)
 
-const { changesOf, revertChanges, snapshotBefore } = require('./lib/changes').install({
+const { changesOf, changesOfAsync, revertChanges, snapshotBefore } = require('./lib/changes').install({
   DATA,
   SNAP_DIR,
   agents,
@@ -197,7 +220,9 @@ const { guard } = require('./lib/access').install({
 });
 // ---------------------------------------------------------------- plans for big tickets (lib/plans.js)
 
-const { decidePlan, proposePlan, planGate } = require('./lib/plans').install({
+const { decidePlan, proposePlan, planGate, reportEvidence } = require('./lib/plans').install({
+  touchTicket,
+  overnight: live(() => overnight),
   addEvent: (...a) => addEvent(...a),
   agents,
   broadcast: (...a) => broadcast(...a),
@@ -236,7 +261,7 @@ const { runReview, maybeWeeklyReviews } = require('./lib/weekly-review').install
   thread: (...a) => thread(...a),
   tickets,
   touchTicket: (...a) => touchTicket(...a),
-  usageIndex,
+  usageIndex: usageQueries,
   weeklyReport
 });
 
@@ -421,9 +446,14 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// Something that blocks the server (a slow synchronous call) shows up in the log with how long it held everything up.
+{ let last = Date.now(); setInterval(() => { const lag = Date.now() - last - 500; if (lag > 500) console.error(`event loop blocked for ${lag} ms`); last = Date.now(); }, 500).unref(); }
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
+  // A provider's OAuth redirect comes from the user's browser, which has no office cookie (lib/oauth.js checks its state).
+  if (url.pathname.startsWith('/oauth/')) { try { if (await oauth.callback(req, res, url)) return; } catch (e) { res.writeHead(500); res.end(String(e.message)); return; } }
   if (!guard(req, res, url)) return;
   try {
     if (await arms.route(req, res, url, p, body, json)) return;
@@ -432,10 +462,21 @@ const server = http.createServer(async (req, res) => {
     if (await backups.route(req, res, p, body, json)) return;
     if (await evals.route(req, res, p, body, json)) return;
     if (await telegram.route(req, res, url, p, body, json)) return;
+    if (await auth.route(req, res, url, p, body, json)) return;
     if (await askOffice.route(req, res, url, p, body, json)) return;
     if (await leadWizard.route(req, res, url, p, body, json)) return;
+    if (await teamTemplates.route(req, res, url, p, body, json)) return;
+    if (await reports.route(req, res, url, p, body, json)) return;
+    if (await hardware.route(req, res, url, p, body, json)) return;
+    if (await github.route(req, res, url, p, body, json)) return;
+    if (await gmail.route(req, res, url, p, body, json)) return;
+    if (await sandbox.route(req, res, url, p, body, json)) return;
+    if (await providers.routeHttp(req, res, url, p, body, json)) return;
     if (await projectMemory.route(req, res, url, p, body, json)) return;
     if (await workspaces.route(req, res, url, p, body, json)) return;
+    if (await walkthrough.route(req, res, url, p, body, json)) return;
+    if (await overnight.route(req, res, url, p, body, json)) return;
+    if (await preview.route(req, res, url, p, body, json)) return;
     if (await recovery.route(req, res, url, p, body, json)) return;
     if (req.method === 'GET' && p === '/api/outcomes') return json(res, 200, outcomes.report(Math.max(1, Math.min(365, Number(url.searchParams.get('days')) || 30))));
     for (const r of routeModules) if (await r.route(req, res, url, p, body, json)) return;
@@ -469,15 +510,16 @@ fs.mkdirSync(UPLOADS, { recursive: true });
 for (const def of Object.values(readJson('roster.json').roles)) if (def.team && def.team.docs && fs.existsSync(path.join(ROOT, def.team.docs))) refreshLibraryIndex(path.join(ROOT, def.team.docs));
 for (const t of tickets.values()) { t.waiting = null; if (t.plan && t.plan.status === 'pending') t.plan.status = 'interrupted'; if (ticketBudget() == null) { t.budgetUsd = null; t.overBudget = false; } }
 if (selftestNow() && selftestNow().status === 'running') selftestNow().status = 'interrupted';
-setInterval(runSchedule, 20000);
+setInterval(() => { runSchedule(); overnight.tick(); }, 20000);
 setInterval(() => arms.schedule(), 60000);
 const longChatWarned = new Map();
 setInterval(async () => {
   try {
-    for (const c of await usageIndex.liveChats(300000)) {
+    for (const c of await usageQueries.liveChats(300000).catch(() => [])) {
       const step = c.tokens >= 800000 ? 800000 : c.tokens >= 500000 ? 500000 : 300000;
       if ((longChatWarned.get(c.sid) || 0) >= step) continue;
       longChatWarned.set(c.sid, step);
+      while (longChatWarned.size > 500) longChatWarned.delete(longChatWarned.keys().next().value);
       broadcast({ type: 'notify', kind: 'warn', title: `Long chat: ${Math.round(c.tokens / 1000)}k tokens per message`,
         text: `“${c.label}” (${c.project}) re-sends ${Math.round(c.tokens / 1000)}k tokens with every message (about ${c.perCallUsd.toFixed(2)} each at API prices). When this task is done, start a new chat (/clear) or run /compact.` });
     }
@@ -529,7 +571,7 @@ setInterval(() => evals.maybeScheduled(), 5 * 60000).unref();
 const telegram = require('./lib/telegram').install({ DATA, ACTIVE, agents, tickets, now, readJson, thread, limitsView, decidePlan, decideCommand,
   answerUser, decideAccess, createTicket, dispatchTicket, followUp, pauseTicket, resumeTicket, stopTicket, rateTicket });
 // Questions about the office answered on Haiku from facts gathered without a model (lib/ask-office.js).
-const askOffice = require('./lib/ask-office').install({ CLAUDE_BIN, MEMORY_DIR, agents, childEnv, fs, noteSpend, now, path,
+const askOffice = require('./lib/ask-office').install({ providers, CLAUDE_BIN, MEMORY_DIR, agents, childEnv, fs, noteSpend, now, path,
   projectMemory: live(() => projectMemory), readJson, searchTickets, spawn, teamsList: (...a) => teamsList(...a), tickets });
 // ---------------------------------------------------------------- checks before done (lib/verify.js)
 
@@ -550,41 +592,78 @@ function closeTicket(t, failed) {
     thread(t, { from: 'system', kind: 'system', text: `Heads-up: the last run of ${ev.failing.map((c) => `\`${c.command.slice(0, 80)}\` (exit ${c.exitCode})`).join(', ')} on this job failed, and nothing re-ran it after.` });
   }
   projectMemory.recordOutcome(t);
+  try { hardware.persist(t.id); } catch {}
   touchTicket(t);
+  if (failed) fireFailureTriggers(t);
+  jobLinks.settled(t);
+  overnight.tick();
+}
+// Routines that run when a job fails or its checks fail (lib/arms.js, triggered routines), told what happened.
+function fireFailureTriggers(t) {
+  try {
+    const base = `Job #${t.n} "${String(t.title || t.text || '').slice(0, 120)}"${t.project ? ` on ${t.project}` : ''} failed.`;
+    const run = t.verify && t.verify.status === 'failed' && (t.verify.runs || []).filter((r) => r.code !== 0).pop();
+    if (run) arms.fire('checks-failed', { ticket: t, why: `${base} Its checks failed: \`${run.cmd}\` exited ${run.code}.\n\nLast output:\n${String(run.out || '').slice(-1500)}` });
+    const answer = String(t.answer || '').slice(-800);
+    arms.fire('job-failed', { ticket: t, why: `${base}${run ? ` Checks: \`${run.cmd}\` exited ${run.code}.` : ''}${answer ? `\n\nThe last answer:\n${answer}` : ''}\n\nOpen job #${t.n} for the whole thread.` });
+  } catch (e) { console.error('failure triggers:', e.message); }
 }
 // Extra lines for a lead's brief on a new job: its checks, what the project remembers, and its workspace.
 function briefExtras(t) {
-  return verify.briefLine(t) + projectMemory.briefFor(t) + workspaces.briefFor(t);
+  return jobLinks.briefFor(t) + verify.briefLine(t) + projectMemory.briefFor(t) + workspaces.briefFor(t);
 }
 // What the office remembers per project, retrieved per job (lib/project-memory.js).
 const projectMemory = require('./lib/project-memory').install({ DATA, agents, findSecret: require('./lib/secrets').findSecret, fs, newId, now, path, readJson, ticketOfAgent });
 // Jobs on the same git project work in their own worktrees (lib/workspaces.js).
-const workspaces = require('./lib/workspaces').install({ DATA, fs, home, now, path, readJson, thread, tickets, touchTicket });
+const workspaces = require('./lib/workspaces').install({ DATA, fs, home, now, path, readJson, thread, tickets, touchTicket, onSettled: (t) => { jobLinks.settled(t); overnight.tick(); } });
 // Interrupted jobs and stuck agents (lib/recovery.js).
 const recovery = require('./lib/recovery').install({ ACTIVE, agents, broadcast, enqueueResident, eventsOf, now, readJson, restartResident, thread, tickets, touchTicket });
 setInterval(() => { try { recovery.watchdog(); } catch {} }, 60000).unref();
 // What it costs to get a job done well (lib/outcomes.js).
 const outcomes = require('./lib/outcomes').install({ agents, now, readJson, tickets });
-const verify = require('./lib/verify').install({ blockedCommand, broadcast, changesOf, closeTicket, enqueueResident, lessons, now, oneShot: askOffice.oneShot, readJson, spawn, thread, touchTicket, workdirOf });
+// Reports to share: what the team did over a period, as HTML or Markdown (lib/reports.js).
+const reports = require('./lib/reports').install({ agents, now, readJson, tickets });
+const verify = require('./lib/verify').install({ sandbox, blockedCommand, broadcast, changesOf, closeTicket, enqueueResident, lessons, now, oneShot: askOffice.oneShot, readJson, spawn, thread, touchTicket, workdirOf });
+// OAuth sign-in for connectors (lib/oauth.js), and Gmail: labelled emails in as jobs, replies as drafts (lib/gmail.js).
+const oauth = require('./lib/oauth').install({ DATA, PORT, broadcast: (...a) => broadcast(...a), now });
+const gmail = require('./lib/gmail').install({ DATA, PORT, createTicket: (b) => createTicket(b), now, oauth, redact: require('./lib/secrets').redact, thread, tickets, touchTicket });
+// GitHub: issues in as jobs, CI failures as routine triggers, comments and draft pull requests on the user's click (lib/github.js).
+const github = require('./lib/github').install({ DATA, arms, createTicket: (b) => createTicket(b), findSecret: require('./lib/secrets').findSecret, home, now, readJson, thread, tickets, touchTicket });
+// CPU, memory, temperature and GPU for the computer and per job (lib/hardware.js).
+const hardware = require('./lib/hardware').install({ DATA, agents, now, procs, tickets, ticketOfAgent: (a) => ticketOfAgent(a),
+  procOfCommand: (cid) => commandProc(cid), procOfCheck: (tid) => verify.procOf(tid) });
 
 // The new-lead wizard: a lead drafted from the user's own words (lib/lead-wizard.js).
+// Jobs that start from another job: chains and forks (lib/job-links.js).
+const jobLinks = require('./lib/job-links').install({ dispatchTicket, holdForDailyCap, now, overnight: live(() => overnight), thread, tickets, touchTicket });
+// A guided tour of what a job changed (lib/walkthrough.js).
+const walkthrough = require('./lib/walkthrough').install({ changesOfAsync, now, oneShot: askOffice.oneShot, tickets, touchTicket });
+// Overnight mode: a queue worked through around the limits and a spending cap (lib/overnight.js).
+const overnight = require('./lib/overnight').install({ DATA, broadcast, dispatchTicket, fs, kick: () => { for (const a of agents.values()) if (a.resident) pumpResident(a); }, limits, noKeepAwake: !!process.env.AGENTOS_TEST_PARENT, now, path, pauseTicket, readJson, spawn, telegram: live(() => telegram), thread, tickets, touchTicket });
+// The job's live preview, with click-to-comment (lib/preview.js).
+const preview = require('./lib/preview').install({ PORT, agents, blockedCommand, broadcast, killGroup: require('./lib/kill-group').killGroup, now, readJson, spawn, thread, ticketOfAgent, tickets, touchTicket, workdirOf });
 const leadWizard = require('./lib/lead-wizard').install({ fs, home, oneShot: askOffice.oneShot, readJson });
+// Ready-made teams and the user's own, opened in the wizard's review form (lib/team-templates.js).
+const teamTemplates = require('./lib/team-templates').install({ DATA, agents, fs, path, readJson });
 setInterval(() => backups.maybeDaily(), 3600000).unref();
 
 const shutdown = () => {
   shuttingDown = true;
   telegram.stop();
+  try { preview.stopAll(); } catch {}
   for (const p of procs.values()) { try { process.kill(-p.pid, 'SIGTERM'); } catch {} }
   saveNow();
   try { fs.writeFileSync(LIMITS_FILE, JSON.stringify(limits)); } catch {}
+  // After saving: Docker can be slow. Only when this office started sandbox containers.
+  try { if (sandbox.started()) sandbox.cleanup(); } catch {}
   setTimeout(() => process.exit(0), 400);
 };
 // ---------------------------------------------------------------- HTTP routes (lib/routes-*.js), asked in turn by the server above
 
 const routeModules = [
   require('./lib/routes-tickets').install({
-    UPLOADS, agents, askUser, broadcast, changesOf, cleanAttachments, createTicket, decidePlan, dispatchTicket, followUp, fs, lessons,
-    path, pauseTicket, proposePlan, rateTicket, rawBody, readJson, recallFollowup, sendFollowupNow, releaseBudget, resumeTicket, revertChanges, saveState,
+    UPLOADS, links: live(() => jobLinks), preview: live(() => preview), agents, askUser, broadcast, changesOf, changesOfAsync, cleanAttachments, createTicket, decidePlan, dispatchTicket, followUp, fs, lessons,
+    path, pauseTicket, proposePlan, rateTicket, reportEvidence, rawBody, readJson, recallFollowup, sendFollowupNow, releaseBudget, resumeTicket, revertChanges, saveState,
     saveUpload, searchText, searchTickets, stopTicket, thread, ticketBudget, tickets, timelineOf, touch, touchTicket,
   }),
   require('./lib/routes-agents').install({
@@ -597,7 +676,7 @@ const routeModules = [
     OFFICE_SETTINGS, ROOT, addEvent, agents, askTeam, broadcast, canRunCommands, clients, commandMode, configView, continuePastLimit,
     createTeam, deleteRole, fs, healthView, libraryCheck, libraryRoots, limitsView, maybeTidy, openFile, os, path, probeLimits,
     projectsBoard, promptSizes, readJson, requestRestart, restartView, restartWhenIdle, runScript, runSelfTest, saveRole, scriptManifest,
-    selftestNow, shutdown, spendStats, summary, teamChat, teamState: live(() => getTeamState()), teamsList, tickets, usageIndex, writeRoster,
+    overnightView: () => overnight.view(), selftestNow, shutdown, spendStats, summary, teamChat, teamState: live(() => getTeamState()), teamsList, tickets, usageIndex: usageQueries, writeRoster,
   }),
 ];
 

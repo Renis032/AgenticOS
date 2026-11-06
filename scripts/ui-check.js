@@ -56,7 +56,9 @@ async function check(opt) {
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, onSignal);
   try {
     procs.push(spawn('Xvfb', [`:${display}`, '-screen', '0', `${(opt.size || '1600x1000').replace('x', 'x')}x24`], { stdio: 'ignore' }));
-    procs.push(spawn(process.execPath, ['server.js'], { cwd: office, env, stdio: 'ignore', detached: true }));
+    // The server's output is kept next to the screenshots (server.log), for when a step fails.
+    const log = fs.openSync(path.join(work, 'server.log'), 'a');
+    procs.push(spawn(process.execPath, ['server.js'], { cwd: office, env, stdio: ['ignore', log, log], detached: true }));
     const token = () => { try { return fs.readFileSync(path.join(office, 'data', 'app-token'), 'utf8').trim(); } catch { return ''; } };
     let up = false;
     for (let i = 0; i < 40 && !up; i++) { await sleep(250); up = !!(token() && await call(port, token(), 'GET', '/api/limits')); }
@@ -69,17 +71,56 @@ async function check(opt) {
     const job = await call(port, T, 'POST', '/api/tasks', { text: 'UI check: a job with a very long title that has to be cut off nicely in the header, the list and the title bar', project: proj && proj.name });
     await sleep(1500);
     const plan = Array.from({ length: 40 }, (_, i) => `${i + 1}. Step ${i + 1}: do something long enough to wrap onto a second line in the plan banner so that it really overflows.`).join('\n');
-    call(port, T, 'POST', '/api/propose-plan', { agentId: lead, plan, estimateUsd: 14 });
+    call(port, T, 'POST', '/api/propose-plan', { agentId: lead, plan, estimateUsd: 14, criteria: ['The long title is cut off in the header', 'npm test passes'] });
     call(port, T, 'POST', '/api/command/run', { agentId: lead, command: 'echo ui-check', reason: 'UI check' });
+    await call(port, T, 'POST', '/api/tasks', { text: 'UI check: a job queued for overnight', project: proj && proj.name, overnight: true });
+    // A little app for the preview. Asked to pick, it clicks its own button, so the real path runs from the injected script on.
+    // Its own process: the window driver below blocks this one while it runs.
+    const pvPort = await freePort();
+    const pvHtml = `<!doctype html><html><head><title>Shop</title></head><body style="font:16px sans-serif;padding:24px;background:#fff"><h1>Shop</h1><button id="buy" style="font-size:12px">Buy now</button><script>addEventListener('message', (e) => { if (e.data && e.data.type === 'pick' && e.data.on) setTimeout(() => document.querySelector('#buy').click(), 150); });</script></body></html>`;
+    procs.push(spawn(process.execPath, ['-e', `require('http').createServer((q, s) => { s.writeHead(200, { 'content-type': 'text/html', 'x-frame-options': 'DENY' }); s.end(${JSON.stringify(pvHtml)}); }).listen(${pvPort}, '127.0.0.1')`], { stdio: 'ignore', detached: true }));
     await sleep(1200);
     const now = await call(port, T, 'GET', '/api/state');
     const waiting = (now.tickets || []).find((t) => t.plan && t.plan.status === 'pending') || job;
     const done = (state.tickets || []).filter((t) => t.status === 'done' && t.answer).sort((a, b) => b.createdAt - a.createdAt)[0];
-    const apps = (opt.quick ? ['today', 'brain', 'processes', 'jobs', 'projects', 'newjob'] : ['today', 'brain', 'processes', 'jobs', 'newjob', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings', 'inbox', 'review']);
+    const longest = (state.tickets || []).slice().sort((a, b) => (b.thread || []).length - (a.thread || []).length)[0];
+    const apps = (opt.quick ? ['today', 'brain', 'processes', 'jobs', 'projects', 'newjob', 'overnight'] : ['today', 'brain', 'processes', 'jobs', 'newjob', 'overnight', 'arms', 'skills', 'routines', 'recos', 'projects', 'messages', 'memory', 'library', 'terminal', 'usage', 'tokens', 'health', 'settings', 'inbox', 'review']);
     const steps = [
       ...apps.map((a) => ({ name: `app-${a}`, js: `openApp('${a}')`, wait: a === 'tokens' || a === 'usage' ? 1800 : 800 })),
-      { name: 'job-waiting', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'thread'; openApp('jobs')`, wait: 1000 },
+      { name: 'job-waiting', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'thread'; openApp('jobs'); setTimeout(() => { if (!/npm test passes/.test(($('.need.plan .donewhen') || {}).textContent || '')) __uiErrors.push('plan waiting: acceptance criteria not shown'); }, 700)`, wait: 1000 },
+      // The plan as if approved, with one criterion met and one not reported; put back afterwards for the later steps.
+      { name: 'job-criteria', js: `{ const t = S.tickets['${waiting && waiting.id}'], was = t.plan; t.plan = { ...was, status: 'approved', criteria: [{ text: 'The long title is cut off in the header', met: true, evidence: 'Saw it at 800 px wide: the header ends in an ellipsis and does not wrap.', at: 1 }, { text: 'npm test passes' }] }; S.jbodyKey = null; dirty();
+        setTimeout(() => { const c = [...$('#jbody').querySelectorAll('.vcard')].find((x) => /Acceptance criteria/.test(x.textContent)); if (!c) __uiErrors.push('acceptance criteria card missing'); else if (!/1 of 2 met/.test(c.textContent) || !/ellipsis/.test(c.textContent) || !/No evidence reported/.test(c.textContent)) __uiErrors.push('acceptance criteria card wrong: ' + c.textContent.slice(0, 200)); }, 600);
+        setTimeout(() => { t.plan = was; S.jbodyKey = null; dirty(); }, 1100); }`, wait: 900 },
+      // Overnight: the queue from the API, the form; then a report as if a run had finished.
+      { name: 'overnight-queue', js: `openApp('overnight'); setTimeout(() => { if (!/queued for overnight/.test(($('#nightQueue') || {}).textContent || '')) __uiErrors.push('overnight: the queued job is not listed'); if (!$('[data-act="nightStart"]')) __uiErrors.push('overnight: no start button'); }, 400)`, wait: 800 },
+      { name: 'overnight-report', js: `{ const was = S.overnight, r = (id, n, title, why, costUsd) => ({ id, n, title, why, costUsd, status: 'done' }); S.overnight = { ...was, run: null, last: { id: 'x', startedAt: Date.now() - 8 * 3600000, endedAt: Date.now() - 600000, reason: 'empty', capUsd: 10, until: Date.now(), spentUsd: 6.4, capped: false, done: [r('a', 12, 'Add dark mode', '', 2.1), r('b', 13, 'Fix the flaky test', '', 1.2)], waiting: [r('c', 14, 'Move to the new API', 'a plan to approve', 3.1)], notFinished: [], notStarted: [r('d', 15, 'Rewrite the docs', 'waits for #14', 0)] } }; S.nightKey = null; APPS.overnight.update();
+        setTimeout(() => { const c = $('#nightLast'); if (!/Waiting for you/.test(c.textContent) || !/a plan to approve/.test(c.textContent) || !/6\.40/.test(c.textContent)) __uiErrors.push('overnight report wrong: ' + c.textContent.slice(0, 200)); }, 200);
+        setTimeout(() => { S.overnight = was; S.nightKey = null; setPref('nightSeen', ''); }, 700); }`, wait: 500 },
+      // A fork and a "then" on the New job page.
+      { name: 'newjob-fork', js: `S.njFork = { id: '${waiting && waiting.id}', at: Date.now() }; openApp('newjob'); setTimeout(() => { if (!/Forking #/.test(($('#njLinkBox') || {}).textContent || '')) __uiErrors.push('fork: no banner on New job'); S.njFork = null; }, 300)`, wait: 600 },
+      { name: 'newjob-then', js: `S.njThen = '${waiting && waiting.id}'; openApp('newjob'); setTimeout(() => { if ($('#njAfterJob').value !== '${waiting && waiting.id}') __uiErrors.push('then: the job to follow is not chosen'); }, 300)`, wait: 600 },
+      // The walkthrough's steps, in the real Changes layout.
+      { name: 'job-walkthrough', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'thread'; openApp('jobs'); setTimeout(() => { const list = [{ path: '/app/src/theme.css', state: 'modified', added: 4, removed: 1, diff: '@@ -1 +1,4 @@\\n-a\\n+b' }, { path: '/app/src/App.vue', state: 'modified', added: 2, removed: 0, diff: '+x' }], t = { id: 'wt', walkthrough: { status: 'ready', at: 1, sig: list.map((c) => c.path + ':' + c.added + ':' + c.removed).join('|'), intro: 'Adds a dark theme.', costUsd: 0.03, steps: [{ path: '/app/src/theme.css', why: 'The colours live here now.', look: 'Contrast on links.' }, { path: '/app/src/App.vue', missed: true }] } }; const html = walkthroughHtml(t, list); if (!/step 1 of 2/.test(html) || !/Contrast on links/.test(html) || !/Next/.test(html)) __uiErrors.push('walkthrough wrong: ' + html.slice(0, 200)); S.wtStep = { wt: 1 }; if (!/left this file out/.test(walkthroughHtml(t, list))) __uiErrors.push('walkthrough: a missed file is not marked'); S.wtStep = {}; $('#jbody').innerHTML = html; }, 300)`, wait: 700 },
+      // The live preview, from the address through the real frame, script and screenshot, to the lead.
+      { name: 'preview-open', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'preview'; S.jbodyKey = null; openApp('jobs'); setTimeout(() => { if (!$('#pvUrl')) return __uiErrors.push('preview: no address field'); $('#pvUrl').value = 'http://127.0.0.1:${pvPort}'; ACT.pvStart(); }, 500)`, wait: 1800 },
+      { name: 'preview-pick', js: `{ if (!$('#pvFrame')) __uiErrors.push('preview: no frame'); ACT.pvPick(); setTimeout(() => { if (!PV.picked) return __uiErrors.push('preview: nothing was picked'); if (PV.picked.tag !== 'button' || !/Buy now/.test(PV.picked.text) || !/#buy/.test(PV.picked.selector)) __uiErrors.push('preview: wrong element ' + JSON.stringify(PV.picked).slice(0, 200)); if (!PV.shot) __uiErrors.push('preview: no screenshot'); else if (PV.shot.length < 500) __uiErrors.push('preview: blank screenshot'); if (!$('#pvText')) __uiErrors.push('preview: no comment box'); }, 2200); }`, wait: 2500 },
+      { name: 'preview-send', js: `{ const area = $('#pvText'); if (area) { area.value = 'make this bigger'; ACT.pvSend(); } setTimeout(() => { const e = [...S.tickets[S.job].thread].reverse().find((x) => x.kind === 'followup'); if (!e || !/make this bigger/.test(e.text) || !/#buy/.test(e.text) || !/as data/.test(e.text)) __uiErrors.push('preview: the comment did not reach the job: ' + JSON.stringify(e).slice(0, 200)); else if (!(e.attachments || []).length) __uiErrors.push('preview: the screenshot was not attached'); }, 900); }`, wait: 1300 },
+      { name: 'preview-back', js: `S.jtab = 'thread'; S.jbodyKey = null; renderJob();`, wait: 500 },
       ...(done ? [{ name: 'job-done', js: `S.job = '${done.id}'; S.jtab = 'thread'; openApp('jobs')`, wait: 1000 }, { name: 'job-changes', js: `S.jtab = 'changes'; S.jviewFor = null; openApp('jobs')`, wait: 900 }, { name: 'job-timeline', js: `S.jtab = 'timeline'; openApp('jobs')`, wait: 900 }] : []),
+      // A long thread opens on its latest messages only; "Show earlier" adds the rest without moving what you were reading.
+      ...(longest && longest.thread.length > 80 ? [{ name: 'job-long-thread', js: `S.jtab = 'thread'; S.job = '${longest.id}'; openApp('jobs'); setTimeout(() => {
+        const b = $('#jbody'), blocks = () => [...b.querySelectorAll(':scope > .ev, :scope > details.bg')], n0 = blocks().length;
+        if (!b.querySelector('.threadmore')) return __uiErrors.push('long thread: no Show earlier button (' + n0 + ' blocks shown)');
+        if (n0 > 40) __uiErrors.push('long thread: ' + n0 + ' blocks rendered at once');
+        const first = blocks()[0], text = first.textContent, y0 = first.getBoundingClientRect().top;
+        b.querySelector('.threadmore').click();
+        const after = blocks(), same = after[after.length - n0];
+        if (after.length <= n0) return __uiErrors.push('long thread: Show earlier added nothing');
+        if (same.textContent !== text) __uiErrors.push('long thread: the messages shown changed after Show earlier');
+        const dy = same.getBoundingClientRect().top - y0;
+        if (Math.abs(dy) > 2) __uiErrors.push('long thread: the view jumped ' + Math.round(dy) + 'px');
+      }, 1200)`, wait: 2000 }] : []),
       { name: 'brain-flow', js: `openApp('brain'); ACT.brainTab({ tab: 'flow' })`, wait: 2500 },
       { name: 'brain-optimize', js: `ACT.brainTab({ tab: 'optimize' })`, wait: 1500 },
       { name: 'brain-knowledge', js: `ACT.brainTab({ tab: 'knowledge' })`, wait: 2500 },
@@ -189,7 +230,25 @@ async function check(opt) {
         }, 700);
       })()`, wait: 1400 },
       { name: 'notifications', js: `closePal(); ACT.ncenter()` },
-      ...(opt.quick ? ['general', 'appearance'] : ['general', 'appearance', 'notifications', 'jobs', 'agents', 'keys', 'about']).map((sec) => ({ name: `prefs-${sec}`, js: `$('#ncenter').classList.remove('on'); openPrefs('${sec}')`, wait: 600 })),
+      ...(opt.quick ? ['general', 'appearance'] : ['general', 'account', 'appearance', 'notifications', 'jobs', 'agents', 'connectors', 'models', 'keys', 'about']).map((sec) => ({ name: `prefs-${sec}`, js: `$('#ncenter').classList.remove('on'); openPrefs('${sec}')`, wait: 600 })),
+      { name: 'account-check', js: `(() => { if (!document.querySelector('#prefsBody [data-act=authMode]') && !/Loading/.test($('#prefsBody').textContent)) { openPrefs('account'); setTimeout(() => { if (!document.querySelector('#prefsBody [data-act=authMode]')) __uiErrors.push('Account: the sign-in choice did not render'); closePrefs(); }, 600); } else closePrefs(); })()`, wait: 900 },
+      { name: 'sandbox-prefs', js: `openPrefs('agents'); let n = 0; const look = () => { const el = [...document.querySelectorAll('#prefsBody .prow b')].find((b) => b.textContent === 'Sandboxed projects'); if (el && !/Loading/.test(el.parentElement.textContent)) { el.scrollIntoView({ block: 'center' }); return; } if (++n > 40) return __uiErrors.push('Preferences: the Sandbox group did not load'); setTimeout(look, 250); }; look()`, wait: 4000 },
+      { name: 'models-set', js: `const pr = (name, on, models, keyHint) => ({ name, connected: on, needsKey: name !== 'Ollama (this computer)', keyHint, base: null, defaultBase: 'https://x', models, checkedAt: Date.now() });
+        S.prov = { fallback: true, providers: { openai: pr('OpenAI or compatible', true, ['gpt-check-mini', 'gpt-check'], '…6789'), gemini: pr('Google Gemini', false, []), ollama: pr('Ollama (this computer)', true, ['llama3.1:8b', 'qwen3:14b']) },
+          tasks: { ask: { name: 'Ask the office', hint: 'answers questions', use: { provider: 'ollama', model: 'qwen3:14b' }, stats: { calls: 12, fails: 1, fallbacks: 1, ms: 22000, last: { ok: true } } }, review: { name: 'Reviewer for jobs without checks', hint: 'says PASS or FAIL', use: { provider: 'openai', model: 'gpt-check-mini' }, stats: null }, wizard: { name: 'New-lead wizard', hint: 'drafts a lead', use: { provider: 'claude' }, stats: null }, lessons: { name: 'Talking a lesson over', hint: 'rewrites a lesson', use: { provider: 'claude' }, stats: null }, routing: { name: 'Routing unclear jobs', hint: 'picks the lead', use: { provider: 'ollama', model: 'llama3.1:8b' }, stats: null } } };
+        openPrefs('models'); setTimeout(() => { if (!document.querySelector('#prefsBody [data-act=ptTest]') || !document.querySelector('#prefsBody [data-act=pvForget]')) __uiErrors.push('Models: providers or tasks did not render'); const t = [...document.querySelectorAll('#prefsBody .pgroup-h')].find((h) => h.textContent === 'Tasks'); if (t) t.scrollIntoView(); }, 400)`, wait: 900 },
+      { name: 'models-close', js: `S.prov = null; closePrefs()`, wait: 300 },
+      { name: 'connectors-linked', js: `S.gh = { configured: true, login: 'octo', lastError: null, projects: [{ name: 'Recipe Box', git: true, detected: 'octo/recipe-box', repo: 'octo/recipe-box', issues: true, label: 'agentos', ci: true }, { name: 'Notes', git: true, detected: null, repo: null, issues: false, label: 'agentos', ci: false }, { name: 'Scratch', git: false }] }; S.gm = { client: true, connected: true, email: 'me@example.com', label: 'agentos', project: null, enabled: true, lastError: null, canDraft: true }; openPrefs('connectors'); setTimeout(() => { if (!document.querySelector('#prefsBody [data-act=ghImport]')) __uiErrors.push('Connectors: linked projects did not render'); if (!document.querySelector('#prefsBody [data-act=gmPoll]')) __uiErrors.push('Connectors: Gmail did not render'); }, 400)`, wait: 900 },
+      { name: 'connectors-close', js: `S.gh = null; S.gm = null; closePrefs()`, wait: 300 },
+      { name: 'team-templates', js: `closePrefs(); openApp('settings'); let m = 0; const find = () => { const c = document.querySelector('.tplcard [data-act=lwTemplate]'); if (!c) { if (++m > 25) return __uiErrors.push('Teams & roles: no team templates shown'); return setTimeout(find, 200); } c.click(); let n = 0; const look = () => { const okNow = $('#lw_d_prompt') && $('#lw_d_prompt').value.length > 100 && /template/.test(($('.lwiz.wide .hint') || {}).textContent || ''); if (okNow) return; if (++n > 20) return __uiErrors.push('a team template did not open in the review form'); setTimeout(look, 200); }; setTimeout(look, 200); }; setTimeout(find, 300)`, wait: 8000 },
+      { name: 'team-template-review', js: `document.querySelector('.lwiz.wide') && document.querySelector('.lwiz.wide').scrollIntoView()`, wait: 500 },
+      { name: 'routine-trigger', js: `openApp('routines'); setTimeout(() => { ACT.rtNew(); setTimeout(() => { const t = $('#rt_type'); if (!t) return __uiErrors.push('Routines: no editor'); t.value = 'trigger'; t.dispatchEvent(new Event('change', { bubbles: true })); if (getComputedStyle($('#rt_on')).display === 'none' || getComputedStyle($('#rt_at')).display !== 'none') __uiErrors.push('Routines: choosing "when something happens" did not show the trigger fields'); const on = $('#rt_on'); on.value = 'files-changed'; on.dispatchEvent(new Event('change', { bubbles: true })); if (getComputedStyle($('#rt_folder')).display === 'none') __uiErrors.push('Routines: the folder field did not show for files-changed'); }, 500); }, 800)`, wait: 1800 },
+      { name: 'routine-cancel', js: `ACT.rtCancel()`, wait: 300 },
+      { name: 'share-report', js: `openReport({ days: 30 }); setTimeout(() => { const f = $('#rpView'); if (!f || !/<h1>/.test(f.srcdoc || '')) __uiErrors.push('Share a report: the preview did not load'); }, 2000)`, wait: 2600 },
+      { name: 'share-report-close', js: `closeReport()`, wait: 300 },
+      { name: 'job-hardware', js: `S.job = '${waiting && waiting.id}'; S.jtab = 'hardware'; openApp('jobs'); setTimeout(() => { const b = $('#jbody'); if (!b || !/peak CPU|No samples yet/.test(b.textContent)) __uiErrors.push('Hardware tab: nothing rendered'); const svg = b && b.querySelector('.hwchart svg'); if (svg) { const r = svg.getBoundingClientRect(); svg.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: r.left + r.width * 0.6, clientY: r.top + 30 })); } }, 6000)`, wait: 6600 },
+      { name: 'health-hardware', js: `S.jtab = 'thread'; openApp('health')`, wait: 2500 },
+      { name: 'first-job', js: `closePrefs(); ACT.firstJob(); setTimeout(() => { if (!/Read only/.test(($('#njText') || {}).value || '')) __uiErrors.push('the guided first job was not filled in'); }, 400)`, wait: 900 },
       { name: 'light-theme', js: `closePrefs(); setTheme('light'); S.job = '${waiting && waiting.id}'; openApp('jobs')`, wait: 900 },
       { name: 'light-brain', js: `openApp('brain'); ACT.brainTab({ tab: 'knowledge' })`, wait: 2500 },
       { name: 'light-flow', js: `ACT.brainTab({ tab: 'flow' })`, wait: 2000 },

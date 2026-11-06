@@ -27,10 +27,9 @@ function typeOf(fm, text, files) {
   return 'procedure';
 }
 
-function usageCounts() {
+function countsFrom(grepOut) {
   const counts = {};
-  const r = spawnSync('grep', ['-rhoE', '"skill":"[^"]+"', path.join(os.homedir(), '.claude', 'projects')], { encoding: 'utf8', maxBuffer: 256 << 20 });
-  for (const m of (r.stdout || '').split('\n')) { const k = (m.match(/"skill":"([^"]+)"/) || [])[1]; if (k) counts[k] = (counts[k] || 0) + 1; }
+  for (const m of String(grepOut || '').split('\n')) { const k = (m.match(/"skill":"([^"]+)"/) || [])[1]; if (k) counts[k] = (counts[k] || 0) + 1; }
   try {
     for (const l of fs.readFileSync(path.join(os.homedir(), '.claude', 'history.jsonl'), 'utf8').split('\n')) {
       const k = ((l.match(/"display":"\/([\w:-]+)/) || [])[1]);
@@ -39,9 +38,23 @@ function usageCounts() {
   } catch {}
   return counts;
 }
+const GREP = ['-rhoE', '"skill":"[^"]+"', path.join(os.homedir(), '.claude', 'projects')];
+function usageCounts() { return countsFrom(spawnSync('grep', GREP, { encoding: 'utf8', maxBuffer: 256 << 20 }).stdout); }
+// The same counts without holding up the caller: grepping every transcript takes seconds (the office uses this one).
+function usageCountsAsync() {
+  return new Promise((resolve) => {
+    const { spawn } = require('child_process');
+    const c = spawn('grep', GREP, { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    c.stdout.on('data', (d) => { if (out.length < (256 << 20)) out += d; });
+    c.on('close', () => resolve(countsFrom(out)));
+    c.on('error', () => resolve({}));
+  });
+}
 
-function scan() {
-  const counts = usageCounts();
+// counts: usage counts already gathered (the office passes its cached ones); without them they are counted now.
+function scan(counts) {
+  counts = counts || usageCounts();
   let buttons = {};
   try { buttons = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'arms', 'buttons.json'), 'utf8')); } catch {}
   const skills = [];
@@ -73,5 +86,5 @@ function run(argv) {
   return [`${list.length} skills (most used first):`, 'uses  tokens  type        model    name', ...list.map((s) => `${String(s.uses).padStart(4)}  ${String(s.tokens).padStart(6)}  ${s.type.padEnd(10)}  ${(s.model || '-').padEnd(7)}  ${s.name}${s.scope === 'office' ? ' (office)' : s.scope.startsWith('team:') ? ` (${s.scope.slice(5)} team)` : ''}`)].join('\n');
 }
 
-module.exports = { scan, frontmatter };
+module.exports = { usageCountsAsync, scan, frontmatter };
 if (require.main === module) cli(run);

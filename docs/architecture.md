@@ -68,7 +68,7 @@ sequenceDiagram
     S->>L: brief
   end
   opt big job
-    L->>S: propose_plan (steps, cost)
+    L->>S: propose_plan (steps, cost, done when)
     S->>You: needs you
     You->>S: approve
   end
@@ -103,8 +103,9 @@ sequenceDiagram
 | `lib/mail-hook.js` | hook on every agent tool call |
 | `lib/stop.sh` | `./agentos stop`: stops this office's server, refusing while agents work unless `-f` |
 | `public/os.html`, `public/ui/` | the window's page: styles in `os.css`, code in `os/*.js` (classic scripts sharing one scope, loaded in order) |
-| `app/agentos-window.py` | the native window, tray and notifications |
-| `scripts/` | office scripts agents call (`manifest.json`), plus development commands: `setup`, `demo`, `screenshots`, `check-syntax`, `api-check`, `ui-check`, `agent-eval` |
+| `app/agentos-window.py` | the native window, tray and notifications (Ubuntu) |
+| `desktop/` | the Electron app for macOS, Windows and Linux: starts the server on Electron's Node and opens the same page (`main.js`, `preload.js` bridges the page's native messages, `office-files.js` keeps an installed office's code current) |
+| `scripts/` | office scripts agents call (`manifest.json`), plus development commands: `setup`, `demo`, `screenshots`, `check-syntax`, `api-check`, `ui-check`, `sandbox-check`, `soak-check`, `agent-eval` |
 | `teams/<team>/` | per team, ignored by git: library pages, project handoffs, skills, and team-only scripts |
 | `data/` | runtime state, ignored by git: agents, jobs, events, memory, usage, backups, the app token |
 | `roster.json`, `projects.json` | your team and projects, ignored by git; created by `./agentos setup` from the `.example` files |
@@ -116,7 +117,8 @@ later) and gets its functions back. No module is over about 650 lines.
 
 | Group | Module | Responsibility |
 |---|---|---|
-| Core | `state.js` | the office's state on disk: agents, jobs, team state, event logs; saved atomically with a backup copy |
+| Core | `auth.js` | how agents sign in: the Claude Code login or an Anthropic API key, kept in `data/auth.json` |
+|  | `state.js` | the office's state on disk: agents, jobs, team state, event logs; saved atomically with a backup copy |
 |  | `access.js` | the token wall: only the office's own window gets an answer |
 |  | `prompts.js` | what each agent is told and how its `claude` process is started |
 |  | `residents.js` | the always-alive leads: their inbox, one message per turn, fresh sessions, restarts |
@@ -124,10 +126,15 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `agent-stream.js` | reading each agent's output: events, live spend, exact costs, budgets |
 |  | `tickets.js` | jobs: creating and routing them, the schedule, questions, pause, stop, follow-ups, rating, search |
 |  | `quick-effort.js` | a lower effort for quick questions |
-|  | `verify.js` | checks before done: the office runs a job's checks and only exit codes decide; a reviewer for jobs without checks |
+|  | `verify.js` | checks before done: the office runs a job's checks and only exit codes decide; a reviewer for jobs without checks or with acceptance criteria |
 |  | `recovery.js` | interrupted jobs resumed with what already happened; stuck agents flagged |
 |  | `kill-group.js` | stopping an agent stops its whole process group |
+|  | `sandbox.js` | sandboxed projects: each job's agents, commands and checks in Docker, seeing only the job's folders |
 |  | `workspaces.js` | a git worktree per job on a shared project, applied back without commits |
+|  | `job-links.js` | jobs that start from another job: chains (with the result passed along) and forks |
+|  | `overnight.js` | overnight mode: a queue worked through around the limits and a spending cap, and the morning report |
+|  | `preview.js` | the job's live preview: a proxy on its own origin that lets the user point at what to change |
+|  | `walkthrough.js` | a guided tour of what a job changed, in reading order |
 |  | `suggest-answers.js` | one-click answers suggested from a question's wording |
 | HTTP routes | `routes-tickets.js` | jobs |
 |  | `routes-agents.js` | agents and the office tools they call |
@@ -142,12 +149,16 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `shared-files.js` | heads-ups when two agents edit the same file |
 |  | `mail.js` | agents talking to each other |
 |  | `team-chat.js` | team rooms |
+|  | `oauth.js` | OAuth sign-in for connectors: the browser's consent page, the loopback callback (before the token wall, state-checked), token refresh |
+|  | `gmail.js` | Gmail: labelled emails in as jobs (as data, not instructions), answers back as reply drafts, never sent |
+|  | `github.js` | GitHub: issues in as jobs, CI failures as routine triggers, comments and draft pull requests on the user's click |
 |  | `telegram.js` | plans, questions and commands on your phone through a Telegram bot, with buttons; start, follow up, pause and stop jobs, live job cards, processes and usage from the chat |
-| Working well | `plans.js` | plans for big jobs and automatic approval |
+| Working well | `plans.js` | plans for big jobs, automatic approval, acceptance criteria and the lead's evidence |
 |  | `limits.js` | the plan's usage windows: hold, resume, schedule |
 |  | `fresh-sessions.js` | fresh sessions when a lead's conversation grows long |
 |  | `lessons.js` | lessons from jobs that went wrong, reviewed by the user before agents use them |
 |  | `project-memory.js` | instructions, decisions, known failures and outcomes per project, retrieved per job |
+|  | `team-templates.js` | ready-made teams and the user's own, opened in the new-lead wizard's review form |
 |  | `lead-wizard.js` | a new team lead drafted from the user's description of its purpose |
 |  | `on-call.js` | who stays on a team |
 |  | `skills.js` | skills agents propose |
@@ -156,7 +167,11 @@ later) and gets its functions back. No module is over about 650 lines.
 |  | `secrets.js` | refusing credentials in anything agents save |
 |  | `work-area.js` | the day-job area, configured only locally |
 | Insight and upkeep | `brain.js` | the knowledge graph, decision flow and optimizer |
+|  | `providers.js` | other providers (OpenAI-compatible, Gemini, Ollama) for one-shot tasks and routing, with fallback to Claude |
+|  | `usage-worker.js` | the usage index's queries in a worker thread, so adding up transcripts never blocks the office |
 |  | `ask-office.js` | Ask the office: facts gathered without a model, worded by Haiku |
+|  | `hardware.js` | CPU, memory, temperature and GPU for the computer and for each job's processes |
+|  | `reports.js` | reports to share: what the team did over a period, as HTML or Markdown, with secrets blanked |
 |  | `outcomes.js` | cost per successful job, per lead and per project |
 |  | `timeline.js` | job timelines and spend |
 |  | `health.js` | the Health report |

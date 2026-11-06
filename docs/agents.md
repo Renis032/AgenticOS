@@ -147,6 +147,10 @@ questions, commands — and follow-ups on it go to the twin while it is alive.
   The ticket shows the plan with **Approve** (optionally with changes typed in) and **Reject**. Approving raises the
   budget to 1.3× the estimate if needed. The office refuses a big delegation until the plan is approved
   (`defaults.planApproval: false` turns this off).
+- **Acceptance criteria**: every plan lists what "done" means (`done_when`, up to 12). Before answering, the lead calls
+  `report_evidence` for each: met or not, with the evidence. A lead that answers without it is sent back once. The job
+  shows each criterion with its evidence, and the reviewer judges them, even when the job's checks pass (*Review jobs
+  without checks* set to *Never* turns that review off). Jobs small enough to need no plan have no criteria.
 - **Pause / Resume** a ticket in progress: the lead and its teammates stop immediately (teammates' unfinished work is
   dropped and redone after resuming; the lead keeps its own conversation). Paused work doesn't count against anyone's
   track record.
@@ -276,6 +280,28 @@ the lead starts as a permanent process under God with its own library and messag
 jobs straight to it (`roles.<lead>.keywords`, read by `scripts/route.js`), and a working folder of its own becomes a
 project of the team. The office's standing rules (report progress, never commit or push, use permanent staff) are
 added to whatever the instructions say. Without the model, the draft is a plain template from your own words.
+
+## Overnight, chains, forks, walkthroughs and the preview
+
+- **Overnight** (the Overnight page, or *Add to overnight queue* on New job): queued jobs wait until you press *Work while
+  I sleep* with a spending cap, a finish time and how many jobs may run at once. A job that needs you stops counting, so
+  the next one starts; while overnight jobs wait, the lead may open extra desks for the rest. Usage limits and the daily
+  spending limit hold new work until they clear. At the cap, jobs in progress pause (spend is checked about every 20
+  seconds, so it can pass the cap by what was under way). Plans wait for you unless you set an amount to approve under.
+  The office asks the system to stay awake during a run (`systemd-inhibit`, `caffeinate`), and the run says if it can't.
+  The report opens once when you come back, and goes to Telegram if linked.
+- **Chains** (*Then…* on a job, or *Start after* on New job): the next job waits, then starts with the first one's answer
+  and changed files as context. A failed or stopped parent, reviewer concerns, or changes still to apply hold it, and its
+  thread says why. *Start now* always works.
+- **Forks** (*⑂ fork* on a message): a new job with a different instruction, the conversation up to that moment as context,
+  and its own worktree on a git project. The original isn't touched. The office only keeps a file's copy from before its
+  first edit on a job, so a fork starts from the project as it is now and is told so.
+- **Walkthrough** (Changes tab): on your click, one model call orders the changed files and says why each changed. Paths it
+  invents are dropped and files it skips are still shown, marked.
+- **Preview** (Preview tab): give the app's address or a command, or the lead calls `show_preview`. The page shows through a
+  proxy on `localhost`, which is a different site from the office's `127.0.0.1`, so the office's cookie doesn't reach it,
+  and the proxy strips it anyway. *Point at something*, click, and say what to change: the element, the page and a
+  screenshot arrive as a follow-up. Browser mode can't take the screenshot. Sandboxed projects can only use an address.
 
 ## Plans approved automatically, and reminders
 

@@ -99,7 +99,7 @@ APPS.skills = {
 
 APPS.routines = {
   mount(root) {
-    root.innerHTML = `<div class="app"><div class="toolbar"><h1>Routines</h1><span class="hint">Jobs that run on a schedule. Active ones hand you a result; passive ones stay quiet unless something is worth flagging.</span><span class="sp"></span><button class="btn pri sm" data-act="rtNew">+ New routine</button></div><div class="page" id="rtBody"></div></div>`;
+    root.innerHTML = `<div class="app"><div class="toolbar"><h1>Routines</h1><span class="hint">Jobs that run on a schedule or when something happens. Active ones hand you a result; passive ones stay quiet unless something is worth flagging.</span><span class="sp"></span><button class="btn pri sm" data-act="rtNew">+ New routine</button></div><div class="page" id="rtBody"></div></div>`;
     S.rtKey = null;
   },
   async update() {
@@ -113,18 +113,33 @@ APPS.routines = {
     if (ed) html += `<div class="card" style="margin-bottom:14px"><h3>${S.rtEdit === 'new' ? 'New routine' : 'Edit routine'}</h3><div class="form">
       <input class="in" id="rt_name" placeholder="Name" value="${esc(ed.name)}"><select id="rt_mode"><option value="passive" ${ed.mode === 'passive' ? 'selected' : ''}>passive: ping only if worth flagging</option><option value="active" ${ed.mode === 'active' ? 'selected' : ''}>active: always hand me the output</option></select>
       <textarea class="full" id="rt_prompt" placeholder="What it does, as you'd ask the agents" style="min-height:90px">${esc(ed.prompt)}</textarea>
-      <select id="rt_type">${['daily', 'weekly', 'hourly'].map((t) => `<option ${ed.schedule.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select><select id="rt_day">${DAYNAMES.map((n, i) => `<option value="${i}" ${ed.schedule.day === i ? 'selected' : ''}>${n}</option>`).join('')}</select>
-      <input class="in" id="rt_at" placeholder="09:00" value="${esc(ed.schedule.at || '09:00')}"><input class="in" id="rt_every" placeholder="every N hours (hourly)" value="${esc(ed.schedule.every || '')}">
+      <div class="full rtsched" data-type="${esc(ed.schedule.type)}" data-on="${esc(ed.schedule.on || 'job-failed')}">
+        <select id="rt_type">${[['daily', 'every day'], ['weekdays', 'every weekday (Mon–Fri)'], ['weekly', 'once a week'], ['hourly', 'every few hours'], ['trigger', 'when something happens']].map(([t, l]) => `<option value="${t}" ${ed.schedule.type === t ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="rt_day" class="rt-weekly">${DAYNAMES.map((n, i) => `<option value="${i}" ${ed.schedule.day === i ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <input class="in rt-time" id="rt_at" placeholder="09:00" value="${esc(ed.schedule.at || '09:00')}"><input class="in rt-hourly" id="rt_every" placeholder="every N hours" value="${esc(ed.schedule.every || '')}">
+        <select id="rt_on" class="rt-trigger">${[['job-failed', 'a job fails'], ['checks-failed', "a project's checks fail"], ['files-changed', 'files change in a folder'], ['ci-failed', 'CI fails on GitHub']].map(([k, l]) => `<option value="${k}" ${ed.schedule.on === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="rt_tproject" class="rt-trigger rt-onjob"><option value="">on any project</option>${S.projects.map((p) => `<option value="${esc(p.name)}" ${ed.schedule.project === p.name ? 'selected' : ''}>on ${esc(p.name)}</option>`).join('')}</select>
+        <input class="in rt-trigger rt-onfiles" id="rt_folder" placeholder="Folder to watch, e.g. ~/Downloads/invoices" value="${esc(ed.schedule.folder || '')}">
+        <input class="in rt-trigger" id="rt_cool" placeholder="at most every N min (15)" value="${esc(ed.schedule.cooldownMin || '')}" title="A burst of events runs the routine once; it waits at least this long between runs">
+        <div class="hint rt-trigger">The run is told what happened (the failed job and its last output, or the files that changed). A routine's own jobs never set off routines, so they cannot loop.</div>
+      </div>
       <select id="rt_project"><option value="">route automatically</option>${S.projects.map((p) => `<option ${ed.project === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select><input class="in" id="rt_cap" placeholder="Cap, $ per week" value="${esc(ed.capUsdWeek || '')}"></div>
       <div class="row"><button class="btn pri" data-act="rtSave">Save</button><button class="btn" data-act="rtCancel">Cancel</button></div></div>`;
     html += `<div class="card"><table class="ps" style="table-layout:auto"><thead><tr><th>Routine</th><th>Mode</th><th>When</th><th class="num">This week</th><th class="num">Cap</th><th>Next run</th><th></th></tr></thead><tbody>` + d.routines.map((r) => `<tr class="${r.enabled ? '' : 'dim'}"><td><b>${esc(r.name)}</b>${r.builtin ? ' <span class="hint">· script</span>' : ''}<div class="hint" style="white-space:normal">${esc(r.does || short(r.prompt || '', 120))}</div></td>
       <td>${pill(r.mode === 'passive' ? 'idle' : 'running', r.mode)}</td><td>${esc(r.scheduleText)}</td><td class="num">$${r.week.usd.toFixed(2)} · ${r.week.runs}</td>
-      <td class="num">${r.builtin ? '—' : r.capUsdWeek ? `$${r.capUsdWeek}${r.week.usd >= r.capUsdWeek ? ' <b style="color:var(--fail)">hit</b>' : ''}` : '<span style="color:var(--stop)">none</span>'}</td><td>${r.nextRunAt && r.enabled ? whenAt(r.nextRunAt) : '—'}</td>
+      <td class="num">${r.builtin ? '—' : r.capUsdWeek ? `$${r.capUsdWeek}${r.week.usd >= r.capUsdWeek ? ' <b style="color:var(--fail)">hit</b>' : ''}` : '<span style="color:var(--stop)">none</span>'}</td><td>${r.schedule && r.schedule.type === 'trigger' ? (r.enabled ? '<span class="hint">on the event</span>' : '—') : r.nextRunAt && r.enabled ? whenAt(r.nextRunAt) : '—'}</td>
       <td style="white-space:nowrap">${r.builtin ? '' : `<button class="btn sm" data-act="rtRun" data-id="${r.id}">Run now</button> <button class="btn sm" data-act="rtOpt" data-id="${r.id}" title="Ask the lead to cut the fat">Optimise</button> <button class="btn sm" data-act="rtToggle" data-id="${r.id}">${r.enabled ? 'Pause' : 'Enable'}</button> <button class="btn sm" data-act="rtEdit" data-id="${r.id}">Edit</button> <button class="btn sm danger" data-act="rtDel" data-id="${r.id}">✕</button>`}</td></tr>`).join('') + `</tbody></table></div>
       <div class="hint" style="margin-top:10px">Sorted by what they cost this week (API-equivalent dollars). Script routines cost nothing. A capped routine skips its runs once it reaches its cap, and tells you.${d.keepWarm && d.keepWarm.pings ? ` Keep-warm has pinged ${d.keepWarm.pings} time(s) for $${d.keepWarm.costUsd.toFixed(2)}.` : ''}</div>`;
     $('#rtBody').innerHTML = html;
   },
 };
+
+document.addEventListener('change', (e) => {
+  const box = e.target.closest && e.target.closest('.rtsched');
+  if (!box) return;
+  if (e.target.id === 'rt_type') box.dataset.type = e.target.value;
+  if (e.target.id === 'rt_on') box.dataset.on = e.target.value;
+});
 
 APPS.recos = {
   mount(root) {

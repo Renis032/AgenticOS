@@ -180,10 +180,16 @@ document.addEventListener('contextmenu', (e) => {
   const job = e.target.closest('.jl[data-id]');
   const link = e.target.closest('.app-link[data-app]');
   if (job) { e.preventDefault(); return openMenu(jobMenu(S.tickets[job.dataset.id]), { x: e.clientX, y: e.clientY }); }
-  if (link) { e.preventDefault(); const app = APP_LIST.find((x) => x.id === link.dataset.app); return openMenu([{ label: `Open ${app.name}`, icon: app.ic, kb: app.key.toUpperCase(), run: () => openApp(app.id) }, { sep: true }, { label: pref('sidebar', 'expanded') === 'expanded' ? 'Collapse sidebar' : 'Expand sidebar', icon: 'sidebar', kb: 'Ctrl+B', run: toggleSidebar }], { x: e.clientX, y: e.clientY }); }
+  if (link) { e.preventDefault(); const app = APP_LIST.find((x) => x.id === link.dataset.app); return openMenu([{ label: `Open ${app.name}`, icon: app.ic, kb: app.key.toUpperCase(), run: () => openApp(app.id) }, ...(app.id === 'jobs' ? jobsLinkMenu() : []), { sep: true }, { label: pref('sidebar', 'expanded') === 'expanded' ? 'Collapse sidebar' : 'Expand sidebar', icon: 'sidebar', kb: 'Ctrl+B', run: toggleSidebar }], { x: e.clientX, y: e.clientY }); }
   if (e.target.closest('input, textarea, [contenteditable]') || String(window.getSelection())) return;
   e.preventDefault();
 });
+// The Jobs entry in the sidebar: clear its "N new" badge in one go.
+function jobsLinkMenu() {
+  const unread = Object.values(S.tickets).filter(isUnread);
+  return [{ label: unread.length ? `Mark all as read (${unread.length})` : 'Mark all as read', icon: 'mail-read', disabled: !unread.length,
+    run: () => { const at = Date.now(); for (const t of unread) S.seen[t.id] = at; setPref('seen', JSON.stringify(S.seen)); dirty(); } }];
+}
 function jobMenu(t) {
   if (!t) return [];
   const unread = isUnread(t);
@@ -269,7 +275,7 @@ function renderNcenter() {
 }
 
 // ---------------------------------------------------------------- preferences window
-const PREF_SECTIONS = [['general', 'General', 'settings'], ['appearance', 'Appearance', 'sun'], ['notifications', 'Notifications', 'bell'], ['jobs', 'Jobs & chat', 'jobs'], ['agents', 'Agents & teams', 'teams'], ['keys', 'Keyboard', 'keyboard'], ['data', 'Data & backups', 'archive'], ['about', 'About', 'info']];
+const PREF_SECTIONS = [['general', 'General', 'settings'], ['account', 'Account', 'key'], ['appearance', 'Appearance', 'sun'], ['notifications', 'Notifications', 'bell'], ['jobs', 'Jobs & chat', 'jobs'], ['agents', 'Agents & teams', 'teams'], ['connectors', 'Connectors', 'open'], ['models', 'Models', 'brain'], ['keys', 'Keyboard', 'keyboard'], ['data', 'Data & backups', 'archive'], ['about', 'About', 'info']];
 // Office-wide settings live on the server (roster.json); the Preferences window edits them through /api/office-settings.
 function officeSelect(key, opts, def) {
   const v = (S.office || {})[key] ?? def;
@@ -326,6 +332,45 @@ function telegramPrefs() {
     sw('failed', 'Failed jobs', 'A note when a job fails. Jobs you start or follow up from Telegram always get their note.'),
   ]);
 }
+// Account: how agents sign in to Claude (lib/auth.js). The key stays on the server; only its last four characters come back.
+function loadAuth() {
+  return api('GET', '/api/auth').then((r) => { S.auth = r; if ($('#prefs').classList.contains('on') && S.prefSec === 'account') renderPrefs(); }).catch(() => { S.auth = { unavailable: true }; });
+}
+function accountPrefs() {
+  const A = S.auth;
+  if (!A) { loadAuth(); return pGroup('', [prow('Sign-in', 'Loading…', '')]); }
+  if (A.unavailable) return pGroup('', [prow('Sign-in', 'The office did not answer. Try again in a moment.', '')]);
+  const onKey = A.mode === 'apiKey';
+  const seg = `<div class="seg"><button class="${!onKey ? 'on' : ''}" data-act="authMode" data-v="login">Claude Code login</button><button class="${onKey ? 'on' : ''}" data-act="authMode" data-v="apiKey" ${A.hasKey ? '' : 'disabled title="Add a key below first"'}>API key</button></div>`;
+  const envWarn = !onKey && A.envKey ? '<div class="hint" style="color:var(--think)">ANTHROPIC_API_KEY is set where the office was started, so Claude Code bills that key, not your plan. Unset it and restart to use your login.</div>' : '';
+  const keyRow = A.hasKey
+    ? prow(`Key ${esc(A.keyHint || '')}`, `Checked with Anthropic ${A.checkedAt ? ago(A.checkedAt) : ''}. Stored in data/auth.json, readable only by you, and never shown again in full.`,
+      '<div class="row" style="margin:0"><button class="btn sm" data-act="authReplace">Replace</button><button class="btn sm danger" data-act="authForget">Forget</button></div>')
+    : '';
+  const addRow = !A.hasKey || S.authReplace
+    ? prow(A.hasKey ? 'New API key' : 'Add an API key', 'Create one at console.anthropic.com → API keys. It is checked with Anthropic before it is saved.',
+      '<div class="row" style="margin:0"><input class="in" id="authKey" type="password" placeholder="sk-ant-…" autocomplete="off" style="width:240px"><button class="btn pri sm" data-act="authSave">Check and use</button></div>')
+    : '';
+  return pGroup('Sign-in', [
+    prow('Agents sign in with', onKey
+      ? 'Your Anthropic API key. Billed per use at API prices; there are no 5-hour or weekly windows, so the daily spending limit (Agents & teams) is your guard.'
+      : 'Your Claude Code login, billed to your Claude plan, with its 5-hour and weekly windows. For a team or a product, an API key is the supported route.', seg) + envWarn,
+    keyRow, addRow,
+  ].filter(Boolean)) + pGroup('', [prow('When it applies', 'New agents use it straight away. Leads already running switch when they next start (a fresh session, or Restart in the title bar).', '')]);
+}
+// Sandbox (lib/sandbox.js): Docker for projects marked "Sandbox" in Teams & roles.
+function loadSandbox() { return api('GET', '/api/sandbox').then((r) => { S.sbx = r; if ($('#prefs').classList.contains('on') && S.prefSec === 'agents') renderPrefs(); }).catch(() => { S.sbx = { unavailable: true }; }); }
+function sandboxPrefs() {
+  const X = S.sbx;
+  if (!X) { loadSandbox(); return pGroup('Sandbox', [prow('Sandboxed projects', 'Loading…', '')]); }
+  if (X.unavailable) return '';
+  const which = X.projects.length ? `Sandboxed now: ${X.projects.map(esc).join(', ')}.` : 'No project is sandboxed yet: tick “Sandbox” on a project in Teams &amp; roles.';
+  const intro = 'A sandboxed project\'s jobs run inside a Docker container that sees only the project folder, the team library and the job\'s attachments; its terminal commands and checks run in one too. The rest of your home folder (other projects, keys, settings) is not there.';
+  const state = !X.docker ? '<b style="color:var(--fail)">Docker is not running</b>, or this user may not use it (add yourself to the docker group).'
+    : X.building ? `Building ${esc(X.image)}… (a few minutes the first time)` : X.ready ? `Image ${esc(X.image)} is ready.` : `The image ${esc(X.image)} is not built yet.`;
+  return pGroup('Sandbox', [prow('Sandboxed projects', `${intro} ${which}<br>${state}${X.lastError ? ` <span style="color:var(--fail)">${esc(X.lastError)}</span>` : ''}`,
+    X.docker && !X.ready ? `<button class="btn ${X.building ? '' : 'pri'} sm" data-act="sbxBuild" ${X.building ? 'disabled' : ''}>${X.building ? 'Building…' : 'Build the image'}</button>` : X.ready ? '<button class="btn sm" data-act="sbxBuild" title="Build it again, for example after updating Claude Code">Rebuild</button>' : '')]);
+}
 function closePrefs() { $('#prefs').classList.remove('on'); }
 const prow = (title, desc, control) => `<div class="prow"><div class="pt"><b>${title}</b>${desc ? `<span>${desc}</span>` : ''}</div>${control}</div>`;
 const pSwitch = (key, def) => `<label class="sw"><input type="checkbox" data-pref="${key}" ${pref(key, def) === '1' ? 'checked' : ''}><i></i></label>`;
@@ -341,6 +386,9 @@ function renderPrefs() {
 function loadBackups() { api('GET', '/api/backups').then((r) => { S.backups = r; if ($('#prefs').classList.contains('on') && S.prefSec === 'data') renderPrefs(); }).catch(() => {}); }
 const sizeOf = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} kB`);
 const PREF_BODY = {
+  connectors: () => connectorsPrefs(),
+  models: () => modelsPrefs(),
+  account: () => `<h2>Account</h2><div class="hint">How agents sign in to Claude and who pays.</div>` + accountPrefs(),
   general: () => `<h2>General</h2><div class="hint">How Agentic OS starts and closes.</div>` +
     pGroup('Start-up', [
       prow('Open on start', 'The app shown when the window opens.', pSelect('startApp', 'today', [['today', 'Today'], ['last', 'Where I left off'], ['jobs', 'Jobs'], ['projects', 'Projects'], ['processes', 'Processes'], ['newjob', 'New job']])),
@@ -410,12 +458,13 @@ const PREF_BODY = {
       prow('Daily spending limit', 'Once the office has spent this much today (API prices), new jobs wait for tomorrow. Running jobs finish; Start now overrides it.',
         officeSelect('dailySpendUsd', [[0, 'No limit'], [5, '$5'], [10, '$10'], [20, '$20'], [50, '$50'], [100, '$100']])),
     ]) +
+    sandboxPrefs() +
     pGroup('Checks, isolation and recovery', [
       prow('Separate workspaces', 'A job on a git project can work in its own copy (a git worktree), so two jobs never overwrite each other. You review and apply its changes when it ends; nothing is committed.',
         officeWord('isolateJobs', [['shared', 'When another job is on the same project'], ['always', 'For every job on a git project'], ['off', 'Never']], 'shared')),
       prow('When checks fail', 'A job\'s checks (Teams & roles → Projects, or set per job) run after the lead answers. A failure goes back to the lead this many times before the job fails.',
         officeSelect('verifyRetries', [[0, 'Fail the job straight away'], [1, 'Send back once'], [2, 'Send back twice'], [3, 'Send back three times']], 1)),
-      prow('Review jobs without checks', 'A reviewer (one Sonnet call, a few cents) reads the request, the answer and the diff before the job closes. Problems go back to the lead like a failed check; if they remain, the job closes done with the concerns flagged.',
+      prow('Review jobs without checks', 'A reviewer (one Sonnet call, a few cents) reads the request, the answer and the diff before the job closes. Problems go back to the lead like a failed check; if they remain, the job closes done with the concerns flagged. Jobs with acceptance criteria are reviewed too, even when their checks pass, unless this is set to Never.',
         officeSelect('reviewAnswers', [[0, 'Never'], [1, 'When files changed'], [2, 'Every job']], 1)),
       prow('Flag a stuck agent after', 'An agent working on a job with no activity for this long gets a banner on the job, with Ask for a status and Restart.',
         officeSelect('stuckMinutes', [[0, 'Never'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour']], 15)),
@@ -515,6 +564,18 @@ Object.assign(ACT, {
     if (r.error) return alert(`Telegram: ${r.error}`);
     loadTelegram();
   },
+  authMode: (d) => api('POST', '/api/auth/mode', { mode: d.v }).then((r) => { S.auth = r; renderPrefs(); }).catch((e) => alert(e.message)),
+  authReplace: () => { S.authReplace = true; renderPrefs(); const i = $('#authKey'); if (i) i.focus(); },
+  authForget: () => { if (!confirm('Forget the API key? Agents go back to your Claude Code login.')) return; api('DELETE', '/api/auth').then((r) => { S.auth = r; S.authReplace = false; renderPrefs(); }); },
+  authSave: async () => {
+    const key = (($('#authKey') || {}).value || '').trim();
+    if (!key) return notifyQuiet('Paste your API key first.');
+    notifyQuiet('Checking the key with Anthropic…');
+    const r = await api('POST', '/api/auth', { apiKey: key }).catch((e) => ({ error: e.message }));
+    if (r.error) return alert(r.error);
+    S.auth = r; S.authReplace = false; renderPrefs(); notifyQuiet('API key saved. New agents use it now.');
+  },
+  sbxBuild: () => { S.sbx = { ...(S.sbx || {}), building: true }; renderPrefs(); api('POST', '/api/sandbox/build').then((r) => { S.sbx = r; renderPrefs(); notifyQuiet('The sandbox image is ready.'); }).catch((e) => { alert(`Building the sandbox image failed: ${e.message}`); loadSandbox(); }); },
   tgCopy: (d) => { navigator.clipboard.writeText(d.v).then(() => notifyQuiet('Copied.')).catch(() => notifyQuiet(d.v)); },
   tgTest: () => api('POST', '/api/telegram/test').then((r) => notifyQuiet(r.error ? `Telegram: ${r.error}` : 'Test message sent.')).catch((e) => alert(e.message)),
   tgDisconnect: () => { if (S.tg && S.tg.linked && !confirm('Disconnect Telegram? The bot token is forgotten.')) return; api('DELETE', '/api/telegram').then((r) => { S.tg = r; renderPrefs(); }); },

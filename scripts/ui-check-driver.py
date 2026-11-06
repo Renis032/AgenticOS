@@ -4,6 +4,7 @@
 usage: ui-check-driver.py <url> <steps.json> <out dir> <width> <height>
 Prints one JSON line per step: {"step": name, "problems": [...], "shot": path}.
 """
+import importlib.util
 import json
 import os
 import sys
@@ -49,6 +50,30 @@ win = Gtk.Window()
 win.set_default_size(W, H)
 ucm = WebKit2.UserContentManager()
 ucm.register_script_message_handler('agentos')
+
+
+# The page's screenshots run the real window's code (app/agentos-window.py).
+def load_window():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'app', 'agentos-window.py')
+    spec = importlib.util.spec_from_file_location('agentos_window', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+window_code = load_window()
+
+
+def on_page_message(_ucm, result):
+    try:
+        msg = json.loads(result.get_js_value().to_string())
+    except ValueError:
+        return
+    if msg.get('cmd') == 'capture':
+        window_code.capture_for_page(view, msg)
+
+
+ucm.connect('script-message-received::agentos', on_page_message)
 ucm.add_script(WebKit2.UserScript(CAPTURE, WebKit2.UserContentInjectedFrames.TOP_FRAME, WebKit2.UserScriptInjectionTime.START, None, None))
 view = WebKit2.WebView(user_content_manager=ucm)
 view.get_settings().set_enable_write_console_messages_to_stdout(False)

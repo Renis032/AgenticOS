@@ -1,0 +1,82 @@
+{
+  "name": "agentic-os-desktop",
+  "productName": "Agentic OS",
+  "version": "0.1.0",
+  "description": "The Agentic OS desktop app for macOS, Windows and Linux: the office's server and window in one Electron app.",
+  "license": "MIT",
+  "author": "Renis Myumyun",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "postinstall": "install-electron",
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:linux": "electron-builder --linux AppImage deb",
+    "dist:mac": "electron-builder --mac dmg zip",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.agenticos.desktop",
+    "productName": "Agentic OS",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "office-files.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "..",
+        "to": "office",
+        "filter": [
+          "server.js",
+          "agentos",
+          "package.json",
+          "LICENSE",
+          "README.md",
+          "roster.example.json",
+          "projects.example.json",
+          "lib/**",
+          "public/**",
+          "scripts/**",
+          "app/icon.png",
+          "docs/**",
+          "!**/__pycache__/**",
+          "!**/node_modules/**"
+        ]
+      }
+    ],
+    "icon": "../app/icon.png",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "maintainer": "Renis Myumyun"
+    }
+  }
+}

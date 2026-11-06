@@ -13,8 +13,9 @@ const rules = {
 };
 
 module.exports = [
-  { ignores: ['node_modules/', 'data/', 'teams/', 'backups/', 'inbox/', 'artifacts/'] },
+  { ignores: ['node_modules/', 'data/', 'teams/', 'backups/', 'inbox/', 'artifacts/', 'desktop/dist/', 'desktop/node_modules/'] },
   js.configs.recommended,
   { files: ['**/*.js'], languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: globals.node }, rules },
+  { files: ['desktop/preload.js'], languageOptions: { globals: { ...globals.node, ...globals.browser } } },
   { files: ['public/**/*.js'], languageOptions: { sourceType: 'script', globals: globals.browser }, rules: { ...rules, 'no-undef': 'off', 'no-unused-vars': 'off' } },
 ];

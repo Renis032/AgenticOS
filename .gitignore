@@ -17,3 +17,5 @@ artifacts/*
 !artifacts/.gitkeep
 # Development tools (ESLint); the app itself has no dependencies.
 node_modules/
+# The desktop app's build output (desktop/dist) and its Electron download.
+desktop/dist/
