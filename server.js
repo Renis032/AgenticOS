@@ -57,6 +57,8 @@ const tickets = new Map();
 const procs = new Map();
 const waiters = new Map();
 const queue = [];
+// One trace per job (lib/tracing.js). Agents' events feed it from addEvent.
+const tracing = require('./lib/tracing').install({ DATA, fs, now: () => Date.now(), path, ticketOfAgent: (a) => ticketOfAgent(a), tickets });
 const mail = [];
 const askWaiters = new Map();
 const mailWake = new Map();
@@ -101,6 +103,11 @@ const { LIMITS_FILE, limits, noteSpend, onRateLimit, checkHold, continuePastLimi
 // ---------------------------------------------------------------- live stream to the office
 
 const clients = new Set();
+// Temporary API failures: retries and the circuit breaker (lib/resilience.js).
+const resilience = require('./lib/resilience').install({ broadcast: (m) => broadcast(m), now, retryDelay: process.env.AGENTOS_TEST_PARENT ? () => 200 : undefined,
+  kick: () => { for (const a of agents.values()) if (a.resident) pumpResident(a); pump(); } });
+// Who decided what (lib/audit.js).
+const audit = require('./lib/audit').install({ DATA, fs, now, path });
 function broadcast(msg) {
   const line = 'data: ' + JSON.stringify(msg) + '\n\n';
   for (const res of clients) res.write(line);
@@ -117,6 +124,7 @@ function touchTicket(t) {
 }
 function addEvent(a, ev) {
   ev.t = now();
+  tracing.onEvent(a, ev);
   // The whole event goes to the log on disk; memory and the window get a copy with very long fields trimmed.
   fs.appendFileSync(path.join(EVENTS_DIR, a.id + '.jsonl'), JSON.stringify(ev) + '\n');
   const mem = slimEvent(ev);
@@ -149,7 +157,7 @@ const { readLines, onStreamMessage, ticketBudget, waitForBudget, releaseBudget }
 });
 // ---------------------------------------------------------------- residents, the always-alive agents (lib/residents.js)
 
-const { PERSONAS, baseAgent, startResident, enqueueResident, pumpResident, restartResident } = require('./lib/residents').install({
+const { PERSONAS, baseAgent, startResident, enqueueResident, pumpResident, restartResident } = require('./lib/residents').install({ resilience,
   sandbox,
   CLAUDE_BIN, addEvent, agents, broadcast, buildArgs, childEnv, fs, home, limits, modelOf, now, onStreamMessage, path, pendingFeedback, procs, readJson, readLines, spawn, standingLines, standingVersion, thread, tickets, touch, touchTicket,
   isShuttingDown: () => shuttingDown, arms: live(() => arms), lessons: live(() => lessons), verify: live(() => verify), closeTicket: (...a) => closeTicket(...a), recovery: live(() => recovery),
@@ -169,7 +177,7 @@ const { newTicket, stopTicket, cleanAttachments, attachText, saveUpload, rawBody
 });
 // ---------------------------------------------------------------- staff: sub-agents and delegation (lib/staff.js)
 
-const { pump, staffList, ticketOfAgent, enqueue, stopTree, delegate, waitForTeam, assign } = require('./lib/staff').install({
+const { pump, staffList, ticketOfAgent, enqueue, stopTree, delegate, waitForTeam, assign } = require('./lib/staff').install({ resilience,
   sandbox,
   ACTIVE, CLAUDE_BIN, EFFORTS, MAX_RUNNING, MODELS, PERSONAS, addEvent, agents, assignPids, attachText, baseAgent, batches, broadcast, buildArgs, childEnv,
   childRolesFor, chooseModel, crypto, enqueueResident, home, inWorkRepo, limits, mail, mailWake, modelOf, newId, now, onStreamMessage, pendingFeedback, procs,
@@ -179,7 +187,7 @@ const { pump, staffList, ticketOfAgent, enqueue, stopTree, delegate, waitForTeam
 });
 // ---------------------------------------------------------------- terminal commands (lib/commands.js)
 
-const { commandMode, canRunCommands, blockedCommand, runCommand, decideCommand, stopCommand, endCommands, running: commandsRunning, procOf: commandProc } = require('./lib/commands').install({
+const { commandMode, canRunCommands, blockedCommand, runCommand, decideCommand, stopCommand, endCommands, running: commandsRunning, procOf: commandProc, NETWORK: networkCommand } = require('./lib/commands').install({ audit,
   sandbox,
   agents, tickets, readJson, home, now, newId, broadcast, addEvent,
   touch: (a) => touch(a), touchTicket: (t) => touchTicket(t), thread: (t, e) => thread(t, e), ticketOfAgent: (a) => ticketOfAgent(a),
@@ -220,7 +228,7 @@ const { guard } = require('./lib/access').install({
 });
 // ---------------------------------------------------------------- plans for big tickets (lib/plans.js)
 
-const { decidePlan, proposePlan, planGate, reportEvidence } = require('./lib/plans').install({
+const { decidePlan, proposePlan, planGate, reportEvidence } = require('./lib/plans').install({ audit,
   touchTicket,
   overnight: live(() => overnight),
   addEvent: (...a) => addEvent(...a),
@@ -424,6 +432,8 @@ const brain = require('./lib/brain').install({
   claudeSkillsFor: (...a) => claudeSkillsFor(...a), eventsOf: (...a) => eventsOf(...a), giveFeedback: (...a) => giveFeedback(...a), maybeTidy: (...a) => maybeTidy(...a),
 });
 
+const similar = require('./lib/similar').install({ DATA, now, knowledge: () => brain.knowledge(), ollamaBase: () => (providers.view().providers.ollama.base || providers.view().providers.ollama.defaultBase).replace(/\/$/, '') });
+
 // ---------------------------------------------------------------- ARMS (skills, routines, memory, apps)
 
 const arms = require('./lib/arms').install({
@@ -459,12 +469,18 @@ const server = http.createServer(async (req, res) => {
     if (await arms.route(req, res, url, p, body, json)) return;
     if (await skillProposals.route(req, res, url, p, body, json)) return;
     if (await brain.route(req, res, url, p, body, json)) return;
+    if (await similar.route(req, res, url, p, body, json)) return;
     if (await backups.route(req, res, p, body, json)) return;
     if (await evals.route(req, res, p, body, json)) return;
     if (await telegram.route(req, res, url, p, body, json)) return;
     if (await auth.route(req, res, url, p, body, json)) return;
     if (await askOffice.route(req, res, url, p, body, json)) return;
     if (await leadWizard.route(req, res, url, p, body, json)) return;
+    if (await deepen.route(req, res, url, p, body, json)) return;
+    if (await leadChat.route(req, res, url, p, body, json)) return;
+    if (await retrieval.route(req, res, url, p, body, json)) return;
+    if (await tracing.route(req, res, url, p, body, json)) return;
+    if (req.method === 'GET' && p === '/api/ops') return json(res, 200, { breaker: resilience.view(), audit: { ...audit.check(), recent: audit.recent(25) }, retrieval: retrieval.view(), maxLeadJobs: Number(readJson('roster.json').defaults.maxLeadJobs ?? 4) });
     if (await teamTemplates.route(req, res, url, p, body, json)) return;
     if (await reports.route(req, res, url, p, body, json)) return;
     if (await hardware.route(req, res, url, p, body, json)) return;
@@ -542,7 +558,7 @@ server.listen(PORT, HOST, () => {
 });
 // ---------------------------------------------------------------- where agents may edit (lib/edit-scope.js)
 
-const { denyEdit, requestAccess, decideAccess, endAccess } = require('./lib/edit-scope').install({
+const { denyEdit, requestAccess, decideAccess, endAccess } = require('./lib/edit-scope').install({ audit,
   workspaces: live(() => workspaces), agents, readJson, home, now, newId, broadcast, addEvent,
   touch: (...a) => touch(...a), touchTicket: (...a) => touchTicket(...a), thread: (...a) => thread(...a), ticketOfAgent: (...a) => ticketOfAgent(...a),
   teamOf: (...a) => teamOf(...a), handoffsOf: (...a) => handoffsOf(...a), projectsMentioned: (...a) => projectsMentioned(...a),
@@ -560,12 +576,12 @@ setTimeout(() => backups.maybeDaily(), 60000).unref();
 
 // The agent eval on a schedule, kept over time for the Health app (lib/evals.js).
 const evals = require('./lib/evals').install({
-  ROOT, DATA, readJson, now, broadcast,
+  ROOT, DATA, readJson, now, broadcast, audit, writeRoster: (r) => writeRoster(r), restartWhenIdle: (k) => restartWhenIdle(k), agents,
   isIdle: () => ![...tickets.values()].some((t) => t.status === 'open') && ![...agents.values()].some((a) => ACTIVE.includes(a.status) || (a.resident && (a.current || a.inbox.length))),
   // Not near a limit: no hold, and the 5-hour and weekly windows below half.
   canSpend: () => !limits.hold && Object.entries(limits.windows).every(([, w]) => !w.resetsAt || w.resetsAt < now() || w.utilization < 0.5),
 });
-setInterval(() => evals.maybeScheduled(), 5 * 60000).unref();
+setInterval(() => { evals.maybeScheduled(); evals.maybeOnChange(); }, 5 * 60000).unref();
 
 // Plans, questions, commands and edit requests in a linked Telegram chat, with buttons; jobs, processes and usage from the chat (lib/telegram.js).
 const telegram = require('./lib/telegram').install({ DATA, ACTIVE, agents, tickets, now, readJson, thread, limitsView, decidePlan, decideCommand,
@@ -610,7 +626,7 @@ function fireFailureTriggers(t) {
 }
 // Extra lines for a lead's brief on a new job: its checks, what the project remembers, and its workspace.
 function briefExtras(t) {
-  return jobLinks.briefFor(t) + verify.briefLine(t) + projectMemory.briefFor(t) + workspaces.briefFor(t);
+  return jobLinks.briefFor(t) + verify.briefLine(t) + projectMemory.briefFor(t) + retrieval.briefFor(t) + workspaces.briefFor(t) + require('./lib/untrusted').briefFor(t);
 }
 // What the office remembers per project, retrieved per job (lib/project-memory.js).
 const projectMemory = require('./lib/project-memory').install({ DATA, agents, findSecret: require('./lib/secrets').findSecret, fs, newId, now, path, readJson, ticketOfAgent });
@@ -643,6 +659,12 @@ const overnight = require('./lib/overnight').install({ DATA, broadcast, dispatch
 // The job's live preview, with click-to-comment (lib/preview.js).
 const preview = require('./lib/preview').install({ PORT, agents, blockedCommand, broadcast, killGroup: require('./lib/kill-group').killGroup, now, readJson, spawn, thread, ticketOfAgent, tickets, touchTicket, workdirOf });
 const leadWizard = require('./lib/lead-wizard').install({ fs, home, oneShot: askOffice.oneShot, readJson });
+const deepen = require('./lib/deepen').install({ oneShot: askOffice.oneShot });
+// What a team knows, searchable by its agents (lib/retrieval.js).
+const retrieval = require('./lib/retrieval').install({ DATA, MEMORY_DIR, agents, fs, path, readJson, ticketOfAgent, projectMemory: () => projectMemory, teamsList: (...a) => teamsList(...a),
+  ollamaBase: () => (providers.view().providers.ollama.base || providers.view().providers.ollama.defaultBase).replace(/\/$/, '') });
+// Chatting with a lead: answers, and job changes the user confirms (lib/lead-chat.js).
+const leadChat = require('./lib/lead-chat').install({ audit, DATA, agents, createTicket, facts: askOffice.facts, followUp, fs, newId, now, oneShot: askOffice.oneShot, path, readJson, readMemory, thread, tickets, touchTicket });
 // Ready-made teams and the user's own, opened in the wizard's review form (lib/team-templates.js).
 const teamTemplates = require('./lib/team-templates').install({ DATA, agents, fs, path, readJson });
 setInterval(() => backups.maybeDaily(), 3600000).unref();
@@ -662,12 +684,12 @@ const shutdown = () => {
 
 const routeModules = [
   require('./lib/routes-tickets').install({
-    UPLOADS, links: live(() => jobLinks), preview: live(() => preview), agents, askUser, broadcast, changesOf, changesOfAsync, cleanAttachments, createTicket, decidePlan, dispatchTicket, followUp, fs, lessons,
+    UPLOADS, tracing, links: live(() => jobLinks), preview: live(() => preview), agents, askUser, broadcast, changesOf, changesOfAsync, cleanAttachments, createTicket, decidePlan, dispatchTicket, followUp, fs, lessons,
     path, pauseTicket, proposePlan, rateTicket, reportEvidence, rawBody, readJson, recallFollowup, sendFollowupNow, releaseBudget, resumeTicket, revertChanges, saveState,
     saveUpload, searchText, searchTickets, stopTicket, thread, ticketBudget, tickets, timelineOf, touch, touchTicket,
   }),
   require('./lib/routes-agents').install({
-    ACTIVE, MEMORY_DIR, addEvent, addToDocs, agents, ask, assign, colleagues, decideAccess, decideCommand, delegate, denyEdit, enqueue,
+    ACTIVE, MEMORY_DIR, addEvent, addToDocs, agents, ask, assign, colleagues, decideAccess, decideCommand, delegate, denyEdit, enqueue, networkCommand,
     enqueueResident, eventsOf, fs, giveFeedback, lessons, maybeRefresh, newTicket, onCall, path, pumpResident, readMemory, requestAccess,
     restartResident, runCommand, runReview, saveHandoff, sendMail, setStanding, snapshotBefore, staffList, stopCommand, stopTree, takeUnread, thread,
     ticketOfAgent, tickets, touch, touchFile, touchTicket, waitForTeam, writeMemory,

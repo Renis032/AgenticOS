@@ -119,6 +119,13 @@ later) and gets its functions back. No module is over about 650 lines.
 |---|---|---|
 | Core | `auth.js` | how agents sign in: the Claude Code login or an Anthropic API key, kept in `data/auth.json` |
 |  | `state.js` | the office's state on disk: agents, jobs, team state, event logs; saved atomically with a backup copy |
+|  | `untrusted.js` | fences outside text (issues, email) and limits tools on those jobs |
+|  | `retrieval.js` | `search_knowledge`: BM25 merged with Ollama embeddings, scoped to the agent's team |
+|  | `resilience.js` | retries of temporary API failures and the circuit breaker |
+|  | `scheduling.js` | job priority and the limit on lead jobs at once |
+|  | `tracing.js` | one trace per job, exportable as OpenTelemetry JSON |
+|  | `audit.js` | hash-chained record of who decided what (`data/audit.jsonl`) |
+|  | `lead-chat.js` | chatting with a lead; job changes the user confirms |
 |  | `access.js` | the token wall: only the office's own window gets an answer |
 |  | `prompts.js` | what each agent is told and how its `claude` process is started |
 |  | `residents.js` | the always-alive leads: their inbox, one message per turn, fresh sessions, restarts |

@@ -122,6 +122,23 @@ function histBtns(box) {
   const h = box._hist;
   for (const b of document.querySelectorAll(`[data-for="${box.id}"]`)) b.disabled = b.dataset.act === 'tUndo' ? !h.past.length && box.value === h.last : !h.future.length;
 }
+// Deeper (lib/deepen.js): the rewrite replaces the draft as one undo step, with the reasoning shown under the box.
+// If the draft changed while the model was working (more typing, another job open), the reply is dropped.
+async function deepenDraft(boxId, noteId, btn) {
+  const box = $('#' + boxId), note = $('#' + noteId);
+  const text = box ? box.value.trim() : '';
+  if (!text) return notifyQuiet('Type the task first, then press Deeper.');
+  btn.disabled = true; btn.textContent = 'Rewriting…';
+  const r = await api('POST', '/api/deepen', { text }).catch((e) => ({ error: e.message }));
+  btn.disabled = false; btn.textContent = 'Deeper';
+  if (r.error) return notifyQuiet(r.error);
+  if (!box.isConnected || box.value.trim() !== text) return notifyQuiet('The draft changed while it was being rewritten, so it was left as it is.');
+  box.value = r.prompt;
+  histNote(box, false);
+  box.dispatchEvent(new Event('input'));
+  note.innerHTML = `<details class="deeper"><summary>Why it was rewritten this way</summary><div class="md">${md(r.notes)}</div></details>`;
+  box.focus();
+}
 let tipEl = null, tipTimer = null, tipXY = [0, 0];
 document.addEventListener('mouseover', (ev) => { const t = ev.target.closest && ev.target.closest('[title]'); if (t && t.title) { t.dataset.tip = t.title; t.removeAttribute('title'); } }, true);
 document.addEventListener('mousemove', (ev) => {
@@ -541,6 +558,7 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   attachNew: () => { pickTarget = () => S.newFiles; pickDone = () => { $('#njFiles').innerHTML = S.newFiles.map((p) => fileChip(p, true)).join(''); }; $('#filePick').click(); },
   unfile: (d) => { S.newFiles = S.newFiles.filter((x) => x !== d.path); S.followFiles = S.followFiles.filter((x) => x !== d.path); if ($('#njFiles')) $('#njFiles').innerHTML = S.newFiles.map((p) => fileChip(p, true)).join(''); if ($('#jfiles')) $('#jfiles').innerHTML = S.followFiles.map((p) => fileChip(p, true)).join(''); },
   sendJob: () => sendNewJob(),
+  deepen: (d, ev) => deepenDraft(d.box, d.note, ev.target.closest('button')),
   useTpl: (d) => useTemplate(d.k),
   firstJob: () => firstJob(),
   saveTpl: () => {
@@ -557,6 +575,48 @@ A teammate on the cheapest model writes CAPTIONS.md there.`)) api('POST', '/api/
   replay: () => { const tl = S.timeline[S.job] && S.timeline[S.job].data; if (!tl) return; S.replay = { job: S.job, t: tl.start, t0: tl.start, t1: tl.end || Date.now(), speed: 30, playing: true }; S.jbodyKey = null; renderJob(); },
   rpPlay: () => { const R = S.replay; if (R.t >= R.t1) R.t = R.t0; R.playing = !R.playing; S.jbodyKey = null; renderJob(); },
   rpExit: () => { S.replay = null; S.jbodyKey = null; renderJob(); },
+  evalRestore: async () => {
+    if (!confirm('Put the agents\' instructions back to the last run that passed? Later edits to them are lost.')) return;
+    const r = await api('POST', '/api/evals/restore').catch((e) => ({ error: e.message }));
+    if (r.error) return alert(r.error);
+    notifyQuiet(r.message); S.evals = null; S.hKey = null; dirty();
+  },
+  downloadTrace: async (d) => {
+    const r = await api('GET', `/api/tickets/${d.id}/trace?format=otlp`).catch((e) => ({ error: e.message }));
+    if (r.error) return alert(r.error);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 1)], { type: 'application/json' }));
+    a.download = `trace-job-${d.n}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  },
+  chatMode: (d) => { S.chatMode = d.v; S.chat = null; S.chatKey = null; S.chatRoomFor = null; APPS.messages.update(); },
+  talkLead: (d) => { S.chatTeam = d.id; S.chatMode = 'talk'; S.chat = null; S.chatKey = null; if (S.app === 'messages') APPS.messages.update(); else openApp('messages'); },
+  talkSend: async () => {
+    const k = S.chatTeam, box = $('#mtText'), text = box.value.trim(), T = S.talk && S.talk[k];
+    if (!text || !T || !T.list || T.thinking) return;
+    box.value = '';
+    const shown = T.list;
+    S.talk[k] = { list: [...shown, { id: 'sending', from: 'user', t: Date.now(), text }], thinking: true };
+    S.chatKey = null; dirty();
+    const r = await api('POST', `/api/teams/${k}/talk`, { text }).catch((e) => ({ error: e.message }));
+    S.talk[k] = { list: r.list || shown };
+    S.chatKey = null; dirty();
+    if (r.error) { if (S.chatTeam === k && !$('#mtText').value) $('#mtText').value = text; alert(r.error); }
+  },
+  talkDecide: async (d) => {
+    const k = S.chatTeam, box = $(`#tk-${d.x}`);
+    const r = await api('POST', `/api/teams/${k}/talk/${d.m}/${d.x}`, { decision: d.v, text: box ? box.value : undefined }).catch((e) => ({ error: e.message }));
+    if (r.error) return alert(r.error);
+    S.talk[k] = { list: r.list }; S.chatKey = null; dirty();
+  },
+  talkClear: async () => {
+    const k = S.chatTeam;
+    if (!confirm(`Clear your chat with ${who(k)}? Jobs it created stay.`)) return;
+    const r = await api('DELETE', `/api/teams/${k}/talk`).catch((e) => ({ error: e.message }));
+    if (r.error) return alert(r.error);
+    S.talk[k] = { list: [] }; S.chatKey = null; dirty();
+  },
   chatTeam: (d) => { S.chatTeam = d.id; S.chat = null; S.chatKey = null; APPS.messages.update(); },
   askTeam: async () => { const text = $('#mtText').value.trim(); if (!text) return; const r = await api('POST', `/api/teams/${S.chatTeam}/ask`, { text }); $('#mtText').value = ''; if (r.id) { S.job = r.id; const w = () => (S.tickets[r.id] ? openApp('jobs') : setTimeout(w, 150)); w(); } },
   memSel: (d) => { S.memAgent = d.id; S.memKey = null; APPS.memory.update(); },

@@ -25,6 +25,17 @@ const SHOTS = [
   { name: 'brain', js: "openApp('brain'); ACT.brainTab({ tab: 'knowledge' })", wait: 4500 },
   { name: 'projects', js: "openApp('projects'); setTimeout(() => { const e = document.querySelector('.page'); if (e) e.scrollTop = 0; }, 900)", wait: 2200 },
   { name: 'usage', js: "openApp('usage'); setTimeout(() => { const e = document.querySelector('.ostats'); if (e) e.closest('.card').scrollIntoView(); }, 2000)", wait: 2800 },
+  { name: 'talk-lead', wait: 1500, js: `const k = leads()[0], at = Date.now(), p = who(k); S.chatTeam = k; S.talk = { [k]: { list: [
+    { id: 'a', from: 'user', t: at - 240000, text: 'Is anything of yours stuck, and can you add a job to tidy the release notes?' },
+    { id: 'b', from: 'agent', t: at - 200000, text: 'Nothing is stuck: one plan is waiting for your approval and everything else has finished. Here is a draft for the release notes job to confirm.', actions: [{ id: 'x', type: 'create', status: 'pending', text: 'Tidy the release notes for the next version: group the changes by feature, remove duplicates and link each entry to its job.' }] }] } }; S.chatMode = 'talk'; S.chatKey = null; openApp('messages')` },
+  { name: 'new-job', wait: 1500, js: "openApp('newjob'); setTimeout(() => { $('#njText').value = 'Fix the failing date tests on the recipe app and add one for leap years.'; $('#njPriority').value = 'urgent'; }, 400)" },
+  { name: 'job-timeline', wait: 2500, js: `const t = ${find('/Summarise/i')}; S.job = t.id; S.jtab = 'timeline'; S.jbodyKey = null; openApp('jobs')` },
+  { name: 'overnight', wait: 2500, js: "Promise.all(['Upgrade the recipe app to the new router and fix what breaks', 'Add offline support to the trail log'].map((text) => api('POST', '/api/tasks', { text, project: 'Recipe Box', overnight: true }))).then(() => setTimeout(() => openApp('overnight'), 600))" },
+  { name: 'reliability', wait: 2000, js: `const at = Date.now(); S.ops = { breaker: { state: 'closed', recentFailures: 0, why: null }, maxLeadJobs: 4, retrieval: { engine: 'hybrid', embedded: 412 }, audit: { ok: true, entries: 38, recent: [
+    { actor: 'user', action: 'lead-chat.job-created', job: 41, detail: 'Tidy the release notes for the next version', t: at - 120000 },
+    { actor: 'user', action: 'command.approved', job: 40, detail: 'npm test', t: at - 900000 },
+    { actor: 'office', action: 'plan.approved', job: 39, detail: 'auto-approved under the plan limit', t: at - 3600000 },
+    { actor: 'user', action: 'edit-access.allowed', job: 38, detail: '~/projects/recipe-box/docs', t: at - 7200000 }] } }; S.opsAt = at + 600000; S.hKey = null; openApp('health'); setTimeout(() => { const c = document.querySelector('#hBody .cards'); if (c) c.style.display = 'none'; }, 700)` },
   { name: 'lead-wizard', js: "setLook('graphite'); openApp('settings'); setTimeout(() => { $('#lw_purpose').value = 'Look after my home server: the Docker containers, nightly backups and the Raspberry Pi. Keep things running, explain what changed, and never expose a service to the internet.'; $('#lw_persona').value = 'Hale'; $('#lw_room').value = 'Homelab'; ACT.lwDraft({}); setTimeout(() => { const e = document.querySelector('.lwiz'); if (e) e.scrollIntoView(); }, 2500); }, 1500)", wait: 5500 },
   { name: 'jobs-light', js: `S.lw = null; S.cfg = null; setLook('champagne'); setTheme('light'); const t = ${find('/release notes/i')}; S.job = t.id; S.jtab = 'thread'; openApp('jobs')`, wait: 1500 },
 ];

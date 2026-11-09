@@ -454,7 +454,7 @@ function renderJob() {
   if (S.jviewFor !== t.id) {
     S.jviewFor = t.id; S.jbodyFor = null; S.jbodyKey = null; S.followFiles = []; S.rerate = false; S.threadFrom = {};
     v.innerHTML = `<div class="jhead" id="jhead"></div><div id="jban"></div><div class="tabs" id="jtabs"></div><div class="jbody" id="jbody"></div><div class="jlive" id="jlive" aria-live="polite"></div><div id="jneed" role="region" aria-label="Needs you"></div>
-      <div class="composer"><textarea id="jtext"></textarea><div class="files" id="jfiles"></div><div class="row"><button class="btn sm ibtn" data-act="attachJob" title="Attach files" aria-label="Attach files">${ic('clip')}</button>${undoBtns('jtext')}<span class="hint" id="jhint" style="flex:1"></span><span id="jsend" class="hint"></span><button class="btn pri sm" data-act="jobSend">Send</button></div></div>`;
+      <div class="composer"><textarea id="jtext"></textarea><div class="files" id="jfiles"></div><div id="jDeeper"></div><div class="row"><button class="btn sm ibtn" data-act="attachJob" title="Attach files" aria-label="Attach files">${ic('clip')}</button>${undoBtns('jtext')}<button class="btn sm" data-act="deepen" data-box="jtext" data-note="jDeeper" title="Rewrite this draft as a deeper version of the same task. You review it before anything runs.">Deeper</button><span class="hint" id="jhint" style="flex:1"></span><span id="jsend" class="hint"></span><button class="btn pri sm" data-act="jobSend">Send</button></div></div>`;
     $('#jbody').addEventListener('scroll', (e) => { if (S.jtab === 'thread' && !S.replay && e.target.scrollTop < 80 && e.target.querySelector(':scope > .threadmore')) threadMore(S.job); }, { passive: true });
     wireDrop($('#jtext'), () => S.followFiles, () => { $('#jfiles').innerHTML = S.followFiles.map((p) => fileChip(p, true)).join(''); });
     const box = $('#jtext');
@@ -517,7 +517,7 @@ function renderJob() {
   } else if (S.jtab === 'changes') renderChanges(t, body);
   else if (S.jtab === 'preview') renderPreview(t, body);
   else if (S.jtab === 'hardware') renderHardware(t, body);
-  else renderTimeline(t, body);
+  else renderTimeline(t, body).then(() => { if (S.job === t.id && S.jtab === 'timeline' && t.traceId && !body.querySelector('[data-act=downloadTrace]')) { const html = `<button class="btn sm" data-act="downloadTrace" data-id="${t.id}" data-n="${t.n}" title="This job's spans as OpenTelemetry JSON">Export trace</button> `, replay = [...body.querySelectorAll('button')].find((b) => /Replay/.test(b.textContent)); if (replay) replay.insertAdjacentHTML('beforebegin', html); else body.insertAdjacentHTML('afterbegin', html); } });
 }
 // The guided tour of a job's changes (lib/walkthrough.js).
 function walkthroughHtml(t, list) {

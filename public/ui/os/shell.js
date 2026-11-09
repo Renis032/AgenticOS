@@ -488,6 +488,8 @@ const PREF_BODY = {
         officeSelect('remindAfterMinutes', [[0, 'Never'], [30, 'After 30 minutes'], [60, 'After 1 hour'], [120, 'After 2 hours']])),
     ]) +
     pGroup('Parallel leads', [
+      prow('Jobs leads work on at once', 'New jobs wait above this, most urgent first. Running jobs and their follow-ups are never held, and an urgent job ignores the limit.',
+        officeSelect('maxLeadJobs', [[0, 'No limit'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']], 4)),
       prow('When a lead is busy, start a second desk for new jobs', 'A new job for a lead who is working on something else goes to a parallel copy of that lead (same instructions and memory, read-only), so it starts right away instead of waiting. Follow-ups on the lead\'s current job still wait for the lead.',
         officeSelect('leadTwins', [[0, 'Off: new jobs wait'], [1, 'Up to 1 extra desk'], [2, 'Up to 2'], [3, 'Up to 3']])),
       prow('Close an idle parallel desk after', 'Its jobs go back to the lead, who gets the earlier answers as context.',

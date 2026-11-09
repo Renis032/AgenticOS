@@ -12,6 +12,21 @@ Claude Code login. Everything runs on your computer.
 
 ![Today: what needs you, who is working, what finished](docs/screenshots/today.png)
 
+## What's new
+
+- **Talk to a lead**: ask a lead a question, or ask it to add or change a job, without interrupting its work. Every change is
+  a card you confirm.
+- **Outside text is treated as data**: jobs from GitHub issues and email are fenced and run with tighter limits.
+- **Knowledge search for agents**: words and meaning combined, inside each agent's own team.
+- **Survives API outages**: temporary errors are retried, and a circuit breaker pauses new work until the service is back.
+- **Job priority** and a limit on how many jobs leads work on at once.
+- **A trace per job**, exportable as OpenTelemetry JSON.
+- **An eval gate on instruction changes**, with one-click rollback to the last good instructions.
+- **A tamper-evident record** of who approved what.
+- **Deeper** rewrites a job draft into a fuller version for you to review, and the Brain's **Meaning view** places similar knowledge together.
+
+Full history in [CHANGELOG.md](CHANGELOG.md).
+
 ## Why
 
 A single chat forgets everything when it ends, does all the work on the most expensive model, and you can't see what
@@ -51,6 +66,11 @@ it's doing or what it costs. Agentic OS gives you a standing team instead:
   relevant to it, not the whole history
 - **New team leads from a description**: say what the lead should look after; the office drafts its routing,
   instructions and specialists for you to review
+- **Talk to a lead** (Messages): questions answered from the lead's memory and jobs while it keeps working; new jobs and
+  job changes appear as cards you edit and confirm
+- **Knowledge search**: agents search their team's library, handoffs, memory and project memory by words and, with an
+  Ollama embedding model, by meaning; the best passages join a new job's brief
+- **Job priority**: urgent jobs go first, routines default to low, and a limit keeps leads from taking on too much at once
 - **Processes**: every agent as a process with model, effort, state, current job, activity and cost
 - **Brain**: everything the agents know (memories, libraries, skills, handoffs, projects) as one searchable graph,
   plus how jobs flow and what to improve
@@ -145,6 +165,24 @@ signing (an Apple Developer ID and notarization; a Windows code-signing certific
 - **In the background**: close the window while jobs run and it waits in the tray.
 - **What a job cost and why**: `node scripts/job-cost.js 28`.
 
+## Good practices built in
+
+| Area | What the office does |
+|---|---|
+| **Verification** | Project checks run by the office, with real exit codes deciding · a reviewer for jobs without checks · plan acceptance criteria with evidence · lessons from failed or reworked jobs |
+| **Evals** | A scheduled agent eval on a cheap model in a throwaway office · an automatic gate when agents' instructions change, rechecked before it counts as a regression · rollback to the last good instructions |
+| **Reliability** | Retries with growing waits for temporary API errors · a circuit breaker with a single test turn · crash and restart recovery that avoids repeating work · a stuck-agent watchdog · daily backups and damaged-state recovery |
+| **Load and scheduling** | Job priority · a limit on lead jobs at once (never holding a job already running, so it can't deadlock) · a limit on specialists · parallel desks for busy leads · work held near usage limits · an overnight queue |
+| **Retrieval and memory** | BM25 merged with embeddings by reciprocal rank fusion, falling back to words alone · knowledge scoped per team · per-project memory where each job gets only what is relevant · fresh sessions per job with handoffs |
+| **Cost** | Models and effort chosen by expected value · free scripts for mechanical work · per-job budgets and a daily cap · context-size reminders · cost per successful job |
+| **Security** | Local-only server behind an app token · outside text fenced as data, with web tools and network commands off on those jobs · Docker sandbox per project · edit scopes and git worktrees · command approval · secret detection |
+| **Human control** | Plan approval with a cost estimate · confirmation cards · per-job undo · nothing is ever committed or pushed for you |
+| **Observability** | A live process tree · a job timeline with replay · a trace per job with OpenTelemetry export · usage reports · a hash-chained record of decisions, shown in Health |
+| **Testing** | An API check and a click-through window check on a throwaway office with stand-in agents, spending nothing |
+
+The network limit on outside-text jobs matches known commands and can be got around, so a project that takes outside
+jobs should also use the Docker sandbox. The decision record shows tampering; it can't prevent it.
+
 ## How it works
 
 ```mermaid
@@ -177,6 +215,12 @@ undo), redirects mechanical shell commands to scripts, and delivers mail between
 | **A new team lead** drafted from a plain description, shown here in the Graphite look. | **Brain.** Agents, memories, library pages, skills, handoffs and projects as one graph you can drag, search and scrub through time. |
 | ![The process tree](docs/screenshots/processes.png) | ![A finished job in the light theme](docs/screenshots/jobs-light.png) |
 | **Processes.** Every agent as a process: model and effort, state, current job, activity and cost. | **Light or dark**, following the system or picked in Preferences. |
+| ![Talking to a lead, with a draft job to confirm](docs/screenshots/talk-lead.png) | ![Reliability and the record of decisions in Health](docs/screenshots/reliability.png) |
+| **Talk to a lead.** Ask a question or request a job; what it drafts waits on a card for you to edit and confirm. | **Reliability.** Service state, the job limit, how knowledge search is running and who decided what. |
+| ![The overnight queue](docs/screenshots/overnight.png) | ![A job's timeline with trace export](docs/screenshots/job-timeline.png) |
+| **Overnight.** Queue jobs, set a spending cap and read one report in the morning. | **Timeline.** Who worked when and what it cost, with replay and an OpenTelemetry trace export. |
+| ![The New job page with a priority chosen](docs/screenshots/new-job.png) | |
+| **New job.** Choose the project, priority and effort, or let the office decide. | |
 
 All screenshots come from the demo office (`npm run screenshots` regenerates them).
 
@@ -187,7 +231,8 @@ All screenshots come from the demo office (`npm run screenshots` regenerates the
 - Your jobs, conversations, memories and configuration never leave your computer except as prompts to Claude through
   your own Claude Code login.
 - Agents edit only inside the job's project (other folders ask first), run terminal commands only as you allow, reach
-  the web only if you let them, and never commit or push. Every change can be undone per job, and stopping a job
+  the web only if you let them, and never commit or push. Jobs from GitHub issues or email get no web tools or network
+  commands, and every office command on them asks first. Every change can be undone per job, and stopping a job
   stops every process it started.
 
 See [SECURITY.md](SECURITY.md) for the full picture and how to report a problem.

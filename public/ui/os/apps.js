@@ -83,9 +83,9 @@ APPS.newjob = {
         <div class="chips" id="njTpl"></div>
         <div class="chips" id="njChips"></div>
         <textarea id="njText" style="min-height:200px" placeholder="What should the agents do?"></textarea>
-        <div class="files" id="njFiles"></div>
-        <div class="row"><select id="njProject"></select><select id="njEffort" title="How hard the lead thinks on this job"><option value="">lead effort: auto</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>
-          <button class="btn ibtn" data-act="attachNew">${ic('clip')} Attach files</button>${undoBtns('njText')}<label class="chk"><input type="checkbox" id="njAfter"> start after the 5-hour limit resets</label><span style="flex:1"></span><button class="btn" data-act="queueJob" title="Runs when you press Work while I sleep on the Overnight page">Add to overnight queue</button><button class="btn pri" data-act="sendJob">Start job</button></div>
+        <div class="files" id="njFiles"></div><div id="njDeeper"></div>
+        <div class="row"><select id="njProject"></select><select id="njPriority" title="Which waiting job goes first"><option value="normal">priority: normal</option><option value="urgent">urgent</option><option value="low">low</option></select><select id="njEffort" title="How hard the lead thinks on this job"><option value="">lead effort: auto</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>
+          <button class="btn ibtn" data-act="attachNew">${ic('clip')} Attach files</button>${undoBtns('njText')}<button class="btn sm" data-act="deepen" data-box="njText" data-note="njDeeper" title="Rewrite this draft as a deeper version of the same task. You review it before anything runs.">Deeper</button><label class="chk"><input type="checkbox" id="njAfter"> start after the 5-hour limit resets</label><span style="flex:1"></span><button class="btn" data-act="queueJob" title="Runs when you press Work while I sleep on the Overnight page">Add to overnight queue</button><button class="btn pri" data-act="sendJob">Start job</button></div>
         <details class="njmore" id="njMore"><summary>Order, checks and workspace</summary>
           <label class="njf">Start after <span class="hint">this job waits until that one is done, then starts with its result</span><select id="njAfterJob"></select></label>
           <label class="njf">Done when these pass <span class="hint">the office runs them itself after the lead answers; one command per line</span><textarea id="njVerify" style="min-height:44px" placeholder="e.g. npm test"></textarea></label>
@@ -208,7 +208,7 @@ async function sendNewJob(queue) {
   const ver = $('#njVerify');
   const afterJob = ($('#njAfterJob') || {}).value || undefined;
   const forkOf = S.njFork && S.tickets[S.njFork.id] ? S.njFork : undefined;
-  const r = await api('POST', '/api/tasks', { text, project: $('#njProject').value || undefined, effort: $('#njEffort').value || undefined, attachments: S.newFiles, after: $('#njAfter').checked ? 'reset' : undefined,
+  const r = await api('POST', '/api/tasks', { text, project: $('#njProject').value || undefined, effort: $('#njEffort').value || undefined, priority: $('#njPriority').value, attachments: S.newFiles, after: $('#njAfter').checked ? 'reset' : undefined,
     verify: ver && ver.dataset.dirty ? ver.value : undefined, isolate: $('#njIsolate') && $('#njIsolate').checked ? true : undefined, afterJob, forkOf, overnight: queue ? true : undefined }).catch((e) => alert(e.message));
   if (!r) return;
   S.newFiles = [];
@@ -224,16 +224,24 @@ APPS.messages = {
   mount(root) {
     if (!S.chatTeam || !leads().includes(S.chatTeam)) S.chatTeam = leads()[0];
     root.innerHTML = `<div class="app"><div class="two"><div class="list" id="mtList"></div><div style="flex:1;display:flex;flex-direction:column;min-width:0">
-      <div class="toolbar"><h1 id="mtTitle"></h1><span class="hint">What teammates say to each other while they work, and your questions to a whole team.</span></div>
+      <div class="toolbar"><h1 id="mtTitle"></h1><div class="seg" id="mtMode"></div><span class="hint" id="mtAbout"></span><span style="flex:1"></span><button class="btn sm" id="mtClear" data-act="talkClear" hidden>Clear chat</button></div>
       <div class="body" id="mtBody" style="padding:6px 18px"></div>
-      <div class="composer"><textarea id="mtText"></textarea><div class="row">${undoBtns('mtText')}<span class="hint" id="mtHint" style="flex:1"></span><button class="btn pri sm" data-act="askTeam">Ask the team</button></div></div></div></div></div>`;
+      <div class="composer"><textarea id="mtText"></textarea><div class="row">${undoBtns('mtText')}<span class="hint" id="mtHint" style="flex:1"></span><button class="btn pri sm" id="mtSend" data-act="askTeam">Ask the team</button></div></div></div></div></div>`;
     S.chat = null;
+    $('#mtText').onkeydown = (e) => { if (S.chatMode === 'talk' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ACT.talkSend(); } };
     $('#mtBody').addEventListener('scroll', (e) => { if (e.target.scrollTop < 80 && S.chatFrom) chatMore(); }, { passive: true });
   },
   update() {
     $('#mtList').innerHTML = '<div class="grp">Teams</div>' + leads().map((k) => `<div class="li ${S.chatTeam === k ? 'on' : ''}" data-act="chatTeam" data-id="${k}"><b>${esc(teamName(k))}</b><span class="hint">${esc(who(k))}</span></div>`).join('');
     const k = S.chatTeam;
     $('#mtTitle').textContent = teamName(k);
+    const talk = S.chatMode === 'talk';
+    $('#mtMode').innerHTML = [['room', 'Team room'], ['talk', `Talk to ${who(k)}`]].map(([v, l]) => `<button class="${(S.chatMode || 'room') === v ? 'on' : ''}" data-act="chatMode" data-v="${v}">${esc(l)}</button>`).join('');
+    $('#mtAbout').textContent = talk ? 'Questions, new jobs and job changes. You confirm each change.' : 'What teammates say to each other while they work, and your questions to a whole team.';
+    $('#mtClear').hidden = !talk;
+    $('#mtSend').dataset.act = talk ? 'talkSend' : 'askTeam';
+    $('#mtSend').textContent = talk ? 'Send' : 'Ask the team';
+    if (talk) return talkUpdate(k);
     $('#mtText').placeholder = `Ask the whole ${teamName(k)} team… (${who(k)} gathers their input and answers)`;
     $('#mtHint').textContent = `Opens a job on ${who(k)}'s desk.`;
     if (!S.chat || S.chat.k !== k) {
@@ -259,6 +267,35 @@ APPS.messages = {
     S.chatRoomFor = k; S.chatLen = list ? list.length : 0;
   },
 };
+
+// Talk to the lead (lib/lead-chat.js): S.talk[lead] = { list, thinking }.
+function talkCard(k, m, x) {
+  const job = x.ticketId && S.tickets[x.ticketId];
+  const verb = x.type === 'create' ? 'New job' : { rewrite: `Rewrite #${x.n}`, send: `Send a change to #${x.n}`, reopen: `Reopen #${x.n} with a change` }[x.mode];
+  const head = `<b>${esc(verb)}</b>${x.project ? ` · ${esc(x.project)}` : ''}${x.title ? ` · <span class="hint">${esc(x.title)}</span>` : ''}`;
+  if (x.status !== 'pending') return `<div class="talkcard done">${head}<div class="hint">${x.status === 'dismissed' ? 'Dismissed' : esc(x.note || 'Done')}${job ? ` · <a data-act="openJob" data-id="${x.ticketId}">open job</a>` : ''}</div></div>`;
+  const go = x.type === 'create' ? 'Create job' : x.mode === 'rewrite' ? 'Save' : x.mode === 'send' ? 'Send' : 'Reopen and send';
+  return `<div class="talkcard">${head}<textarea class="in" id="tk-${x.id}" rows="4" aria-label="${esc(verb)}">${esc(x.text)}</textarea><div class="row"><span style="flex:1"></span><button class="btn sm" data-act="talkDecide" data-m="${m.id}" data-x="${x.id}" data-v="dismiss">Dismiss</button><button class="btn pri sm" data-act="talkDecide" data-m="${m.id}" data-x="${x.id}" data-v="apply">${go}</button></div></div>`;
+}
+
+function talkUpdate(k) {
+  S.talk = S.talk || {};
+  $('#mtText').placeholder = `Message ${who(k)}… (Enter to send, Shift+Enter for a new line)`;
+  $('#mtHint').textContent = 'Does not interrupt their work.';
+  if (!S.talk[k]) {
+    S.talk[k] = { list: null };
+    api('GET', `/api/teams/${k}/talk`).then((r) => { S.talk[k] = { list: r.list, thinking: r.thinking }; S.chatKey = null; dirty(); }).catch(() => { S.talk[k] = { list: [] }; S.chatKey = null; dirty(); });
+  }
+  const T = S.talk[k];
+  const key = `talk|${k}|${JSON.stringify(T.list)}|${!!T.thinking}`;
+  if (key === S.chatKey) return;
+  S.chatKey = key;
+  S.chatRoomFor = null;
+  const b = $('#mtBody');
+  const msg = (m) => `<div class="chatmsg ${m.from === 'user' ? 'me' : ''}"><div class="h"><b>${m.from === 'user' ? 'You' : esc(who(k))}</b><span class="ts">${ago(m.t)}</span></div><div class="md">${md(m.text)}</div>${(m.actions || []).map((x) => talkCard(k, m, x)).join('')}</div>`;
+  b.innerHTML = T.list === null ? skel(5) : (T.list.length || T.thinking ? T.list.map(msg).join('') : `<div class="empty">Ask ${esc(who(k))} about their jobs, or ask them to add or change one.</div>`) + (T.thinking ? `<div class="chatmsg"><div class="h"><b>${esc(who(k))}</b></div><div class="hint">Thinking…</div></div>` : '');
+  b.scrollTop = b.scrollHeight;
+}
 
 function chatMore() {
   const b = $('#mtBody');
@@ -446,7 +483,8 @@ APPS.health = {
     const st = S.selftest || h.selftest;
     if (!S.evals) { S.evals = 'loading'; api('GET', '/api/evals').then((e) => { S.evals = e; S.hKey = null; dirty(); }).catch(() => { S.evals = { runs: [] }; }); }
     const ev = S.evals === 'loading' ? null : S.evals;
-    const key = `${JSON.stringify(h).length}|${st ? st.status + st.steps.length : ''}|${ev ? ev.runs.length + '' + !!ev.running : ''}|${hwLast ? hwLast.at : ''}`;
+    if (!S.opsAt || Date.now() - S.opsAt > 15000) { S.opsAt = Date.now(); api('GET', '/api/ops').then((o) => { S.ops = o; S.hKey = null; dirty(); }).catch(() => {}); }
+    const key = `${JSON.stringify(S.ops || '').length}|${JSON.stringify(h).length}|${st ? st.status + st.steps.length : ''}|${ev ? ev.runs.length + '' + !!ev.running : ''}|${hwLast ? hwLast.at : ''}`;
     if (key === S.hKey) return;
     S.hKey = key;
     $('#hSub').textContent = { ok: 'Everything looks fine.', warn: 'Working, with a few things to look at.', bad: 'Something needs attention.' }[h.level];
@@ -458,9 +496,18 @@ APPS.health = {
       <div class="card"><h3>Leads</h3>${h.residents.map((r) => `<div class="rolerow"><div class="top"><span class="pill s-${r.status}">${esc(r.status)}</span><a data-act="sel2" data-id="${r.id}"><b>${esc(r.persona)}</b></a><span class="hint">${esc(r.model)}/${esc(r.effort)}${r.upSince ? ` · up ${dur(Date.now() - r.upSince)}` : ''}${r.restarts ? ` · ${r.restarts} restarts` : ''}</span></div>${r.id !== S.root ? `<div class="hint">session ${tokens(r.contextTokens)} / ${tokens(h.refresh.contextTokens)} tokens${r.needsRefresh ? ' · refreshes after its next job' : ''}</div><div class="bar"><i style="width:${Math.min(100, (r.contextTokens / h.refresh.contextTokens) * 100)}%"></i></div>` : '<div class="hint">fresh session every job</div>'}</div>`).join('')}</div>
       <div class="card"><h3>Office scripts</h3>${(h.scripts || []).length ? h.scripts.map((x) => `<div class="step"><span class="i">⚙</span><span><a data-act="sel2" data-id="${x.id}">${esc(x.who)}</a> ran ${x.runs}${x.nudges ? ` · ${x.nudges} shell command${x.nudges === 1 ? '' : 's'} redirected` : ''}</span></div>`).join('') : '<div class="hint">No scripts used yet.</div>'}</div>
       <div class="card"><h3>Problems · 48 hours</h3>${h.errors.length ? h.errors.slice(0, 10).map((e) => `<div class="step"><span class="i">⚠️</span><span><a data-act="sel2" data-id="${e.id}">${esc(e.who)}</a> <span class="hint">${ago(e.t)}</span><br><span class="hint">${esc(short(e.text, 200))}</span></span></div>`).join('') : '<div class="hint">None.</div>'}${h.failed.length ? `<div class="label" style="margin-top:10px">Not completed · 7 days</div>${h.failed.map((x) => `<div class="hint">${esc(x.who)} · #${x.n || '?'} ${esc(short(x.title || '', 50))} · ${esc(x.outcome)} · ${ago(x.t)}</div>`).join('')}` : ''}</div>
-      </div>${evalCard(ev)}<div class="card" style="margin-top:12px"><h3>Server log</h3><pre style="max-height:320px">${esc(h.logTail || '(empty)')}</pre></div>`;
+      </div>${opsCard(S.ops)}${evalCard(ev)}<div class="card" style="margin-top:12px"><h3>Server log</h3><pre style="max-height:320px">${esc(h.logTail || '(empty)')}</pre></div>`;
   },
 };
+
+// Reliability and the record of decisions (/api/ops).
+function opsCard(o) {
+  if (!o) return `<div class="card" style="margin-top:12px"><h3>Reliability</h3>${skel(3)}</div>`;
+  const b = o.breaker, st = { closed: 'Working normally', open: 'Paused: the AI service looks down', testing: 'Testing whether the service is back' }[b.state];
+  const r = o.retrieval, A = o.audit;
+  return `<div class="card" style="margin-top:12px"><h3>Reliability</h3><div class="kv" style="margin:0"><span>AI service <b>${esc(st)}</b></span><span>recent failures <b>${b.recentFailures}</b></span><span>jobs at once <b>${o.maxLeadJobs || 'no limit'}</b></span><span>knowledge search <b>${r.engine === 'hybrid' ? `words and meaning · ${r.embedded} passages` : 'words'}</b></span></div>${b.why ? `<div class="hint">${esc(b.why)}</div>` : ''}
+    <h3 style="margin-top:12px">Decisions</h3><div class="hint">${A.entries} recorded · ${A.ok ? 'record intact' : `<b style="color:var(--fail)">record altered at entry ${A.brokenAt}</b>`}</div>${A.recent.slice(0, 12).map((e) => `<div class="step"><span class="i">${e.actor === 'user' ? '✓' : '⚙'}</span><span>${esc(e.action)}${e.job ? ` · #${e.job}` : ''} <span class="hint">${esc(short(e.detail, 90))} · ${ago(e.t)}</span></span></div>`).join('')}</div>`;
+}
 
 // The agent eval over time (lib/evals.js): one column per run, one row per behaviour. ✓/✗ carry the result, so the
 // colour is never the only signal; ◆ marks a run whose agent instructions changed since the run before.
@@ -482,7 +529,8 @@ function evalCard(ev) {
   };
   const last = runs[runs.length - 1];
   const total = runs.reduce((n, r) => n + (r.cost || 0), 0);
-  return `<div class="card" style="margin-top:12px">${head}<div style="overflow-x:auto"><table class="evgrid"><thead><tr><th class="evname"></th>${runs.map(col).join('')}</tr></thead><tbody>
+  const gate = last.gate === 'failed' ? `<div class="hint" style="color:var(--fail);margin:6px 0">The last change to the agents' instructions broke behaviour that used to pass.${ev.goodAt ? ` <button class="btn sm" data-act="evalRestore">Restore the last good instructions</button>` : ''}</div>` : '';
+  return `<div class="card" style="margin-top:12px">${head}${gate}<div style="overflow-x:auto"><table class="evgrid"><thead><tr><th class="evname"></th>${runs.map(col).join('')}</tr></thead><tbody>
     ${names.map((n) => `<tr><td class="evname">${esc(n)}</td>${runs.map((r) => cell(r, n)).join('')}</tr>`).join('')}
     <tr class="evsum"><td class="evname">followed</td>${runs.map((r) => `<td>${r.error ? '–' : `${r.passed}/${r.total}`}</td>`).join('')}</tr></tbody></table></div>
     <div class="hint" style="margin-top:8px">Last run ${ago(last.t)}${last.error ? ' could not run' : `: ${last.passed} of ${last.total} followed · ${money(last.cost || 0)} · ${dur(last.ms || 0)}`} · ${runs.length} runs shown cost ${money(total)}. ◆ = the agents' instructions changed since the run before. Change how often it runs in Preferences → Agents &amp; teams.</div></div>`;

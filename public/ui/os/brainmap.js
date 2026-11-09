@@ -43,7 +43,9 @@ const BrainMap = (() => {
     // Which lobe each node belongs to: its own team, or the team of the agent it is most connected to.
     for (const n of nodes) if (n.type === 'agent') n.team = n.resident ? n.id.slice(6) : n.team;
     for (let pass = 0; pass < 2; pass++) for (const e of edges) { if (!e.a.team && e.b.team) e.a.team = e.b.team; if (!e.b.team && e.a.team) e.b.team = e.a.team; }
-    const prevAll = (st && st.prev) || (opts && opts.positions) || {};
+    // The two layouts arrange the same nodes differently, so positions don't carry from one to the other.
+    const sameLayout = !!(st && st.wasMeaning) === !!(opts && opts.meaning);
+    const prevAll = (sameLayout && ((st && st.prev) || (opts && opts.positions))) || {};
     let fresh = 0;
     for (const n of nodes) {
       n.c = (n.type === 'project' || n.type === 'job' || n.onCall !== undefined) ? [0, 0] : centers[n.team] || [0, 0];
@@ -53,7 +55,7 @@ const BrainMap = (() => {
       n.vx = n.vy = 0; n.lift = 0;
     }
     const now = performance.now();
-    st = { canvas, ctx, nodes, edges, byId, colors, sprites, light, reduced, k: 1, px: 0, py: 0, lastTouch: 0,
+    st = { meaning: !!(opts && opts.meaning), canvas, ctx, nodes, edges, byId, colors, sprites, light, reduced, k: 1, px: 0, py: 0, lastTouch: 0,
       hover: null, sel: opts && opts.sel, drag: null, pan: null, pulses: [], onSelect: opts && opts.onSelect, onHover: opts && opts.onHover, q: '', t0: now, raf: 0,
       prevAll, until: (opts && opts.until) || 0, alpha: fresh ? 1 : 0.35, lastActive: now, sleeping: false, cam: null, matchI: -1 };
     // Sprites pop onto the plane one kind after another.
@@ -76,7 +78,7 @@ const BrainMap = (() => {
     const prev = st.nodes ? { ...(st.prevAll || {}), ...Object.fromEntries(st.nodes.map((n) => [n.id, [n.x, n.y]])) } : st.prev;
     if (st.canvas) st.canvas.remove();
     window.removeEventListener('resize', resize);
-    st = { prev };
+    st = { prev, wasMeaning: st.nodes ? st.meaning : st.wasMeaning };
   }
   function resize() {
     if (!st || !st.canvas || !st.canvas.parentElement) return;
@@ -150,14 +152,14 @@ const BrainMap = (() => {
     }
     for (const e of st.liveEdges) {
       const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const k = ((d - (REST[e.kind] || 100)) / d) * 0.018;
+      const k = ((d - (e.rest || REST[e.kind] || 100)) / d) * 0.018;
       e.a.vx += dx * k; e.a.vy += dy * k; e.b.vx -= dx * k; e.b.vy -= dy * k;
     }
     let fastest = 0;
     for (const n of N) {
       // Each node is drawn softly to its ring around its lobe's centre: agents in the middle, knowledge further out.
       const dx = n.x - n.c[0], dy = n.y - n.c[1], d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const k = ((SHELL[n.type] - d) / d) * 0.004;
+      const k = st.meaning ? -0.006 : ((SHELL[n.type] - d) / d) * 0.004; // Meaning has no rings: only a pull to the middle
       n.vx += dx * k; n.vy += dy * k;
       if (st.drag && st.drag.n === n) continue;
       n.vx = n.ox + (n.vx - n.ox) * alpha; n.vy = n.oy + (n.vy - n.oy) * alpha;

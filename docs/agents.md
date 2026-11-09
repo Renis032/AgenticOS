@@ -151,6 +151,9 @@ questions, commands — and follow-ups on it go to the twin while it is alive.
   `report_evidence` for each: met or not, with the evidence. A lead that answers without it is sent back once. The job
   shows each criterion with its evidence, and the reviewer judges them, even when the job's checks pass (*Review jobs
   without checks* set to *Never* turns that review off). Jobs small enough to need no plan have no criteria.
+- **Deeper**: a button on the New job and job composers. One model call (Opus, or the provider set for *Deeper rewrite*)
+  rewrites your draft as a deeper version of the same task and ends it with a *Done when* list. The rewrite replaces the
+  draft for you to edit or undo; nothing runs until you send it.
 - **Pause / Resume** a ticket in progress: the lead and its teammates stop immediately (teammates' unfinished work is
   dropped and redone after resuming; the lead keeps its own conversation). Paused work doesn't count against anyone's
   track record.
@@ -247,6 +250,11 @@ for the answer). Mail reaches a busy agent through a PostToolUse hook (`lib/mail
 next tool call; an idle lead gets it as a new turn. A lead who is waiting on its sub-agents is woken by
 a question: `delegate` returns early, they answer, then `wait_for_team` resumes waiting. Conversations show in the
 Mind feed, the Messages app and the job thread.
+
+**Talk to the lead** (`lib/lead-chat.js`) is separate from the lead's running session: each reply is one Sonnet call with no
+tools, written as the lead from its memory and office facts, so it answers while the lead is busy. It can only propose. On your
+confirmation a scheduled job's request is rewritten, a running job gets the change as a follow-up, a finished job is reopened
+with it, and a new job goes to that lead.
 
 ## Team libraries
 

@@ -97,6 +97,16 @@ async function check(opt) {
       { name: 'overnight-report', js: `{ const was = S.overnight, r = (id, n, title, why, costUsd) => ({ id, n, title, why, costUsd, status: 'done' }); S.overnight = { ...was, run: null, last: { id: 'x', startedAt: Date.now() - 8 * 3600000, endedAt: Date.now() - 600000, reason: 'empty', capUsd: 10, until: Date.now(), spentUsd: 6.4, capped: false, done: [r('a', 12, 'Add dark mode', '', 2.1), r('b', 13, 'Fix the flaky test', '', 1.2)], waiting: [r('c', 14, 'Move to the new API', 'a plan to approve', 3.1)], notFinished: [], notStarted: [r('d', 15, 'Rewrite the docs', 'waits for #14', 0)] } }; S.nightKey = null; APPS.overnight.update();
         setTimeout(() => { const c = $('#nightLast'); if (!/Waiting for you/.test(c.textContent) || !/a plan to approve/.test(c.textContent) || !/6\.40/.test(c.textContent)) __uiErrors.push('overnight report wrong: ' + c.textContent.slice(0, 200)); }, 200);
         setTimeout(() => { S.overnight = was; S.nightKey = null; setPref('nightSeen', ''); }, 700); }`, wait: 500 },
+      // Talk to the lead: the mode switch shows the chat, a proposal renders as a card, and the room comes back.
+      { name: 'messages-talk', js: `openApp('messages'); setTimeout(() => { S.talk = { [leads()[0]]: { list: [{ id: 'a', from: 'user', t: Date.now(), text: 'add a job' }, { id: 'b', from: 'agent', t: Date.now(), text: 'Draft', actions: [{ id: 'x', type: 'create', text: 'Do it', status: 'pending' }] }] } }; S.chatTeam = leads()[0]; ACT.chatMode({ v: 'talk' });
+        if (!document.querySelector('.talkcard textarea') || $('#mtSend').dataset.act !== 'talkSend') __uiErrors.push('talk: the card or send button is missing');
+        ACT.chatMode({ v: 'room' }); if ($('#mtSend').dataset.act !== 'askTeam' || document.querySelector('.talkcard')) __uiErrors.push('talk: the team room did not come back'); }, 300);`, wait: 800 },
+      // Deeper: the rewrite replaces the draft as one undo step and shows why; a draft edited meanwhile is left alone.
+      { name: 'newjob-deeper', js: `openApp('newjob'); setTimeout(async () => { const was = api, box = $('#njText'), btn = document.querySelector('[data-act=deepen][data-box=njText]');
+        api = async () => ({ notes: '**Why:** because', prompt: 'A deeper task' }); box.value = 'my draft'; histNote(box, false); await deepenDraft('njText', 'njDeeper', btn);
+        if (box.value !== 'A deeper task' || !/because/.test($('#njDeeper').textContent)) __uiErrors.push('deeper: the rewrite was not applied'); histStep(box, true); if (box.value !== 'my draft') __uiErrors.push('deeper: undo did not bring the draft back');
+        api = async () => { box.value = 'edited meanwhile'; return { notes: 'n', prompt: 'overwrite' }; }; await deepenDraft('njText', 'njDeeper', btn); if (box.value !== 'edited meanwhile') __uiErrors.push('deeper: overwrote a changed draft');
+        api = was; box.value = ''; $('#njDeeper').innerHTML = ''; }, 300);`, wait: 800 },
       // A fork and a "then" on the New job page.
       { name: 'newjob-fork', js: `S.njFork = { id: '${waiting && waiting.id}', at: Date.now() }; openApp('newjob'); setTimeout(() => { if (!/Forking #/.test(($('#njLinkBox') || {}).textContent || '')) __uiErrors.push('fork: no banner on New job'); S.njFork = null; }, 300)`, wait: 600 },
       { name: 'newjob-then', js: `S.njThen = '${waiting && waiting.id}'; openApp('newjob'); setTimeout(() => { if ($('#njAfterJob').value !== '${waiting && waiting.id}') __uiErrors.push('then: the job to follow is not chosen'); }, 300)`, wait: 600 },
@@ -167,6 +177,8 @@ async function check(opt) {
         r.value = r.max; r.dispatchEvent(new Event('input'));
       })()`, wait: 900 },
       // Idle: with nothing moving and nobody touching it, the map stops drawing (no CPU).
+      { name: 'brain-meaning', js: `S.brain.tab = 'knowledge'; ACT.brainView({ v: 'meaning' }); setTimeout(() => { const d = BrainMap.debug(); if (!d || !d.total) __uiErrors.push('meaning: the map has no nodes'); if (!/shared words|similar in meaning/.test(($('#brainMain') || {}).textContent || '')) __uiErrors.push('meaning: it does not say what closeness means'); if ($('[data-act=brainType][data-t=agent]')) __uiErrors.push('meaning: agents should not be offered'); }, 1500);`, wait: 2000 },
+      { name: 'brain-meaning-back', js: `ACT.brainView({ v: 'map' });`, wait: 800 },
       { name: 'brain-map-idle', js: `setTimeout(() => { const d = BrainMap.debug(); if (!d || !d.sleeping) __uiErrors.push('the map is still animating after 11 s idle: ' + JSON.stringify(d)); }, 11000)`, wait: 11500 },
       { name: 'main-menu', js: `ACT.appmenu({}, { target: document.querySelector('[data-act=appmenu]') })` },
       { name: 'palette', js: `closeMenu(); openPal()` },

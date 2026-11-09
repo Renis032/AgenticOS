@@ -17,6 +17,10 @@ Two views of the same data, switched in the toolbar (the choice is remembered):
   ring. Each lead's team forms a cluster around its lead, and projects sit between the clusters. Sprites pop in on open,
   grow when hovered, and pulses travel along links that carry activity (read, wrote, taught, led, worked on, proposed).
   God only routes jobs, so it is not on the map (it still appears in Flow, where routing is shown).
+- **Meaning** (`lib/similar.js`): the same map, with similar memories, pages, skills, handoffs and instructions pulled
+  together, so duplicates and overlaps stand out. With an embedding model in Ollama on this computer it compares meaning
+  (vectors saved in `data/brain-embeddings.json`, recomputed only for files that changed); without one it compares shared
+  rare words, and the view says so. It is only a view: agents still find knowledge as plain text.
 - **Table**: sortable, for exact numbers.
 
 The map is a physics simulation. Links are springs and every node pushes the others away, so **dragging one figure pulls

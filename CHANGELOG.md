@@ -6,6 +6,20 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **README**: a good-practices overview, what's new and new screenshots.
+- **Outside text is fenced** (`lib/untrusted.js`): GitHub issue and email jobs are marked; on them web tools and network commands are off and every command asks.
+- **Knowledge search** (`lib/retrieval.js`, `search_knowledge`): BM25 merged with Ollama embeddings when available, scoped to the agent's team; top passages join a new job's brief.
+- **Retries and a circuit breaker** (`lib/resilience.js`) for temporary API failures.
+- **Job priority and a limit on lead jobs at once** (`lib/scheduling.js`, `defaults.maxLeadJobs`, default 4).
+- **A trace per job** (`lib/tracing.js`, `/api/tickets/:id/trace`, OpenTelemetry JSON export on the Timeline).
+- **Eval gate on instruction changes** (`lib/evals.js`, `defaults.agentEvalOnChange`): a confirmed regression can be rolled back from Health.
+- **Decision record** (`lib/audit.js`, `data/audit.jsonl`): a hash-chained log of approvals, shown in Health.
+- **Talk to the lead** (Messages, or Talk on a lead's panel): a chat that answers questions from the lead's memory and jobs
+  without interrupting it, and drafts new jobs or changes to its jobs for you to confirm (`lib/lead-chat.js`, `/api/teams/:lead/talk`).
+- **Meaning view in the Brain**: similar knowledge sits together, by Ollama embeddings or, without them, shared words
+  (`lib/similar.js`, `/api/brain/similarity`).
+- **Deeper**: a composer button that rewrites a draft as a deeper version of the same task, for review before sending
+  (`lib/deepen.js`, `/api/deepen`).
 - **Overnight mode**: an Overnight page with a queue, a spending cap, a finish time and *Work while I sleep*. A job that
   needs you waits and frees its slot, usage limits hold new work without ending the run, and reaching the cap pauses jobs
   in progress. One report in the morning, also on Telegram (`lib/overnight.js`, `/api/overnight`).

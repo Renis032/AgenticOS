@@ -16,7 +16,7 @@ const BRAIN_TYPES = [
   ['job', 'Jobs', 'circle', '<path d="M21 12h-5.5l-1.8 2.8h-3.4L8.5 12H3"/><path d="M6 6 3 12v5.5a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V12l-3-6a2 2 0 0 0-1.8-1H7.8A2 2 0 0 0 6 6Z"/>'],
 ];
 const BT = Object.fromEntries(BRAIN_TYPES.map(([t, l, badge, icon]) => [t, { label: l, badge, icon, color: `var(--c-${t})` }]));
-S.brain = { view: pref('brainView', 'map') === 'table' ? 'table' : 'map', tab: pref('brainTab', 'knowledge'), hidden: new Set(prefObj('brainHidden') || ['job']), q: '', sel: null, days: 30 };
+S.brain = { view: ['table', 'meaning'].includes(pref('brainView', 'map')) ? pref('brainView', 'map') : 'map', tab: pref('brainTab', 'knowledge'), hidden: new Set(prefObj('brainHidden') || ['job']), q: '', sel: null, days: 30 };
 
 // A kind's sprite as SVG: a coloured badge (circle for people and jobs, rounded tile for the rest) with a white icon.
 // `color` is any CSS colour; the map passes resolved hex because it rasterises the sprite for its canvas.
@@ -42,6 +42,7 @@ APPS.brain = {
   async load(fresh) {
     const B = S.brain;
     const q = fresh ? '?fresh=1' : '';
+    if (fresh) { B.sim = null; B.simFresh = true; }
     const [k, f, o] = await Promise.all([api('GET', `/api/brain/knowledge${q}`).catch(() => null), api('GET', `/api/brain/flow?days=${B.days}`).catch(() => null), api('GET', '/api/brain/findings').catch(() => [])]);
     B.data = { knowledge: k, flow: f, findings: o };
     if (S.app !== 'brain') return;
@@ -66,7 +67,7 @@ function renderKnowledge() {
   if (!K) { main.innerHTML = '<div class="empty">Could not load the knowledge graph.</div>'; return; }
   const counts = {};
   for (const n of K.nodes) counts[n.type] = (counts[n.type] || 0) + 1;
-  $('#brainTools').innerHTML = `<input class="in" id="brainQ" placeholder="Find in the brain…" value="${esc(B.q)}" style="width:200px"> <div class="seg">${[['map', 'Map'], ['table', 'Table']].map(([v, l]) => `<button class="${B.view === v ? 'on' : ''}" data-act="brainView" data-v="${v}">${l}</button>`).join('')}</div>`;
+  $('#brainTools').innerHTML = `<input class="in" id="brainQ" placeholder="Find in the brain…" value="${esc(B.q)}" style="width:200px"> <div class="seg">${[['map', 'Map'], ['meaning', 'Meaning'], ['table', 'Table']].map(([v, l]) => `<button class="${B.view === v ? 'on' : ''}" data-act="brainView" data-v="${v}">${l}</button>`).join('')}</div>`;
   $('#brainQ').oninput = (e) => { B.q = e.target.value; if (B.view === 'table') renderBrainTable(); else BrainMap.search(B.q); };
   $('#brainQ').onkeydown = (e) => {
     if (e.key !== 'Enter' || B.view === 'table') return;
@@ -76,6 +77,7 @@ function renderKnowledge() {
   };
   BrainMap.stop();
   if (B.view === 'table') return renderBrainTable();
+  if (B.view === 'meaning') return renderMeaning(counts);
   return renderBrainMap(counts);
 }
 function nodeTip(n) {
@@ -105,6 +107,7 @@ async function showNode(id) {
   const label = (nid) => { const n = K.nodes.find((x) => x.id === nid); return n ? n.label : nid; };
   const groups = {};
   for (const l of d.links) { const k = `${l.dir === 'out' ? '' : '← '}${l.kind}`; (groups[k] = groups[k] || []).push(l); }
+  if (S.brain.view === 'meaning' && S.brain.sim) for (const l of S.brain.sim.links) if (l.from === id || l.to === id) (groups.similar = groups.similar || []).push({ other: l.from === id ? l.to : l.from, kind: 'similar', dir: 'out' });
   const findings = (S.brain.data.findings || []).filter((f) => f.node === id);
   side.innerHTML = `<div class="bhead">${spriteSvg(d.type, 22)}<div><h3>${esc(d.label)}</h3><div class="hint">${esc(BT[d.type].label.replace(/s$/, ''))}${d.sub ? ` · ${esc(d.sub)}` : ''}</div></div><button class="tb-ic" data-act="brainSel" data-id="" title="Close">${ic('close')}</button></div>
     <div class="kv" style="flex-wrap:wrap;margin:8px 0">${[d.tokens ? `<span><b>${d.tokens.toLocaleString()}</b> tokens</span>` : '', d.carried ? `<span>in every call of <b>${d.carriedBy.length}</b> agent${d.carriedBy.length === 1 ? '' : 's'}</span>` : '', d.carriedWeekTokens ? `<span><b>${(d.carriedWeekTokens / 1e6).toFixed(2)}M</b> tokens/week</span>` : '', `<span>read <b>${d.reads || 0}×</b> in 30 days</span>`, d.updatedAt ? `<span>updated <b>${ago(d.updatedAt)}</b></span>` : '', d.entries ? `<span><b>${d.entries}</b> entries</span>` : '', d.sessions ? `<span><b>${d.sessions}</b> sessions</span>` : '', d.costUsd ? `<span><b>${money(d.costUsd)}</b></span>` : ''].join('')}</div>
@@ -117,14 +120,36 @@ async function showNode(id) {
 }
 
 // The knowledge as a map of solid figures on a plane, with physics (public/ui/os/brainmap.js).
-function renderBrainMap(counts) {
+// The Meaning view (lib/similar.js): the same map, with similar knowledge pulled together instead of teams.
+async function renderMeaning(counts) {
+  const B = S.brain;
+  if (!B.sim) {
+    $('#brainMain').innerHTML = skel(8);
+    const fresh = B.simFresh; B.simFresh = false;
+    B.sim = await api('GET', `/api/brain/similarity${fresh ? '?fresh=1' : ''}`).catch((e) => ({ error: e.message, ids: [], links: [] }));
+    if (S.app !== 'brain' || B.tab !== 'knowledge' || B.view !== 'meaning') return;
+  }
+  renderBrainMap(counts, B.sim);
+}
+function meaningNote(sim) {
+  if (sim.error) return `Could not compare the knowledge: ${esc(sim.error)}`;
+  if (sim.engine === 'embeddings') return `Close together means similar in meaning · ${esc(sim.model)} on this computer`;
+  return `Close together means <b>shared words</b>, not true meaning${sim.note ? ` (${esc(sim.note)})` : ''} · for meaning, install Ollama and run <code>ollama pull nomic-embed-text</code>, then Refresh`;
+}
+function renderBrainMap(counts, sim) {
   const B = S.brain, K = B.data.knowledge;
-  $('#brainMain').innerHTML = `<div class="blegend">${BRAIN_TYPES.map(([t, l]) => `<button class="bchip ${B.hidden.has(t) ? 'off' : ''}" data-act="brainType" data-t="${t}">${spriteSvg(t, 16)}${esc(l)} <span class="hint">${counts[t] || 0}</span></button>`).join('')}
-      <span class="hint" style="margin-left:auto">Drag a node to pull its neighbours · drag space to pan · scroll to zoom · double-click to fit · Enter in search finds</span></div>
+  $('#brainMain').innerHTML = `<div class="blegend">${BRAIN_TYPES.filter(([t]) => !sim || !['agent', 'project', 'job'].includes(t)).map(([t, l]) => `<button class="bchip ${B.hidden.has(t) ? 'off' : ''}" data-act="brainType" data-t="${t}">${spriteSvg(t, 16)}${esc(l)} <span class="hint">${counts[t] || 0}</span></button>`).join('')}
+      <span class="hint" style="margin-left:auto">${sim ? meaningNote(sim) : 'Drag a node to pull its neighbours · drag space to pan · scroll to zoom · double-click to fit · Enter in search finds'}</span></div>
     <div class="bgraph bmapwrap" id="bgraph"><div class="btip" id="btip"></div>${timeBar(K)}</div>`;
-  const visible = { nodes: K.nodes.filter((n) => !B.hidden.has(n.type)), edges: K.edges };
+  const ids = sim && new Set(sim.ids);
+  const top = sim ? Math.max(...sim.links.map((l) => l.score), 0.01) : 1;
+  const visible = sim
+    ? { nodes: K.nodes.filter((n) => ids.has(n.id) && !B.hidden.has(n.type)), edges: sim.links.map((l) => ({ ...l, kind: 'similar', rest: 150 - 105 * (l.score / top) })) }
+    : { nodes: K.nodes.filter((n) => !B.hidden.has(n.type)), edges: K.edges };
+  if (sim && B.sel && !visible.nodes.some((n) => n.id === B.sel)) B.sel = null; // an agent picked on the Map isn't here, and would dim everything
   BrainMap.start($('#bgraph'), visible, {
     sel: B.sel,
+    meaning: !!sim,
     until: B.until || 0,
     onSelect: (id) => { B.sel = id; if (id) showNode(id); else sideSummary(); },
     onHover: (n, ev) => {
