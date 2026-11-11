@@ -6,6 +6,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Team skills on delegate** (`skills` on `delegate`, `lib/skills.js`): a lead hands any teammate up to three team skills.
+  Each is loaded into the teammate's prompt with its `source:` agent file and `preload:` docs. A teammate is role plus
+  skills: reused with its own memory and track record, and the model choice keys on both. Skills may also be `for: <role>`.
 - **README**: a good-practices overview, what's new and new screenshots.
 - **Outside text is fenced** (`lib/untrusted.js`): GitHub issue and email jobs are marked; on them web tools and network commands are off and every command asks.
 - **Knowledge search** (`lib/retrieval.js`, `search_knowledge`): BM25 merged with Ollama embeddings when available, scoped to the agent's team; top passages join a new job's brief.
@@ -200,6 +203,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   and respect for the system's reduce-motion setting.
 
 ### Fixed
+- **Rehiring a custom specialist with new `instructions` now replaces the old ones.** They used to be dropped without a
+  word; the change is now on the teammate's record and the job thread says "new instructions".
 - **The office no longer freezes for seconds at a time.** A profile of the server found work that held up every
   request: the ARMS checklist grepped every Claude Code transcript (4+ s; now counted in the background every 10
   minutes), the Brain re-read all event logs on each view (now read once and then only what was added, keeping just the

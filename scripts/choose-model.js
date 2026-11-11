@@ -28,7 +28,9 @@ function difficulty(roleDef, text) {
   return d >= 1.75 ? 'hard' : d <= 0.5 ? 'easy' : 'medium';
 }
 
-const roleKey = (a) => (a.role === 'custom' ? `custom:${(a.name || '').toLowerCase()}` : a.role);
+// A teammate's track record is kept per role and the team skills it was hired with ("egt-analyst+fsm").
+const withSkills = (base, skills) => ((skills || []).length ? `${base}+${skills.join(',')}` : base);
+const roleKey = (a) => withSkills(a.role === 'custom' ? `custom:${(a.name || '').toLowerCase()}` : a.role, a.skills);
 
 function records(agents, tickets, key) {
   const tk = new Map(tickets.map((t) => [t.id, t]));
@@ -47,11 +49,14 @@ function records(agents, tickets, key) {
       out.push({ role: roleKey(a), model, effort, ok, cost: h.costUsd || 0 });
     }
   }
-  return { mine: out.filter((r) => r.role === key), all: out };
+  let mine = out.filter((r) => r.role === key);
+  // A role with a new set of skills has no record yet: start from the role's own record.
+  if (!mine.length && key.includes('+')) mine = out.filter((r) => r.role === key.split('+')[0]);
+  return { mine, all: out };
 }
 
-function choose({ role, roleDef, name, task, agents, tickets, capModel, values, utilization }) {
-  const key = role === 'custom' ? `custom:${(name || '').toLowerCase()}` : role;
+function choose({ role, skills, roleDef, name, task, agents, tickets, capModel, values, utilization }) {
+  const key = withSkills(role === 'custom' ? `custom:${(name || '').toLowerCase()}` : role, skills);
   const diff = difficulty(roleDef, task);
   const V = (values || DEFAULT_VALUES)[diff];
   const { mine, all } = records(agents || [], tickets || [], key);

@@ -51,6 +51,8 @@ lead. The API is `GET/POST /api/agents/<id>/standing` and `DELETE /api/agents/<i
   in the Brain map, not in the team's lobe. Their memory and track record are kept.
 - **Used on a second project, an on-call specialist joins the team**: they have proven generally useful.
 - **The lead can decide when hiring.** `delegate` takes `stay: "team"` or `stay: "project"`.
+- **New instructions replace the old.** Rehiring a custom specialist by name with different `instructions` updates them
+  (shown as "new instructions" in the job thread and on the teammate's record).
 - **You can switch it** in Processes: select the teammate, then **Keep on the team** or **Project only**.
 
 Staff hired before this rule existed were sorted once at start-up: custom specialists used on fewer than two projects
@@ -329,6 +331,18 @@ evidence (which jobs, what was repeated or went wrong). Proposals appear in the 
 the agent as feedback. Approved skills live in `teams/<team>/skills/<name>/SKILL.md`; each agent's instructions list the
 skills meant for it, and it reads one when a task matches. Proposing an existing name proposes an update, shown next to
 the current version. The Skills catalog lists team skills with "(team)".
+
+**Handing a skill to a teammate.** A lead (or anyone who delegates) adds `skills: ["fsm"]` to an assignment: up to three
+team skills meant for the whole team or for that role (`for: <role>`). Each is loaded into the teammate's prompt in full,
+so it does not depend on the teammate choosing to read it, together with what its frontmatter names:
+
+- `source: ~/.claude/agents/fsm-analyst.md`: an agent file the skill builds on, included (without its frontmatter) rather
+  than copied, so the two never drift apart.
+- `preload: ~/.claude/docs/fsm-states.md, …`: reference docs, loaded like a role's `preload`.
+
+A teammate is its role plus its skills: "Researcher + fsm" is a different person from a plain Researcher, reused with its
+own memory and track record (`staff` shows the skills). The model choice keys on both, starting from the role's record for
+a new combination. A name that is not a team skill is refused with the list of those that are.
 
 ## Your work team (local only)
 

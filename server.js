@@ -182,7 +182,7 @@ const { pump, staffList, ticketOfAgent, enqueue, stopTree, delegate, waitForTeam
   ACTIVE, CLAUDE_BIN, EFFORTS, MAX_RUNNING, MODELS, PERSONAS, addEvent, agents, assignPids, attachText, baseAgent, batches, broadcast, buildArgs, childEnv,
   childRolesFor, chooseModel, crypto, enqueueResident, home, inWorkRepo, limits, mail, mailWake, modelOf, newId, now, onStreamMessage, pendingFeedback, procs,
   queue, readJson, readLines, readMemory, restartResident, spawn, thread, tickets, touch, waitForBudget, waiters,
-  arms: live(() => arms), onCall: live(() => onCall), isRestartPending: (...a) => isRestartPending(...a), planGate: (...a) => planGate(...a),
+  arms: live(() => arms), onCall: live(() => onCall), skillProposals: live(() => skillProposals), isRestartPending: (...a) => isRestartPending(...a), planGate: (...a) => planGate(...a),
   takeUnread: (...a) => takeUnread(...a), briefExtras: (...a) => briefExtras(...a),
 });
 // ---------------------------------------------------------------- terminal commands (lib/commands.js)

@@ -14,6 +14,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FAKE_CLAUDE = `#!/usr/bin/env node
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const sid = 'apicheck-' + process.pid;
+// A one-shot run whose system prompt holds the API check's skill leaves them next to this script, so a check can read the system prompt.
+if (process.argv.some((x) => x.includes('SKILL-BODY-TEXT'))) require('fs').writeFileSync(require('path').join(__dirname, 'argv-' + process.pid + '.json'), JSON.stringify(process.argv));
 if (!(process.argv.includes('stream-json') && process.argv.includes('--input-format'))) { out({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: sid, total_cost_usd: 0, num_turns: 1, usage: {} }); process.exit(0); }
 out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5-5', cwd: process.cwd() });
 // A job that says BIGCONTEXT makes the fake agent report a 150k-token context, to test the delegate reminder.
@@ -956,6 +958,7 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
     const dec = prop ? (await A('POST', `/api/skill-proposals/${prop.id}/decide`, { decision: 'approve' })).body || {} : {};
     ok('approving a skill installs it for the team', dec.proposal && fs.existsSync(dec.proposal.file || ''), JSON.stringify(dec).slice(0, 200));
 
+
     const rv = (await A('GET', '/api/restart')).body || {};
     ok('the restart view reports who is busy', Array.isArray(rv.busy) && rv.busy.length > 0, JSON.stringify(rv));
     const pend = (await A('POST', '/api/restart', { when: 'idle' })).body || {};
@@ -1072,6 +1075,34 @@ console.log(JSON.stringify({ model: 'haiku', cost: 0.05, results: [{ name: 'neve
       const delT = (await A('DELETE', `/api/config/team/templates/${sv.id}`)).body || {};
       const delB = await A('DELETE', '/api/config/team/templates/bug-squad');
       ok('your own templates can be removed, the built-in ones and the dispatcher cannot be saved or removed', delT.ok && delB.code === 400 && notLead.error && !((await A('GET', '/api/config/team/templates')).body || []).some((t) => t.id === sv.id), JSON.stringify({ delT, delB: delB.code, notLead }));
+    }
+    // Team skills handed out with `delegate` (after the team checks: new hires take names those checks expect free): loaded into the teammate's prompt, part of who the teammate is, checked by name.
+    if (dec.proposal && dec.proposal.file) {
+      const skillsDir = path.dirname(path.dirname(dec.proposal.file));
+      fs.mkdirSync(path.join(skillsDir, 'api-domain'), { recursive: true });
+      fs.writeFileSync(path.join(work, 'api-domain-agent.md'), '---\nname: x\n---\nAGENT-FILE-BODY');
+      fs.writeFileSync(path.join(work, 'api-domain-doc.md'), 'PRELOADED-DOC-BODY');
+      fs.writeFileSync(path.join(skillsDir, 'api-domain', 'SKILL.md'), `---\nname: api-domain\ndescription: The API check domain.\nfor: team\nsource: ${path.join(work, 'api-domain-agent.md')}\npreload: ${path.join(work, 'api-domain-doc.md')}\n---\n\nSKILL-BODY-TEXT`);
+      // Pinned, so the checks never ask the model router (Jev) over the network.
+      const del = (as) => A('POST', '/api/delegate', { parentId: lead, assignments: as.map((x) => ({ ...x, pin_model: true, model: 'haiku', effort: 'low', pin_reason: 'API check' })) });
+      const unknown = (await del([{ role: 'researcher', title: 'Skill check', task: 'x', skills: ['no-such-skill'] }])).body || {};
+      ok('delegating with an unknown team skill is refused with the list', /No team skill "no-such-skill"/.test(unknown.error || '') && /api-domain/.test(unknown.error || ''), JSON.stringify(unknown));
+      const argvFiles = () => fs.readdirSync(work).filter((f) => /^argv-\d+\.json$/.test(f));
+      const r1 = (await del([{ role: 'researcher', title: 'Skill check one', task: 'SKILLCHECK one', skills: ['api-domain'] }])).body || {};
+      const first = (r1.results || [])[0] || {};
+      const prompt = (() => { const f = argvFiles()[0]; if (!f) return ''; const av = JSON.parse(fs.readFileSync(path.join(work, f), 'utf8')); return av[av.indexOf('--append-system-prompt') + 1] || ''; })();
+      ok('a teammate hired with a skill gets it loaded: the skill, its agent file and its docs', /## Skill: api-domain/.test(prompt) && /SKILL-BODY-TEXT/.test(prompt) && /AGENT-FILE-BODY/.test(prompt) && /PRELOADED-DOC-BODY/.test(prompt) && !/name: x/.test(prompt), prompt ? prompt.slice(0, 300) : JSON.stringify(r1).slice(0, 300));
+      ok('the delegate result names the skill', /researcher \+ api-domain/.test(first.role || ''), JSON.stringify(first));
+      const r2 = (await del([{ role: 'researcher', title: 'Skill check two', task: 'again', skills: ['api-domain'] }])).body || {};
+      const r3 = (await del([{ role: 'researcher', title: 'Skill check three', task: 'plain' }])).body || {};
+      const p2 = ((r2.results || [])[0] || {}).persona, p3 = ((r3.results || [])[0] || {}).persona;
+      ok('the same role and skills reuse the same teammate; the role without them is someone else', first.persona && p2 === first.persona && p3 && p3 !== first.persona, JSON.stringify([first.persona, p2, p3]));
+      const staffText = ((await A('GET', `/api/staff?agentId=${lead}`)).body || {});
+      ok('the staff list shows a teammate\'s skills', /Researcher \+ api-domain/.test(JSON.stringify(staffText)), JSON.stringify(staffText).slice(0, 300));
+      const c1 = (await del([{ role: 'custom', name: 'Api Checker', instructions: 'OLD-INSTRUCTIONS', title: 'Custom one', task: 'x' }])).body || {};
+      const c2 = (await del([{ role: 'custom', name: 'Api Checker', instructions: 'NEW-INSTRUCTIONS', title: 'Custom two', task: 'x' }])).body || {};
+      const checker = ((await A('GET', '/api/state')).body.agents || []).find((x) => x.persona === ((c1.results || [])[0] || {}).persona) || {};
+      ok('rehiring a custom specialist with new instructions replaces the old ones', ((c2.results || [])[0] || {}).persona === checker.persona && checker.customDef && checker.customDef.prompt === 'NEW-INSTRUCTIONS', JSON.stringify(checker.customDef || c2).slice(0, 300));
     }
     const ev = (await A('GET', '/api/evals')).body || {};
     const evSet = (await A('POST', '/api/office-settings', { agentEvalDays: 3 })).body || {};
